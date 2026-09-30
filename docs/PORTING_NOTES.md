@@ -149,14 +149,12 @@ the whole Backsplash section · `VP_PRESETS` · `SH_DESIGNS` · `XCJ_DESIGNS` /
 These raise a visible amber note in the UI rather than emitting a wrong number.
 Search `stubs.push` to find them.
 
-1. **Drawer fronts.** A drawer cabinet's fronts must be one per drawer, each
-   sized to its drawer height. Stone sized these from its 360/180 front slots;
-   wood front heights have not been supplied. Multi-drawer cabinets emit the
-   carcass, the box sets and the bottom/back panels, but no fronts. Single-front
-   families (GD) are unaffected.
-2. **Drawer — Lian.** The returned sheet still held the template's example row
-   (63 / 50 / 77 / 72, 6mm bottom, 18mm back — the stone builder's old numbers).
-   Selecting Lian costs the box set and withholds the panels.
+1. **Drawer fronts — resolved.** Per user direction, use stone's 180mm Low and
+   360mm High slots, applying the shutter gap deduction and selected shutter
+   edge-banding rule.
+2. **Drawer — Lian — resolved.** Per user direction, use the stone drawer-box
+   construction: bottom `(W−50) × (D−77)`, back `W−72`, back heights 63/212,
+   bottom 6mm and back 15mm.
 3. **Drawer panel material.** Not specified. `DRAWER_PANEL_MAT` assumes BWP ply
    at the given thickness; change it in one place if that is wrong.
 4. **Drawer panel edge banding.** Assumed none — the "all panels except the

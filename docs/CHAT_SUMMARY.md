@@ -508,7 +508,9 @@ material · PVC legs + skirting accessory · bought-in drawer boxes with four
 models' deductions · wastage 10/20/20 · countertop/filler/visible-panel
 simplifications · everything optional.
 
-**Open — see `BUGS.md` and `BACKLOG.md`:** drawer front heights · Lian
+**Resolved Sep 2026:** drawer fronts use the stone 180/360mm slot construction;
+Lian uses the stone drawer-box deductions; drawer/door fronts inherit shutter
+edge banding. Remaining open items are tracked in `BUGS.md` and `BACKLOG.md`.
 deductions · MD back height · REF short back wall · APP twin back walls ·
 membrane adhesive rate · `BOARD_GROUP_TOKENS` verification · handle/shutter-type
 compatibility rule.

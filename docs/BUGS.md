@@ -46,24 +46,19 @@ curl, with no credential. Anyone reaching the server reaches Zoho.
 
 ## High
 
-### S1 · Drawer front heights not supplied — Stub
+### S1 · Drawer front heights — Resolved Sep 2026
 `WoodBomBuilder.tsx` → `buildShutters`
 
-A drawer cabinet's fronts must be one per drawer, each sized to its drawer
-height. Stone derived these from its 360/180 front slots; wood front heights
-were never supplied. Multi-drawer cabinets emit carcass, box sets and
-bottom/back panels but **no fronts**. Single-front families (GD) are fine.
+Wood now follows the stone construction: Low slots are 180mm, High slots are
+360mm, and the standard/gola shutter deduction supplies the gap. Every emitted
+front inherits the selected shutter material and its edge-banding rule.
 
-*Needs:* front height per drawer class (Low, High), and the inter-front gap.
-
-### S2 · Lian deductions missing — Stub
+### S2 · Lian deductions — Resolved Sep 2026
 `WoodBomBuilder.tsx` → `DRAWER_DED`
 
-The returned template still held the example row — stone's old
-63 / 50 / 77 / 72 with a 6mm bottom and 18mm back, labelled "EXAMPLE ONLY".
-Selecting Lian costs the box set and withholds the panels.
-
-*Needs:* real Lian Slim Box figures for Low and High.
+Per user direction, Lian follows the stone construction: bottom
+`(W−50) × (D−77)`, back width `W−72`, Low back 63mm/H90, High back
+212mm/H239, 6mm bottom and 15mm back.
 
 ### S3 · MD back panel height undefined — Stub
 `buildCarcassInnerRaw`, `fam.special === "MD"`

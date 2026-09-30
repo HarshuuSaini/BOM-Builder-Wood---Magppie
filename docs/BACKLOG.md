@@ -32,8 +32,6 @@ Each needs a number or a decision only Magppie can give.
 
 | P | Item | Blocks |
 |---|---|---|
-| 1 | Drawer front heights per class | All multi-drawer cabinets |
-| 1 | Lian deductions | Any Lian cabinet |
 | 2 | `BOARD_GROUP_TOKENS` verification | All Zoho resolution |
 | 2 | MD back panel height | MD cabinets |
 | 3 | REF short back wall | Over-orders material on REF |

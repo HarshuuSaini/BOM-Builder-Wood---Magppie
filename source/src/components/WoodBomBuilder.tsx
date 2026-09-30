@@ -540,7 +540,12 @@ const DRAWER_DED: Record<string, Partial<Record<DrawerClass, DrawerDed>>> = {
     LOW:  { line: "DWD", code: "H68",  backH: 68,  botWded: 111, botDded: 69, backWded: 111, botT: 16, backT: 16 },
     HIGH: { line: "DWD", code: "H164", backH: 164, botWded: 111, botDded: 69, backWded: 111, botT: 16, backT: 16 },
   },
-  // Lian: not supplied — the returned sheet still held the template example row.
+  // Lian follows the established stone-app drawer construction, confirmed as
+  // the fallback for wood where no separate construction was supplied.
+  Lian: {
+    LOW:  { line: "TANDEM", code: "H90",  backH: 63,  botWded: 50, botDded: 77, backWded: 72, botT: 6, backT: 15 },
+    HIGH: { line: "TANDEM", code: "H239", backH: 212, botWded: 50, botDded: 77, backWded: 72, botT: 6, backT: 15 },
+  },
 };
 
 /** Material for the bottom/back was not specified; BWP ply is assumed. */
@@ -649,19 +654,45 @@ function buildShutters(
   const isBase = !z.tall && !z.kind;
   const fam = famSetOf(zk)[fk];
 
-  // A drawer cabinet's "shutter" is its set of drawer fronts, one per drawer,
-  // each sized to its own drawer height. Stone sized these from its 360/180
-  // front slots; wood front heights have not been supplied, so a multi-drawer
-  // cabinet raises a stub instead of emitting one oversized leaf.
-  if (fam.drawers) {
-    const n = drawerBreakdown(fam, v).reduce((a, d) => a + d.n, 0);
-    if (n > 1) {
-      stubs.push(
-        `${n} drawer fronts not emitted — front heights per drawer class have not been ` +
-        `supplied. Stone sized these from its 360/180 front slots.`,
-      );
-      return { leaves: 0, leafW: 0, leafH: 0 };
+  // Drawer-front slots follow the stone construction: Low = 180mm, High =
+  // 360mm, with the normal/gola shutter deduction applied to each location.
+  // DPN/DPNG are hinged pantry doors with internal drawers, not five external
+  // drawer fronts, so fixedDpn deliberately continues to the hinged branch.
+  if (fam.drawers && !fam.fixedDpn) {
+    const st = isGlassShutterFam(fk) ? "GLASS" : shType;
+    const S = shOf(st);
+    const fronts: Array<{ cls: DrawerClass; loc: string }> = v.id === "3dr"
+      ? [{ cls: "LOW", loc: "UL" }, { cls: "LOW", loc: "ML" }, { cls: "HIGH", loc: "BH" }]
+      : /^(2dr|2dw)$/.test(v.id)
+        ? [{ cls: "HIGH", loc: "UH" }, { cls: "HIGH", loc: "BH" }]
+        : [{ cls: "HIGH", loc: fk === "GD" ? "FH" : "BH" }];
+    fronts.forEach(({ cls, loc }) => {
+      const slotH = loc === "FH" ? H : cls === "LOW" ? 180 : 360;
+      const frontH = slotH - shDeduct(isBase, handle, loc);
+      panels.push({
+        name: `Panels- SH Drawer Front ${cls} ${S.t}mm ${W - 3}x${frontH}`,
+        w: W - 3, h: frontH, qty: 1, drill: null, pack: "Shutter Pack",
+        t: S.t, mat: S.mat, band: S.band,
+      });
+    });
+    // Tall APP keeps the stone upper appliance door above its drawer fronts.
+    if (z.tall && fk === "APP") {
+      const upperSlotH = H >= 2400 ? 1085 : 720;
+      const upperH = upperSlotH - shDeduct(false, handle, "RH");
+      panels.push({
+        name: `Panels- SH Upper Door ${S.t}mm ${W - 3}x${upperH}`,
+        w: W - 3, h: upperH, qty: 1, drill: null, pack: "Shutter Pack",
+        t: S.t, mat: S.mat, band: S.band,
+      });
+      const upperHinges = hingeN(upperH);
+      hardware.push({ name: `HARDWARE PACK 3D HINGE 0 CRANK Set/${upperHinges}`, qty: 1, uom: "set", pack: "Shutter Pack" });
     }
+    pkRows.push({ pack: "Shutter Pack", type: "sub_bom", qty: fronts.length + (z.tall && fk === "APP" ? 1 : 0) });
+    const totalArea = fronts.reduce((sum, front) => {
+      const slotH = front.loc === "FH" ? H : front.cls === "LOW" ? 180 : 360;
+      return sum + sqft(W - 3, slotH - shDeduct(isBase, handle, front.loc));
+    }, 0);
+    return { leaves: fronts.length, leafW: W - 3, leafH: totalArea * SQDIV / Math.max(1, (W - 3) * fronts.length) };
   }
 
   const { leaves } = shutSpec(zk, fk, v);

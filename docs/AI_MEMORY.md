@@ -165,8 +165,8 @@ Treat these as soft. If a decision depends on one, verify it first.
 4. **Glass shelves use the ply shelf formula** at 8mm; stone's `W−36` / `D−49`
    offsets existed only because of aluminium shelf profiles.
 5. **Drawer panel material is BWP ply** (`DRAWER_PANEL_MAT`) — not specified.
-6. **Drawer panels carry no edge band** — the "all panels except the back" rule
-   was stated for carcass and shutters; a bottom inside a metal box is neither.
+6. **Internal drawer bottom/back carry no edge band.** Drawer and door fronts
+   are shutter panels and do receive the selected shutter type's edge band.
 7. **`fixed_dpn` = 2 Low + 3 High** — see above.
 8. **`BOARD_GROUP_TOKENS`** — a guess at the Zoho taxonomy. See below.
 
