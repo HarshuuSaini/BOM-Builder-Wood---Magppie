@@ -19,6 +19,7 @@ import { searchBoardItems, searchLaminateItems, searchHardwareItems } from "@/li
 import boardFinishesData from "@/data/board_finishes.json";
 import laminateFinishesData from "@/data/laminate_finishes.json";
 import edgebandFinishesData from "@/data/edgeband_finishes.json";
+import hardwarePacksData from "@/data/hardware_packs.json";
 import { getPartBaseName, getPanelBaseName, normalizePartOrPanelName } from "@/lib/naming";
 import { exportBomWorkbook, exportBomCsv, type AccessoryExportRow } from "@/lib/export";
 import { COSTING_ITEMS, DEFAULT_RATES, SHUTTER_RATE_KEY, findCostingItem, type CostingMasterItem, type CostingRates } from "@/lib/costing";
@@ -182,14 +183,24 @@ const legCount = (w: number) => (w <= 150 ? 2 : w >= 1050 ? 6 : 4);
 const hingeN = (h: number) => (h <= 900 ? 3 : h <= 1600 ? 4 : h <= 2100 ? 5 : 6);
 
 type HardwareComponent = { name: string; qty: number; uom: string; pack: string };
+type HardwarePackDefinition = { component: string; qty: number; uom: string };
+const HARDWARE_PACK_DEFINITIONS = hardwarePacksData.definitions as Record<string, HardwarePackDefinition[]>;
 
 /** Exact pack contents from the stone app architecture's HARDWARE_PACK_DEFINITIONS. */
 function expandHardwarePack(h: Hardware): HardwareComponent[] {
   const pack = h.name;
+  const definition = HARDWARE_PACK_DEFINITIONS[pack];
+  if (definition) return definition.map((component) => ({
+    name: component.component,
+    qty: component.qty * h.qty,
+    uom: component.uom,
+    pack,
+  }));
+  // The reference table omits a standard 3D Set/5. Retain the architecture's
+  // established quantity formula so a 5-hinge tall cabinet still expands.
   const hinge = pack.match(/^HARDWARE PACK 3D HINGE 0 CRANK Set\/(\d+)$/);
   const loftHinge = pack.match(/^HARDWARE PACK HINGE W\/OUT SOFT CLOSE Set\/(\d+)$/);
   const glassHinge = pack.match(/^HARDWARE PACK SLIM HINGE FOR GLASS Set\/(\d+)$/);
-  const legs = pack.match(/^HARDWARE PACK PVC LEG SET\/(\d+)$/);
   if (hinge || loftHinge || glassHinge) {
     const match = hinge ?? loftHinge ?? glassHinge;
     const n = Number(match?.[1] ?? 0);
@@ -202,14 +213,6 @@ function expandHardwarePack(h: Hardware): HardwareComponent[] {
       { name: hingeName, qty: n * h.qty, uom: "PCS", pack },
       { name: "SCREW FOR CHIP BOARD 16XX4 SS 304 CINE", qty: n * 4 * h.qty, uom: "PCS", pack },
       { name: "DOOR BUMPERS 12.0 MM X 3.2 MM BS2-1 EBC", qty: 4 * h.qty, uom: "PCS", pack },
-    ];
-  }
-  if (legs) {
-    const n = Number(legs[1]);
-    return [
-      { name: "LEG PVC TRIAGLE MOUNTING BRACKET XX100 BLACK REH", qty: n * h.qty, uom: "PCS", pack },
-      { name: "GLUE BONDTITE FAST & CLEAR FOR STONE XX AGG", qty: n * 0.02 * h.qty, uom: "Kg", pack },
-      { name: "SKIRTING CLIP FOR Q PLINTH LEG XX25 WHITE REH", qty: n * h.qty, uom: "PCS", pack },
     ];
   }
   return [{ name: h.name, qty: h.qty, uom: h.uom ?? "nos", pack: h.pack ?? "Hardware Pack" }];

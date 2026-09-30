@@ -1,0 +1,615 @@
+{
+  "schemaVersion": 1,
+  "source": "reference/stone/source/src/components/CarcassBomBuilder.tsx:HARDWARE_PACK_DEFINITIONS",
+  "generatedAt": "2026-09-30T09:15:09.349Z",
+  "packCount": 36,
+  "definitions": {
+    "HARDWARE PACK 3D HINGE 0 CRANK Set/3": [
+      {
+        "component": "HINGE 0 CRANK SOFT CLOSE 5 HOLE XX BLACK 3D MS CRY",
+        "qty": 3,
+        "uom": "PCS"
+      },
+      {
+        "component": "SCREW FOR CHIP BOARD 16XX4 SS 304 CINE",
+        "qty": 12,
+        "uom": "PCS"
+      },
+      {
+        "component": "DOOR BUMPERS 12.0 MM X 3.2 MM BS2-1 EBC",
+        "qty": 4,
+        "uom": "PCS"
+      }
+    ],
+    "HARDWARE PACK 3D HINGE 0 CRANK Set/4": [
+      {
+        "component": "HINGE 0 CRANK SOFT CLOSE 5 HOLE XX BLACK 3D MS CRY",
+        "qty": 4,
+        "uom": "PCS"
+      },
+      {
+        "component": "SCREW FOR CHIP BOARD 16XX4 SS 304 CINE",
+        "qty": 16,
+        "uom": "PCS"
+      },
+      {
+        "component": "DOOR BUMPERS 12.0 MM X 3.2 MM BS2-1 EBC",
+        "qty": 4,
+        "uom": "PCS"
+      }
+    ],
+    "HARDWARE PACK 3D HINGE 0 CRANK Set/6": [
+      {
+        "component": "HINGE 0 CRANK SOFT CLOSE 5 HOLE XX BLACK 3D MS CRY",
+        "qty": 6,
+        "uom": "PCS"
+      },
+      {
+        "component": "SCREW FOR CHIP BOARD 16XX4 SS 304 CINE",
+        "qty": 24,
+        "uom": "PCS"
+      },
+      {
+        "component": "DOOR BUMPERS 12.0 MM X 3.2 MM BS2-1 EBC",
+        "qty": 4,
+        "uom": "PCS"
+      }
+    ],
+    "HARDWARE PACK HINGE 0 CRANK CARCASS Set/3": [
+      {
+        "component": "HINGE 0 CRANK W/OUT SOFT CLOSE 95 DEG XX GUN BLACK DPW-209 LIAN",
+        "qty": 3,
+        "uom": "PCS"
+      }
+    ],
+    "HARDWARE PACK SLIM HINGE FOR GLASS Set/3": [
+      {
+        "component": "HINGE SLIM FOR ALU PROFILE 0 CRANK SOFT CLOSE 95 DEG XX GUN BLACK DPOA-209 LIAN",
+        "qty": 3,
+        "uom": "PCS"
+      },
+      {
+        "component": "SCREW FOR CHIP BOARD 16XX4 SS 304 CINE",
+        "qty": 12,
+        "uom": "PCS"
+      },
+      {
+        "component": "DOOR BUMPERS 12.0 MM X 3.2 MM BS2-1 EBC",
+        "qty": 4,
+        "uom": "PCS"
+      }
+    ],
+    "HARDWARE PACK SLIM HINGE FOR GLASS Set/4": [
+      {
+        "component": "HINGE SLIM FOR ALU PROFILE 0 CRANK SOFT CLOSE 95 DEG XX GUN BLACK DPOA-209 LIAN",
+        "qty": 4,
+        "uom": "PCS"
+      },
+      {
+        "component": "SCREW FOR CHIP BOARD 16XX4 SS 304 CINE",
+        "qty": 16,
+        "uom": "PCS"
+      },
+      {
+        "component": "DOOR BUMPERS 12.0 MM X 3.2 MM BS2-1 EBC",
+        "qty": 4,
+        "uom": "PCS"
+      }
+    ],
+    "HARDWARE PACK SLIM HINGE FOR GLASS Set/5": [
+      {
+        "component": "HINGE SLIM FOR ALU PROFILE 0 CRANK SOFT CLOSE 95 DEG XX GUN BLACK DPOA-209 LIAN",
+        "qty": 5,
+        "uom": "PCS"
+      },
+      {
+        "component": "SCREW FOR CHIP BOARD 16XX4 SS 304 CINE",
+        "qty": 20,
+        "uom": "PCS"
+      },
+      {
+        "component": "DOOR BUMPERS 12.0 MM X 3.2 MM BS2-1 EBC",
+        "qty": 4,
+        "uom": "PCS"
+      }
+    ],
+    "HARDWARE PACK SLIM HINGE FOR GLASS Set/6": [
+      {
+        "component": "HINGE SLIM FOR ALU PROFILE 0 CRANK SOFT CLOSE 95 DEG XX GUN BLACK DPOA-209 LIAN",
+        "qty": 6,
+        "uom": "PCS"
+      },
+      {
+        "component": "SCREW FOR CHIP BOARD 16XX4 SS 304 CINE",
+        "qty": 24,
+        "uom": "PCS"
+      },
+      {
+        "component": "DOOR BUMPERS 12.0 MM X 3.2 MM BS2-1 EBC",
+        "qty": 4,
+        "uom": "PCS"
+      }
+    ],
+    "HARDWARE PACK HINGE W/OUT SOFT CLOSE Set/3": [
+      {
+        "component": "HINGE 0 CRANK W/OUT SOFT CLOSE 95 DEG XX GUN BLACK DPW-209 LIAN",
+        "qty": 3,
+        "uom": "PCS"
+      },
+      {
+        "component": "SCREW FOR CHIP BOARD 16XX4 SS 304 CINE",
+        "qty": 12,
+        "uom": "PCS"
+      },
+      {
+        "component": "DOOR BUMPERS 12.0 MM X 3.2 MM BS2-1 EBC",
+        "qty": 4,
+        "uom": "PCS"
+      }
+    ],
+    "HARDWARE PACK HINGE W/OUT SOFT CLOSE Set/4": [
+      {
+        "component": "HINGE 0 CRANK W/OUT SOFT CLOSE 95 DEG XX GUN BLACK DPW-209 LIAN",
+        "qty": 4,
+        "uom": "PCS"
+      },
+      {
+        "component": "SCREW FOR CHIP BOARD 16XX4 SS 304 CINE",
+        "qty": 16,
+        "uom": "PCS"
+      },
+      {
+        "component": "DOOR BUMPERS 12.0 MM X 3.2 MM BS2-1 EBC",
+        "qty": 4,
+        "uom": "PCS"
+      }
+    ],
+    "HARDWARE PACK HINGE W/OUT SOFT CLOSE Set/5": [
+      {
+        "component": "HINGE 0 CRANK W/OUT SOFT CLOSE 95 DEG XX GUN BLACK DPW-209 LIAN",
+        "qty": 5,
+        "uom": "PCS"
+      },
+      {
+        "component": "SCREW FOR CHIP BOARD 16XX4 SS 304 CINE",
+        "qty": 20,
+        "uom": "PCS"
+      },
+      {
+        "component": "DOOR BUMPERS 12.0 MM X 3.2 MM BS2-1 EBC",
+        "qty": 4,
+        "uom": "PCS"
+      }
+    ],
+    "HARDWARE PACK HINGE W/OUT SOFT CLOSE Set/6": [
+      {
+        "component": "HINGE 0 CRANK W/OUT SOFT CLOSE 95 DEG XX GUN BLACK DPW-209 LIAN",
+        "qty": 6,
+        "uom": "PCS"
+      },
+      {
+        "component": "SCREW FOR CHIP BOARD 16XX4 SS 304 CINE",
+        "qty": 24,
+        "uom": "PCS"
+      },
+      {
+        "component": "DOOR BUMPERS 12.0 MM X 3.2 MM BS2-1 EBC",
+        "qty": 4,
+        "uom": "PCS"
+      }
+    ],
+    "HARDWARE PACK SLIM HINGE 0 CRANK Set/3": [
+      {
+        "component": "HINGE 0 CRANK SOFT CLOSE FOR SLIM SHUTTER XX BLACK MS CRY",
+        "qty": 3,
+        "uom": "PCS"
+      },
+      {
+        "component": "SCREW FOR CHIP BOARD 16XX4 SS 304 CINE",
+        "qty": 6,
+        "uom": "PCS"
+      },
+      {
+        "component": "SCREW FOR HANDLE 8XX4 CINE",
+        "qty": 6,
+        "uom": "PCS"
+      },
+      {
+        "component": "DOOR BUMPERS 12.0 MM X 3.2 MM BS2-1 EBC",
+        "qty": 4,
+        "uom": "PCS"
+      }
+    ],
+    "HARDWARE PACK SLIM HINGE 0 CRANK Set/5": [
+      {
+        "component": "HINGE 0 CRANK SOFT CLOSE FOR SLIM SHUTTER XX BLACK MS CRY",
+        "qty": 5,
+        "uom": "PCS"
+      },
+      {
+        "component": "SCREW FOR CHIP BOARD 16XX4 SS 304 CINE",
+        "qty": 10,
+        "uom": "PCS"
+      },
+      {
+        "component": "SCREW FOR HANDLE 8XX4 CINE",
+        "qty": 10,
+        "uom": "PCS"
+      },
+      {
+        "component": "DOOR BUMPERS 12.0 MM X 3.2 MM BS2-1 EBC",
+        "qty": 4,
+        "uom": "PCS"
+      }
+    ],
+    "HARDWARE PACK BLIND HINGE 0 CRANK Set/3": [
+      {
+        "component": "HINGE 0 CRANK SOFT CLOSE 95 DEG XX GUN BLACK DKP90 LIAN",
+        "qty": 3,
+        "uom": "PCS"
+      },
+      {
+        "component": "SCREW FOR CHIP BOARD 16XX4 SS 304 CINE",
+        "qty": 6,
+        "uom": "PCS"
+      },
+      {
+        "component": "DOOR BUMPERS 12.0 MM X 3.2 MM BS2-1 EBC",
+        "qty": 4,
+        "uom": "PCS"
+      }
+    ],
+    "HARDWARE PACK BLIND HINGE 0 CRANK Set/4": [
+      {
+        "component": "HINGE 0 CRANK SOFT CLOSE 95 DEG XX GUN BLACK DKP90 LIAN",
+        "qty": 4,
+        "uom": "PCS"
+      },
+      {
+        "component": "SCREW FOR CHIP BOARD 16XX4 SS 304 CINE",
+        "qty": 8,
+        "uom": "PCS"
+      },
+      {
+        "component": "DOOR BUMPERS 12.0 MM X 3.2 MM BS2-1 EBC",
+        "qty": 4,
+        "uom": "PCS"
+      }
+    ],
+    "HARDWARE PACK BLIND HINGE 0 CRANK Set/6": [
+      {
+        "component": "HINGE 0 CRANK SOFT CLOSE 95 DEG XX GUN BLACK DKP90 LIAN",
+        "qty": 6,
+        "uom": "PCS"
+      },
+      {
+        "component": "SCREW FOR CHIP BOARD 16XX4 SS 304 CINE",
+        "qty": 12,
+        "uom": "PCS"
+      },
+      {
+        "component": "DOOR BUMPERS 12.0 MM X 3.2 MM BS2-1 EBC",
+        "qty": 4,
+        "uom": "PCS"
+      }
+    ],
+    "HARDWARE PACK PVC LEG SET/2": [
+      {
+        "component": "LEG PVC TRIAGLE MOUNTING BRACKET XX100 BLACK REH",
+        "qty": 2,
+        "uom": "PCS"
+      },
+      {
+        "component": "GLUE BONDTITE FAST & CLEAR FOR STONE XX AGG",
+        "qty": 0.04,
+        "uom": "Kg"
+      },
+      {
+        "component": "SKIRTING CLIP FOR Q PLINTH LEG XX25 WHITE REH",
+        "qty": 2,
+        "uom": "PCS"
+      }
+    ],
+    "HARDWARE PACK PVC LEG SET/4": [
+      {
+        "component": "LEG PVC TRIAGLE MOUNTING BRACKET XX100 BLACK REH",
+        "qty": 4,
+        "uom": "PCS"
+      },
+      {
+        "component": "GLUE BONDTITE FAST & CLEAR FOR STONE XX AGG",
+        "qty": 0.08,
+        "uom": "Kg"
+      },
+      {
+        "component": "SKIRTING CLIP FOR Q PLINTH LEG XX25 WHITE REH",
+        "qty": 4,
+        "uom": "PCS"
+      }
+    ],
+    "HARDWARE PACK PVC LEG SET/6": [
+      {
+        "component": "LEG PVC TRIAGLE MOUNTING BRACKET XX100 BLACK REH",
+        "qty": 6,
+        "uom": "PCS"
+      },
+      {
+        "component": "GLUE BONDTITE FAST & CLEAR FOR STONE XX AGG",
+        "qty": 0.12,
+        "uom": "Kg"
+      },
+      {
+        "component": "SKIRTING CLIP FOR Q PLINTH LEG XX25 WHITE REH",
+        "qty": 6,
+        "uom": "PCS"
+      }
+    ],
+    "HARDWARE PACK CARCASS FIXING HPL 4 SET/1": [
+      {
+        "component": "HPL 2.5 MM CARCASS FIXING 9X400",
+        "qty": 4,
+        "uom": "PCS"
+      },
+      {
+        "component": "GLUE SILICONE XX TRANSPERENT DOWSIL 789 AGG",
+        "qty": 80,
+        "uom": "ML"
+      }
+    ],
+    "HARDWARE PACK LOW BACK DRAWER H90 SET/1": [
+      {
+        "component": "DRAWER TANDEM SOFT CLOSE LB 500XX90 GRAPHITE GREY TD30-16-90-500 LIAN",
+        "qty": 1,
+        "uom": "SET"
+      },
+      {
+        "component": "INSERT NYLON FOR STONE W/O THREAD 10X3.5X MOD",
+        "qty": 4,
+        "uom": "PCS"
+      },
+      {
+        "component": "SCREW FOR CHIP BOARD 13XX4.8 SS 304 CINE",
+        "qty": 12,
+        "uom": "PCS"
+      },
+      {
+        "component": "DOOR BUMPERS 12.0 MM X 3.2 MM BS2-1 EBC",
+        "qty": 4,
+        "uom": "PCS"
+      }
+    ],
+    "HARDWARE PACK LOW BACK DRAWER H90 SET/2": [
+      {
+        "component": "DRAWER TANDEM SOFT CLOSE LB 500XX90 GRAPHITE GREY TD30-16-90-500 LIAN",
+        "qty": 2,
+        "uom": "SET"
+      },
+      {
+        "component": "INSERT NYLON FOR STONE W/O THREAD 10X3.5X MOD",
+        "qty": 8,
+        "uom": "PCS"
+      },
+      {
+        "component": "SCREW FOR CHIP BOARD 13XX4.8 SS 304 CINE",
+        "qty": 24,
+        "uom": "PCS"
+      },
+      {
+        "component": "DOOR BUMPERS 12.0 MM X 3.2 MM BS2-1 EBC",
+        "qty": 8,
+        "uom": "PCS"
+      }
+    ],
+    "HARDWARE PACK LOW BACK DRAWER H90 SET/3": [
+      {
+        "component": "DRAWER TANDEM SOFT CLOSE LB 500XX90 GRAPHITE GREY TD30-16-90-500 LIAN",
+        "qty": 3,
+        "uom": "SET"
+      },
+      {
+        "component": "INSERT NYLON FOR STONE W/O THREAD 10X3.5X MOD",
+        "qty": 12,
+        "uom": "PCS"
+      },
+      {
+        "component": "SCREW FOR CHIP BOARD 13XX4.8 SS 304 CINE",
+        "qty": 12,
+        "uom": "PCS"
+      },
+      {
+        "component": "DOOR BUMPERS 12.0 MM X 3.2 MM BS2-1 EBC",
+        "qty": 12,
+        "uom": "PCS"
+      }
+    ],
+    "HARDWARE PACK HIGH BACK DRAWER H175 SET/2": [
+      {
+        "component": "DRAWER TANDEM SOFT CLOSE HB 500XX175 GRAPHITE GREY TD30-16-175-500 LIAN",
+        "qty": 2,
+        "uom": "SET"
+      },
+      {
+        "component": "INSERT NYLON FOR STONE W/O THREAD 10X3.5X MOD",
+        "qty": 8,
+        "uom": "PCS"
+      },
+      {
+        "component": "SCREW FOR CHIP BOARD 13XX4.8 SS 304 CINE",
+        "qty": 24,
+        "uom": "PCS"
+      },
+      {
+        "component": "DOOR BUMPERS 12.0 MM X 3.2 MM BS2-1 EBC",
+        "qty": 8,
+        "uom": "PCS"
+      }
+    ],
+    "HARDWARE PACK HIGH BACK DRAWER H239 SET/1": [
+      {
+        "component": "DRAWER TANDEM SOFT CLOSE HB 500XX239 GRAPHITE GREY TD30-16-239-500 LIAN",
+        "qty": 1,
+        "uom": "SET"
+      },
+      {
+        "component": "INSERT NYLON FOR STONE W/O THREAD 10X3.5X MOD",
+        "qty": 4,
+        "uom": "PCS"
+      },
+      {
+        "component": "SCREW FOR CHIP BOARD 13XX4.8 SS 304 CINE",
+        "qty": 12,
+        "uom": "PCS"
+      },
+      {
+        "component": "DOOR BUMPERS 12.0 MM X 3.2 MM BS2-1 EBC",
+        "qty": 4,
+        "uom": "PCS"
+      }
+    ],
+    "HARDWARE PACK HIGH BACK DRAWER H239 SET/2": [
+      {
+        "component": "DRAWER TANDEM SOFT CLOSE HB 500XX239 GRAPHITE GREY TD30-16-239-500 LIAN",
+        "qty": 2,
+        "uom": "SET"
+      },
+      {
+        "component": "INSERT NYLON FOR STONE W/O THREAD 10X3.5X MOD",
+        "qty": 8,
+        "uom": "PCS"
+      },
+      {
+        "component": "SCREW FOR CHIP BOARD 13XX4.8 SS 304 CINE",
+        "qty": 24,
+        "uom": "PCS"
+      },
+      {
+        "component": "DOOR BUMPERS 12.0 MM X 3.2 MM BS2-1 EBC",
+        "qty": 8,
+        "uom": "PCS"
+      }
+    ],
+    "HARDWARE PACK WALL HANGER BRACKET SET/1": [
+      {
+        "component": "COVER CAP LH CABINET COVER 080.062.038112 85XX WHITE K018.C01L.906 003.012.00077 FTL",
+        "qty": 1,
+        "uom": "SET"
+      },
+      {
+        "component": "COVER CAP RH CABINET COVER 080.062.03811 85XX WHITE K018.C01R.906 003.012.00078 FTL",
+        "qty": 1,
+        "uom": "PCS"
+      },
+      {
+        "component": "HANGER CABINET RAIL W WGHT 080.062.03619 70X60X6 K018.A000.101 003.008.00048 FTL",
+        "qty": 2,
+        "uom": "PCS"
+      },
+      {
+        "component": "INSERT PVC 120XX8 RED HILTI",
+        "qty": 8,
+        "uom": "PCS"
+      },
+      {
+        "component": "PVC PACKING FOR WALL HANGING 100X100X12 K018 LOC",
+        "qty": 2,
+        "uom": "PCS"
+      }
+    ],
+    "HARDWARE PACK HB DRAWER 600MM FIXING SET/1": [
+      {
+        "component": "GLUE SILICONE XX TRANSPERENT DOWSIL 789 AGG",
+        "qty": 50,
+        "uom": "ML"
+      },
+      {
+        "component": "SCREW FOR HANDLE 8XX4 CINE",
+        "qty": 4,
+        "uom": "Pcs"
+      }
+    ],
+    "HARDWARE PACK DRAWER 450MM FIXING SET/1": [
+      {
+        "component": "GLUE SILICONE XX TRANSPERENT DOWSIL 789 AGG",
+        "qty": 40,
+        "uom": "ML"
+      },
+      {
+        "component": "SCREW FOR HANDLE 8XX4 CINE",
+        "qty": 4,
+        "uom": "Pcs"
+      }
+    ],
+    "HARDWARE PACK DRAWER 600MM FIXING SET/1": [
+      {
+        "component": "GLUE SILICONE XX TRANSPERENT DOWSIL 789 AGG",
+        "qty": 60,
+        "uom": "ML"
+      },
+      {
+        "component": "SCREW FOR HANDLE 8XX4 CINE",
+        "qty": 4,
+        "uom": "Pcs"
+      }
+    ],
+    "HARDWARE PACK DRAWER 900MM FIXING SET/1": [
+      {
+        "component": "GLUE SILICONE XX TRANSPERENT DOWSIL 789 AGG",
+        "qty": 80,
+        "uom": "ML"
+      },
+      {
+        "component": "SCREW FOR HANDLE 8XX4 CINE",
+        "qty": 4,
+        "uom": "Pcs"
+      }
+    ],
+    "HARDWARE PACK BOTTLE PULLOUT 150MM SET/1": [
+      {
+        "component": "BOTTLE PULLOUT UNIVERSAL 465X155X580 GREY 304162 HI GOLD",
+        "qty": 1,
+        "uom": "PCS"
+      },
+      {
+        "component": "SCREW FOR CHIP BOARD 16XX4 SS 304 CINE",
+        "qty": 10,
+        "uom": "Pcs"
+      }
+    ],
+    "HARDWARE PACK BOTTLE PULLOUT 300MM SET/1": [
+      {
+        "component": "BOTTLE PULLOUT THREE LAYERS 470X264X552 GREY 3183001 NOUMI",
+        "qty": 1,
+        "uom": "PCS"
+      },
+      {
+        "component": "SCREW FOR CHIP BOARD 16XX4 SS 304 CINE",
+        "qty": 10,
+        "uom": "Pcs"
+      }
+    ],
+    "HARDWARE PACK KAKU FITTING SET/4": [
+      {
+        "component": "KAKU FITTING FOR DUMMY PANEL FIXING XX BLACK CRY",
+        "qty": 4,
+        "uom": "PCS"
+      },
+      {
+        "component": "SCREW FOR CHIP BOARD 16XX4 SS 304 CINE",
+        "qty": 16,
+        "uom": "Pcs"
+      }
+    ],
+    "HARDWARE PACK KAKU FITTING SET/2": [
+      {
+        "component": "KAKU FITTING FOR DUMMY PANEL FIXING XX BLACK CRY",
+        "qty": 2,
+        "uom": "PCS"
+      },
+      {
+        "component": "SCREW FOR CHIP BOARD 16XX4 SS 304 CINE",
+        "qty": 8,
+        "uom": "Pcs"
+      }
+    ]
+  }
+}

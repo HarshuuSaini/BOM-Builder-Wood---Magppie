@@ -243,11 +243,14 @@ the user has hinted at nesting/optimisation beyond a flat wastage percentage —
   net quantity, wastage, billable quantity, rate basis, master rate and amount.
   Drawer Low/High Back rates are separated and matched to the selected brand;
   missing brand rates are flagged as unpriced rather than substituted.
-- Hardware packs follow the stone architecture's `HARDWARE_PACK_DEFINITIONS`
-  contract: the cabinet carries one pack (`qty 1 set`) and UI/CSV/Full BOM/
-  stock check expand it into the exact component quantities. Standard hinge
-  packs contain hinge + 4 screws per hinge + 4 bumpers; PVC-leg packs contain
-  the selected leg count + 0.02 kg Bondtite per leg + one skirting clip per leg.
+- Hardware packs follow the stone architecture's complete
+  `HARDWARE_PACK_DEFINITIONS` contract. The 36 packs / 107 component rows are
+  stored in `source/src/data/hardware_packs.json` and regenerated verbatim with
+  `source/tools/generate-hardware-packs.mjs`. UI, CSV, Full BOM, stock check and
+  costing all use this one table. It covers hinge variants, PVC legs, carcass
+  fixing, low/high drawer packs, wall hangers, drawer fixing sizes, bottle
+  pullouts and Kaku fittings. A cabinet carries one pack (`qty 1 set`) and the
+  downstream views expand its exact component quantities.
 
 ---
 
