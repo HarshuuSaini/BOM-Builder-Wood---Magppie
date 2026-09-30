@@ -21,7 +21,7 @@ import laminateFinishesData from "@/data/laminate_finishes.json";
 import edgebandFinishesData from "@/data/edgeband_finishes.json";
 import { getPartBaseName, getPanelBaseName, normalizePartOrPanelName } from "@/lib/naming";
 import { exportBomWorkbook, exportBomCsv, type AccessoryExportRow } from "@/lib/export";
-import { DEFAULT_RATES, CARCASS_RATE_KEY, SHUTTER_RATE_KEY, findCostingItem, type CostingRates } from "@/lib/costing";
+import { DEFAULT_RATES, SHUTTER_RATE_KEY, findCostingItem, type CostingMasterItem, type CostingRates } from "@/lib/costing";
 import type { BomReportRow } from "@/lib/types";
 
 /* ------------------------------------------------------------------ */
@@ -1216,6 +1216,7 @@ function buildAccessoryRows(accs: AccessoryRow[], project: ProjectLine[], so: st
 
 type CostDetail = {
   category: string;
+  itemCode: string;
   item: string;
   specification: string;
   netQty: number;
@@ -1227,6 +1228,33 @@ type CostDetail = {
 };
 type LineCost = { label: string; code?: string; qty: number; unitCost: number; cost: number; details: CostDetail[] };
 type CostingResult = { lines: LineCost[]; total: number; unpriced: string[] };
+
+function carcassMasterItem(board: string, panel: Panel): CostingMasterItem | undefined {
+  if (/glass/i.test(panel.mat ?? "")) return findCostingItem({ group: "Glass", thicknessMm: panel.t ?? null });
+  if (panel.pack === "Drawer Pack" && /BWP Plywood/i.test(panel.mat ?? "")) {
+    return findCostingItem({ group: "Board", subgroup: "BWR Ply Raw", thicknessMm: panel.t ?? null });
+  }
+  if (board === "A") return panel.t === T_BACK
+    ? findCostingItem({ group: "Board", subgroup: "Plywood BSL", type: "Carcass Postlam", thicknessMm: 8 })
+    : findCostingItem({ group: "Board", subgroup: "BWP Ply BSL", type: "Carcass Postlam", thicknessMm: 18 });
+  if (board === "B") return findCostingItem({ group: "Board", subgroup: panel.t === T_BACK ? "MDF SF BSL" : "MDF BSL", type: "Carcass Prelam", thicknessMm: panel.t ?? null });
+  if (board === "C") return findCostingItem({ group: "Board", subgroup: "Particle Board BSL", type: "Carcass Prelam", thicknessMm: panel.t ?? null });
+  return undefined;
+}
+
+function shutterMasterItem(shutterType: string): CostingMasterItem | undefined {
+  const map: Record<string, { subgroup: string; type: string }> = {
+    PRELAM_HDHMR: { subgroup: "HDHMR OSL", type: "Shutter Prelam" },
+    PRELAM_MDF: { subgroup: "MDF OSL", type: "Shutter Prelam" },
+    PRELAM_PARTICAL: { subgroup: "Particle Board OSL", type: "Shutter Prelam" },
+    POSTLAM_HDHMR: { subgroup: "HDHMR OSL", type: "Shutter Postlam" },
+    POSTLAM_MDF: { subgroup: "MDF OSL", type: "Shutter Postlam" },
+    POSTLAM_PARTICAL: { subgroup: "Particle Board OSL", type: "Shutter Postlam" },
+    POSTLAM_BWP: { subgroup: "BWP Ply OSL", type: "Shutter Postlam" },
+  };
+  const selected = map[shutterType];
+  return selected ? findCostingItem({ group: "Board", subgroup: selected.subgroup, type: selected.type, thicknessMm: 18 }) : undefined;
+}
 
 /**
  * Per the costing sheet: carcass sqft × board rate, shutter sqft × shutter-type
@@ -1243,8 +1271,7 @@ function computeCosting(
   const lines: LineCost[] = [];
   const unpriced = new Set<string>();
 
-  // Each sheet row names its own costing key. Postlam rows share the single
-  // postlam-ply rate, which is all the costing sheet prices.
+  // Compatibility fallback for filler/visible-panel rows outside a cabinet.
   const shutterRate = (st: string): number => {
     const key = shOf(st).rate;
     return key ? (rates[key as keyof CostingRates] ?? 0) : 0;
@@ -1252,31 +1279,44 @@ function computeCosting(
 
   project.forEach((l) => {
     const m = l.m;
-    const cRate = rates[CARCASS_RATE_KEY[m.board] ?? "CARCASS_POSTLAM_PLY"];
     const st = isGlassShutterFam(m.fk) ? "GLASS" : m.shType;
-    const sRate = shutterRate(st);
     const details: CostDetail[] = [];
+    const addDetail = (detail: CostDetail) => {
+      const existing = details.find((row) => row.category === detail.category && row.itemCode === detail.itemCode && row.rate === detail.rate && row.wastePct === detail.wastePct);
+      if (existing) {
+        existing.netQty += detail.netQty;
+        existing.billableQty += detail.billableQty;
+        existing.amount += detail.amount;
+      } else details.push(detail);
+    };
     m.panels.forEach((p) => {
       const a = sqft(p.w, p.h) * p.qty * l.qty;
       if (p.pack === "Shutter Pack") {
         if (st === "GLASS") { unpriced.add("Glass shutters"); return; }
+        const masterItem = shutterMasterItem(st);
+        if (!masterItem) { unpriced.add(`${shOf(st).label} shutter board`); return; }
         const billed = a * (1 + wst.shutter / 100);
-        details.push({ category: "Shutter board", item: p.name, specification: `${p.w}×${p.h}×${p.t ?? ""} mm · ${p.qty} per cabinet`, netQty: a, wastePct: wst.shutter, billableQty: billed, uom: "sqft", rate: sRate, amount: billed * sRate });
+        addDetail({ category: "Shutter board", itemCode: masterItem.id, item: masterItem.materialDescription, specification: `${masterItem.subgroup} · ${masterItem.thicknessMm ?? "—"}mm`, netQty: a, wastePct: wst.shutter, billableQty: billed, uom: "sqft", rate: masterItem.currentRate, amount: billed * masterItem.currentRate });
       } else {
-        // Carcass and drawer panels are cut from the carcass board.
+        const masterItem = carcassMasterItem(m.board, p);
+        if (!masterItem) { unpriced.add(`${p.mat ?? "Unknown"} ${p.t ?? ""}mm board`); return; }
         const billed = a * (1 + wst.carcass / 100);
-        details.push({ category: p.pack === "Drawer Pack" ? "Drawer panel" : "Carcass board", item: p.name, specification: `${p.w}×${p.h}×${p.t ?? ""} mm · ${p.qty} per cabinet`, netQty: a, wastePct: wst.carcass, billableQty: billed, uom: "sqft", rate: cRate, amount: billed * cRate });
+        addDetail({ category: p.pack === "Drawer Pack" ? "Drawer board" : /Back/i.test(p.name) ? "Carcass back board" : "Carcass board", itemCode: masterItem.id, item: masterItem.materialDescription, specification: `${masterItem.subgroup} · ${masterItem.thicknessMm ?? "—"}mm`, netQty: a, wastePct: wst.carcass, billableQty: billed, uom: "sqft", rate: masterItem.currentRate, amount: billed * masterItem.currentRate });
       }
     });
-    const bandM = m.panels.reduce((s, p) => s + (p.band ? perim(p.w, p.h) * p.qty * l.qty : 0), 0);
-    if (bandM > 0) {
+    ([
+      { shutter: false, master: findCostingItem({ group: "Edge Band", subgroup: "Carcass", rateBasis: "MTR" }) },
+      { shutter: true, master: findCostingItem({ group: "Edge Band", subgroup: "Shutter", rateBasis: "MTR" }) },
+    ]).forEach(({ shutter, master }) => {
+      const bandM = m.panels.reduce((sum, p) => sum + (p.band && (p.pack === "Shutter Pack") === shutter ? perim(p.w, p.h) * p.qty * l.qty : 0), 0);
+      if (!bandM || !master) return;
       const billed = bandM * (1 + wst.carcass / 100);
-      details.push({ category: "Edge band", item: "0.8mm edge band", specification: "All four edges of banded panels", netQty: bandM, wastePct: wst.carcass, billableQty: billed, uom: "RMT", rate: rates.EDGEBAND_PER_RMT, amount: billed * rates.EDGEBAND_PER_RMT });
-    }
+      addDetail({ category: shutter ? "Shutter edge band" : "Carcass edge band", itemCode: master.id, item: master.materialDescription, specification: `${master.subgroup} · ${master.thicknessMm ?? "—"}mm`, netQty: bandM, wastePct: wst.carcass, billableQty: billed, uom: "RMT", rate: master.currentRate, amount: billed * master.currentRate });
+    });
     m.hardware.forEach((h) => {
       if (/^HINGE$/i.test(h.name)) {
         const hingeItem = findCostingItem({ group: "Hinge", subgroup: "0 CRANK", type: "100° Soft Close", brand: "Hettich" });
-        if (rates.HINGE > 0) details.push({ category: "Hardware", item: hingeItem?.materialDescription ?? "Hinge", specification: "Hettich 0 crank · 100° soft close", netQty: h.qty * l.qty, wastePct: 0, billableQty: h.qty * l.qty, uom: "nos", rate: rates.HINGE, amount: h.qty * l.qty * rates.HINGE });
+        if (rates.HINGE > 0) details.push({ category: "Hardware", itemCode: hingeItem?.id ?? "—", item: hingeItem?.materialDescription ?? "Hinge", specification: "Hettich 0 crank · 100° soft close", netQty: h.qty * l.qty, wastePct: 0, billableQty: h.qty * l.qty, uom: "nos", rate: rates.HINGE, amount: h.qty * l.qty * rates.HINGE });
         else unpriced.add("Hinges");
       }
       if (/^DRAWER BOX SET/i.test(h.name)) {
@@ -1287,7 +1327,7 @@ function computeCosting(
           const subgroup = cls === "LOW" ? "Low Back" : "High Back";
           const masterDrawer = findCostingItem({ group: "Drawer System", subgroup, brand: m.drawerModel });
           const drawerRate = masterDrawer?.currentRate ?? 0;
-          if (drawerRate > 0) details.push({ category: "Drawer system", item: masterDrawer?.materialDescription ?? `${m.drawerModel} ${subgroup}`, specification: `${n} per cabinet · ${masterDrawer?.type ?? subgroup}`, netQty: n * l.qty, wastePct: 0, billableQty: n * l.qty, uom: "set", rate: drawerRate, amount: n * l.qty * drawerRate });
+          if (drawerRate > 0) details.push({ category: "Drawer system", itemCode: masterDrawer?.id ?? "—", item: masterDrawer?.materialDescription ?? `${m.drawerModel} ${subgroup}`, specification: `${n} per cabinet · ${masterDrawer?.type ?? subgroup}`, netQty: n * l.qty, wastePct: 0, billableQty: n * l.qty, uom: "set", rate: drawerRate, amount: n * l.qty * drawerRate });
           else unpriced.add(`${m.drawerModel} drawer box sets (${cls === "LOW" ? "LB" : "HB"})`);
         });
       }
@@ -1301,14 +1341,17 @@ function computeCosting(
   extrasPanels.forEach((p, i) => {
     const st = extraRows[i];
     if (st === undefined) return; // countertops emit no panels
-    const rate = shutterRate(st);
+    const boardItem = shutterMasterItem(st);
+    const rate = boardItem?.currentRate ?? shutterRate(st);
     const net = sqft(p.w, p.h) * p.qty;
     const billed = net * (1 + wst.shutter / 100);
-    const details: CostDetail[] = [{ category: "Shutter board", item: p.name, specification: `${p.w}×${p.h}×${p.t ?? ""} mm`, netQty: net, wastePct: wst.shutter, billableQty: billed, uom: "sqft", rate, amount: billed * rate }];
+    const details: CostDetail[] = [{ category: "Shutter board", itemCode: boardItem?.id ?? "—", item: boardItem?.materialDescription ?? shOf(st).mat, specification: `${boardItem?.subgroup ?? shOf(st).label} · ${boardItem?.thicknessMm ?? p.t ?? "—"}mm`, netQty: net, wastePct: wst.shutter, billableQty: billed, uom: "sqft", rate, amount: billed * rate }];
     if (p.band) {
       const band = perim(p.w, p.h) * p.qty;
       const bandBilled = band * (1 + wst.carcass / 100);
-      details.push({ category: "Edge band", item: "0.8mm edge band", specification: "All four edges", netQty: band, wastePct: wst.carcass, billableQty: bandBilled, uom: "RMT", rate: rates.EDGEBAND_PER_RMT, amount: bandBilled * rates.EDGEBAND_PER_RMT });
+      const bandItem = findCostingItem({ group: "Edge Band", subgroup: "Shutter", rateBasis: "MTR" });
+      const bandRate = bandItem?.currentRate ?? 0;
+      details.push({ category: "Edge band", itemCode: bandItem?.id ?? "—", item: bandItem?.materialDescription ?? "Shutter matching edge band", specification: "Shutter matching · 0.8mm", netQty: band, wastePct: wst.carcass, billableQty: bandBilled, uom: "RMT", rate: bandRate, amount: bandBilled * bandRate });
     }
     const cost = details.reduce((sum, detail) => sum + detail.amount, 0);
     lines.push({ label: `${p.name}`, qty: p.qty, unitCost: p.qty ? cost / p.qty : cost, cost, details });
@@ -1757,9 +1800,10 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
                         <summary style={{ cursor: "pointer", color: "var(--acc)", fontWeight: 650 }}>{c.label}</summary>
                         <div style={{ margin: "10px 0 4px", overflowX: "auto" }}>
                           <table style={{ width: "100%", minWidth: 1040, borderCollapse: "collapse", fontSize: 11 }}>
-                            <thead><tr>{["Category", "Main item", "Specification", "Net qty", "Waste", "Billable qty", "Basis", "Rate (Rs)", "Amount (Rs)"].map((heading) => <th key={heading} style={{ padding: "6px 7px", background: "#EEF1EE", border: "1px solid #D8DEDA", textAlign: "left" }}>{heading}</th>)}</tr></thead>
+                            <thead><tr>{["Category", "Master row", "Actual item code / board used", "Board type / thickness", "Total sqft / qty", "Waste", "Billable qty", "Basis", "Rate (Rs)", "Amount (Rs)"].map((heading) => <th key={heading} style={{ padding: "6px 7px", background: "#EEF1EE", border: "1px solid #D8DEDA", textAlign: "left" }}>{heading}</th>)}</tr></thead>
                             <tbody>{c.details.map((detail, index) => <tr key={`${detail.category}-${detail.item}-${index}`}>
                               <td style={{ padding: "6px 7px", border: "1px solid #E3E7E4" }}>{detail.category}</td>
+                              <td style={{ padding: "6px 7px", border: "1px solid #E3E7E4", whiteSpace: "nowrap", fontWeight: 650 }}>{detail.itemCode}</td>
                               <td style={{ padding: "6px 7px", border: "1px solid #E3E7E4" }}>{detail.item}</td>
                               <td style={{ padding: "6px 7px", border: "1px solid #E3E7E4" }}>{detail.specification}</td>
                               <td style={{ padding: "6px 7px", border: "1px solid #E3E7E4", textAlign: "right" }}>{detail.netQty.toFixed(3)}</td>
@@ -1769,7 +1813,7 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
                               <td style={{ padding: "6px 7px", border: "1px solid #E3E7E4", textAlign: "right" }}>{detail.rate.toFixed(2)}</td>
                               <td style={{ padding: "6px 7px", border: "1px solid #E3E7E4", textAlign: "right", fontWeight: 650 }}>{detail.amount.toFixed(2)}</td>
                             </tr>)}</tbody>
-                            <tfoot><tr><td colSpan={8} style={{ padding: "7px", textAlign: "right", fontWeight: 700 }}>Cabinet line total</td><td style={{ padding: "7px", textAlign: "right", fontWeight: 700 }}>{c.cost.toFixed(2)}</td></tr></tfoot>
+                            <tfoot><tr><td colSpan={9} style={{ padding: "7px", textAlign: "right", fontWeight: 700 }}>Cabinet line total</td><td style={{ padding: "7px", textAlign: "right", fontWeight: 700 }}>{c.cost.toFixed(2)}</td></tr></tfoot>
                           </table>
                         </div>
                       </details>,
