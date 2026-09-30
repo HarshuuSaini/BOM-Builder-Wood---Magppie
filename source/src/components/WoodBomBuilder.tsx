@@ -21,7 +21,7 @@ import laminateFinishesData from "@/data/laminate_finishes.json";
 import edgebandFinishesData from "@/data/edgeband_finishes.json";
 import { getPartBaseName, getPanelBaseName, normalizePartOrPanelName } from "@/lib/naming";
 import { exportBomWorkbook, exportBomCsv, type AccessoryExportRow } from "@/lib/export";
-import { DEFAULT_RATES, SHUTTER_RATE_KEY, findCostingItem, type CostingMasterItem, type CostingRates } from "@/lib/costing";
+import { COSTING_ITEMS, DEFAULT_RATES, SHUTTER_RATE_KEY, findCostingItem, type CostingMasterItem, type CostingRates } from "@/lib/costing";
 import type { BomReportRow } from "@/lib/types";
 
 /* ------------------------------------------------------------------ */
@@ -180,6 +180,40 @@ const perim = (w: number, h: number) => (2 * (w + h)) / 1000;
 const r3 = (n: number) => Math.round(n * 1000) / 1000;
 const legCount = (w: number) => (w <= 150 ? 2 : w >= 1050 ? 6 : 4);
 const hingeN = (h: number) => (h <= 900 ? 3 : h <= 1600 ? 4 : h <= 2100 ? 5 : 6);
+
+type HardwareComponent = { name: string; qty: number; uom: string; pack: string };
+
+/** Exact pack contents from the stone app architecture's HARDWARE_PACK_DEFINITIONS. */
+function expandHardwarePack(h: Hardware): HardwareComponent[] {
+  const pack = h.name;
+  const hinge = pack.match(/^HARDWARE PACK 3D HINGE 0 CRANK Set\/(\d+)$/);
+  const loftHinge = pack.match(/^HARDWARE PACK HINGE W\/OUT SOFT CLOSE Set\/(\d+)$/);
+  const glassHinge = pack.match(/^HARDWARE PACK SLIM HINGE FOR GLASS Set\/(\d+)$/);
+  const legs = pack.match(/^HARDWARE PACK PVC LEG SET\/(\d+)$/);
+  if (hinge || loftHinge || glassHinge) {
+    const match = hinge ?? loftHinge ?? glassHinge;
+    const n = Number(match?.[1] ?? 0);
+    const hingeName = glassHinge
+      ? "HINGE SLIM FOR ALU PROFILE 0 CRANK SOFT CLOSE 95 DEG XX GUN BLACK DPOA-209 LIAN"
+      : loftHinge
+        ? "HINGE 0 CRANK W/OUT SOFT CLOSE 95 DEG XX GUN BLACK DPW-209 LIAN"
+        : "HINGE 0 CRANK SOFT CLOSE 5 HOLE XX BLACK 3D MS CRY";
+    return [
+      { name: hingeName, qty: n * h.qty, uom: "PCS", pack },
+      { name: "SCREW FOR CHIP BOARD 16XX4 SS 304 CINE", qty: n * 4 * h.qty, uom: "PCS", pack },
+      { name: "DOOR BUMPERS 12.0 MM X 3.2 MM BS2-1 EBC", qty: 4 * h.qty, uom: "PCS", pack },
+    ];
+  }
+  if (legs) {
+    const n = Number(legs[1]);
+    return [
+      { name: "LEG PVC TRIAGLE MOUNTING BRACKET XX100 BLACK REH", qty: n * h.qty, uom: "PCS", pack },
+      { name: "GLUE BONDTITE FAST & CLEAR FOR STONE XX AGG", qty: n * 0.02 * h.qty, uom: "Kg", pack },
+      { name: "SKIRTING CLIP FOR Q PLINTH LEG XX25 WHITE REH", qty: n * h.qty, uom: "PCS", pack },
+    ];
+  }
+  return [{ name: h.name, qty: h.qty, uom: h.uom ?? "nos", pack: h.pack ?? "Hardware Pack" }];
+}
 
 /* ------------------------------------------------------------------ */
 /*  Boards & shutter types                                             */
@@ -662,7 +696,13 @@ function buildShutters(
     });
   }
 
-  hardware.push({ name: "HINGE", qty: hingeN(H) * leaves, uom: "nos", pack: "Shutter Pack" });
+  const hingeQty = hingeN(H) * leaves;
+  const hingePack = ZONES[zk].kind === "loft"
+    ? `HARDWARE PACK HINGE W/OUT SOFT CLOSE Set/${hingeQty}`
+    : isGlassShutterFam(fk)
+      ? `HARDWARE PACK SLIM HINGE FOR GLASS Set/${hingeQty}`
+      : `HARDWARE PACK 3D HINGE 0 CRANK Set/${hingeQty}`;
+  hardware.push({ name: hingePack, qty: 1, uom: "set", pack: "Shutter Pack" });
   pkRows.push({ pack: "Shutter Pack", type: "sub_bom", qty: leaves });
 
   return { leaves, leafW, leafH };
@@ -787,7 +827,7 @@ function buildCarcassInnerRaw(cfg: {
 
   /* --- legs --- */
   if (z.mount === "legs") {
-    hardware.push({ name: `HARDWARE PACK PVC LEG SET/${legCount(W)}`, qty: legCount(W), uom: "nos", pack: "Hardware Pack" });
+    hardware.push({ name: `HARDWARE PACK PVC LEG SET/${legCount(W)}`, qty: 1, uom: "set", pack: "Hardware Pack" });
   }
 
   /* --- consumables --- */
@@ -874,7 +914,7 @@ function buildRawRows(m: CarcassModel): Array<{ item: string; pack: string; uom:
   const rows: Array<{ item: string; pack: string; uom: string; qty: number }> = [];
   m.panels.forEach((p) => rows.push({ item: normalizePartOrPanelName(p.name), pack: p.pack, uom: "nos", qty: p.qty }));
   m.profiles.forEach((p) => rows.push({ item: `${p.name} ${p.len}MM`, pack: p.pack, uom: "nos", qty: p.qty }));
-  m.hardware.forEach((h) => rows.push({ item: h.name, pack: h.pack ?? "Hardware Pack", uom: h.uom ?? "nos", qty: h.qty }));
+  m.hardware.forEach((h) => expandHardwarePack(h).forEach((component) => rows.push({ item: component.name, pack: component.pack, uom: component.uom, qty: component.qty })));
   m.cons.forEach((c) => rows.push({ item: c.name, pack: c.pack, uom: c.uom, qty: c.qty }));
   return rows;
 }
@@ -978,9 +1018,14 @@ function buildFullBomData(project: ProjectLine[], so: string, finish: string, ws
     m.hardware.forEach((h) => {
       rows.push(makeRow({
         SO: so, Elevation: line.elevation, "Main Group": "Cabinet", "Sub Group": h.pack ?? "Hardware Pack",
-        Level: 2, Item: h.name, Type: "component",
+        Level: 2, Item: h.name, Type: "sub_bom",
         "SO Qty": h.qty * q, "Actual Qty": h.qty * q, Unit: h.uom ?? "nos",
       }));
+      expandHardwarePack(h).filter((component) => component.name !== h.name).forEach((component) => rows.push(makeRow({
+        SO: so, Elevation: line.elevation, "Main Group": "Cabinet", "Sub Group": "Hardware Pack",
+        Level: 3, Item: component.name, Type: "component",
+        "SO Qty": r3(component.qty * q), "Actual Qty": r3(component.qty * q), Unit: component.uom,
+      })));
     });
 
     m.cons.forEach((c) => {
@@ -1313,11 +1358,11 @@ function computeCosting(
       const billed = bandM * (1 + wst.carcass / 100);
       addDetail({ category: shutter ? "Shutter edge band" : "Carcass edge band", itemCode: master.id, item: master.materialDescription, specification: `${master.subgroup} · ${master.thicknessMm ?? "—"}mm`, netQty: bandM, wastePct: wst.carcass, billableQty: billed, uom: "RMT", rate: master.currentRate, amount: billed * master.currentRate });
     });
-    m.hardware.forEach((h) => {
-      if (/^HINGE$/i.test(h.name)) {
-        const hingeItem = findCostingItem({ group: "Hinge", subgroup: "0 CRANK", type: "100° Soft Close", brand: "Hettich" });
-        if (rates.HINGE > 0) details.push({ category: "Hardware", itemCode: hingeItem?.id ?? "—", item: hingeItem?.materialDescription ?? "Hinge", specification: "Hettich 0 crank · 100° soft close", netQty: h.qty * l.qty, wastePct: 0, billableQty: h.qty * l.qty, uom: "nos", rate: rates.HINGE, amount: h.qty * l.qty * rates.HINGE });
-        else unpriced.add("Hinges");
+    m.hardware.flatMap(expandHardwarePack).forEach((h) => {
+      if (/^HINGE\b/i.test(h.name)) {
+        const hingeItem = COSTING_ITEMS.find((item) => item.materialDescription.toUpperCase() === h.name.toUpperCase());
+        if (hingeItem) details.push({ category: "Hardware", itemCode: hingeItem.id, item: h.name, specification: h.pack, netQty: h.qty * l.qty, wastePct: 0, billableQty: h.qty * l.qty, uom: "nos", rate: hingeItem.currentRate, amount: h.qty * l.qty * hingeItem.currentRate });
+        else unpriced.add(h.name);
       }
       if (/^DRAWER BOX SET/i.test(h.name)) {
         const family = famSetOf(m.zk)[m.fk];
@@ -1500,7 +1545,7 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
   const stockNames = useMemo(() => {
     const map = new Map<string, number>();
     project.forEach((l) => {
-      l.m.hardware.forEach((h) => map.set(h.name, (map.get(h.name) ?? 0) + h.qty * l.qty));
+      l.m.hardware.flatMap(expandHardwarePack).forEach((h) => map.set(h.name, (map.get(h.name) ?? 0) + h.qty * l.qty));
       l.m.cons.forEach((c) => map.set(c.name, (map.get(c.name) ?? 0) + c.qty * l.qty));
     });
     return [...map.entries()].map(([name, req]) => ({ name, req: r3(req) }));
@@ -1669,7 +1714,7 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
               </>}
               <h4>Hardware</h4>
               <Tbl head={["Pack", "Item", "Qty", "Unit"]} num={[2]}
-                rows={m.hardware.map((h) => [h.pack ?? "Hardware Pack", h.name, h.qty, h.uom ?? "nos"])} />
+                rows={m.hardware.flatMap(expandHardwarePack).map((h) => [h.pack, h.name, r3(h.qty), h.uom])} />
               {m.cons.length > 0 && <>
                 <h4>Consumables</h4>
                 <Tbl head={["Pack", "Item", "Qty", "Unit"]} num={[2]}
