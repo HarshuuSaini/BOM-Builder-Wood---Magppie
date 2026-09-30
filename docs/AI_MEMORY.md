@@ -251,6 +251,11 @@ the user has hinted at nesting/optimisation beyond a flat wastage percentage —
   fixing, low/high drawer packs, wall hangers, drawer fixing sizes, bottle
   pullouts and Kaku fittings. A cabinet carries one pack (`qty 1 set`) and the
   downstream views expand its exact component quantities.
+- Stone pack components are translated to confirmed wood-master items through
+  `source/src/data/hardware_component_mapping.json`. Twelve matches currently
+  resolve to wood item descriptions/rates; the fourteen unmatched stone-only
+  components are documented in `docs/HARDWARE_MAPPING.md` and must not be
+  costed using guessed substitutes.
 
 ---
 

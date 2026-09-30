@@ -20,6 +20,7 @@ import boardFinishesData from "@/data/board_finishes.json";
 import laminateFinishesData from "@/data/laminate_finishes.json";
 import edgebandFinishesData from "@/data/edgeband_finishes.json";
 import hardwarePacksData from "@/data/hardware_packs.json";
+import hardwareComponentMappingData from "@/data/hardware_component_mapping.json";
 import { getPartBaseName, getPanelBaseName, normalizePartOrPanelName } from "@/lib/naming";
 import { exportBomWorkbook, exportBomCsv, type AccessoryExportRow } from "@/lib/export";
 import { COSTING_ITEMS, DEFAULT_RATES, SHUTTER_RATE_KEY, findCostingItem, type CostingMasterItem, type CostingRates } from "@/lib/costing";
@@ -185,13 +186,19 @@ const hingeN = (h: number) => (h <= 900 ? 3 : h <= 1600 ? 4 : h <= 2100 ? 5 : 6)
 type HardwareComponent = { name: string; qty: number; uom: string; pack: string };
 type HardwarePackDefinition = { component: string; qty: number; uom: string };
 const HARDWARE_PACK_DEFINITIONS = hardwarePacksData.definitions as Record<string, HardwarePackDefinition[]>;
+const HARDWARE_COMPONENT_MAPPING = hardwareComponentMappingData as Record<string, string>;
+
+function woodHardwareName(stoneName: string): string {
+  const masterId = HARDWARE_COMPONENT_MAPPING[stoneName];
+  return masterId ? COSTING_ITEMS.find((item) => item.id === masterId)?.materialDescription ?? stoneName : stoneName;
+}
 
 /** Exact pack contents from the stone app architecture's HARDWARE_PACK_DEFINITIONS. */
 function expandHardwarePack(h: Hardware): HardwareComponent[] {
   const pack = h.name;
   const definition = HARDWARE_PACK_DEFINITIONS[pack];
   if (definition) return definition.map((component) => ({
-    name: component.component,
+    name: woodHardwareName(component.component),
     qty: component.qty * h.qty,
     uom: component.uom,
     pack,
@@ -210,9 +217,9 @@ function expandHardwarePack(h: Hardware): HardwareComponent[] {
         ? "HINGE 0 CRANK W/OUT SOFT CLOSE 95 DEG XX GUN BLACK DPW-209 LIAN"
         : "HINGE 0 CRANK SOFT CLOSE 5 HOLE XX BLACK 3D MS CRY";
     return [
-      { name: hingeName, qty: n * h.qty, uom: "PCS", pack },
-      { name: "SCREW FOR CHIP BOARD 16XX4 SS 304 CINE", qty: n * 4 * h.qty, uom: "PCS", pack },
-      { name: "DOOR BUMPERS 12.0 MM X 3.2 MM BS2-1 EBC", qty: 4 * h.qty, uom: "PCS", pack },
+      { name: woodHardwareName(hingeName), qty: n * h.qty, uom: "PCS", pack },
+      { name: woodHardwareName("SCREW FOR CHIP BOARD 16XX4 SS 304 CINE"), qty: n * 4 * h.qty, uom: "PCS", pack },
+      { name: woodHardwareName("DOOR BUMPERS 12.0 MM X 3.2 MM BS2-1 EBC"), qty: 4 * h.qty, uom: "PCS", pack },
     ];
   }
   return [{ name: h.name, qty: h.qty, uom: h.uom ?? "nos", pack: h.pack ?? "Hardware Pack" }];
@@ -1397,6 +1404,7 @@ function computeCosting(
         const hingeItem = COSTING_ITEMS.find((item) => item.materialDescription.toUpperCase() === h.name.toUpperCase());
         if (hingeItem) details.push({ category: "Hardware", itemCode: hingeItem.id, item: h.name, specification: h.pack, netQty: h.qty * l.qty, wastePct: 0, billableQty: h.qty * l.qty, uom: "nos", rate: hingeItem.currentRate, amount: h.qty * l.qty * hingeItem.currentRate });
         else unpriced.add(h.name);
+        return;
       }
       if (/^DRAWER BOX SET/i.test(h.name)) {
         const family = famSetOf(m.zk)[m.fk];
@@ -1409,7 +1417,11 @@ function computeCosting(
           if (drawerRate > 0) details.push({ category: "Drawer system", itemCode: masterDrawer?.id ?? "—", item: masterDrawer?.materialDescription ?? `${m.drawerModel} ${subgroup}`, specification: `${n} per cabinet · ${masterDrawer?.type ?? subgroup}`, netQty: n * l.qty, wastePct: 0, billableQty: n * l.qty, uom: "set", rate: drawerRate, amount: n * l.qty * drawerRate });
           else unpriced.add(`${m.drawerModel} drawer box sets (${cls === "LOW" ? "LB" : "HB"})`);
         });
+        return;
       }
+      const masterHardware = COSTING_ITEMS.find((item) => item.materialDescription.toUpperCase() === h.name.toUpperCase());
+      if (masterHardware) addDetail({ category: masterHardware.group, itemCode: masterHardware.id, item: masterHardware.materialDescription, specification: h.pack, netQty: h.qty * l.qty, wastePct: 0, billableQty: h.qty * l.qty, uom: masterHardware.rateBasis === "SET" ? "set" : "nos", rate: masterHardware.currentRate, amount: h.qty * l.qty * masterHardware.currentRate });
+      else if (h.name !== m.hardware.find((source) => source.name === h.name)?.name) unpriced.add(h.name);
     });
     const cost = details.reduce((sum, detail) => sum + detail.amount, 0);
     lines.push({ label: `${l.elevation} · ${m.code}`, code: m.code, qty: l.qty, unitCost: l.qty ? cost / l.qty : cost, cost, details });
