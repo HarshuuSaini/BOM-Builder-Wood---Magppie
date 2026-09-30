@@ -238,6 +238,11 @@ the user has hinted at nesting/optimisation beyond a flat wastage percentage —
 - Verify `npm run build`, commit the JSON, and redeploy. Vercel functions cannot
   persist edits back into a bundled JSON file, so `/admin` is intentionally a
   searchable read-only view rather than a misleading save form.
+- The Project & Totals costing table is auditable: clicking a cabinet code
+  expands its board/shutter panels, edge band, hinges and drawer systems with
+  net quantity, wastage, billable quantity, rate basis, master rate and amount.
+  Drawer Low/High Back rates are separated and matched to the selected brand;
+  missing brand rates are flagged as unpriced rather than substituted.
 
 ---
 

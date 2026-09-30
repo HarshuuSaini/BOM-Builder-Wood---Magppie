@@ -21,7 +21,7 @@ import laminateFinishesData from "@/data/laminate_finishes.json";
 import edgebandFinishesData from "@/data/edgeband_finishes.json";
 import { getPartBaseName, getPanelBaseName, normalizePartOrPanelName } from "@/lib/naming";
 import { exportBomWorkbook, exportBomCsv, type AccessoryExportRow } from "@/lib/export";
-import { DEFAULT_RATES, CARCASS_RATE_KEY, SHUTTER_RATE_KEY, type CostingRates } from "@/lib/costing";
+import { DEFAULT_RATES, CARCASS_RATE_KEY, SHUTTER_RATE_KEY, findCostingItem, type CostingRates } from "@/lib/costing";
 import type { BomReportRow } from "@/lib/types";
 
 /* ------------------------------------------------------------------ */
@@ -1214,7 +1214,18 @@ function buildAccessoryRows(accs: AccessoryRow[], project: ProjectLine[], so: st
 
 /* --- Costing — rupee totals for the user; factors stay on /admin --- */
 
-type LineCost = { label: string; qty: number; cost: number };
+type CostDetail = {
+  category: string;
+  item: string;
+  specification: string;
+  netQty: number;
+  wastePct: number;
+  billableQty: number;
+  uom: "sqft" | "RMT" | "nos" | "set";
+  rate: number;
+  amount: number;
+};
+type LineCost = { label: string; code?: string; qty: number; unitCost: number; cost: number; details: CostDetail[] };
 type CostingResult = { lines: LineCost[]; total: number; unpriced: string[] };
 
 /**
@@ -1244,28 +1255,45 @@ function computeCosting(
     const cRate = rates[CARCASS_RATE_KEY[m.board] ?? "CARCASS_POSTLAM_PLY"];
     const st = isGlassShutterFam(m.fk) ? "GLASS" : m.shType;
     const sRate = shutterRate(st);
-    let cost = 0;
+    const details: CostDetail[] = [];
     m.panels.forEach((p) => {
-      const a = sqft(p.w, p.h) * p.qty;
+      const a = sqft(p.w, p.h) * p.qty * l.qty;
       if (p.pack === "Shutter Pack") {
         if (st === "GLASS") { unpriced.add("Glass shutters"); return; }
-        cost += a * (1 + wst.shutter / 100) * sRate;
+        const billed = a * (1 + wst.shutter / 100);
+        details.push({ category: "Shutter board", item: p.name, specification: `${p.w}×${p.h}×${p.t ?? ""} mm · ${p.qty} per cabinet`, netQty: a, wastePct: wst.shutter, billableQty: billed, uom: "sqft", rate: sRate, amount: billed * sRate });
       } else {
         // Carcass and drawer panels are cut from the carcass board.
-        cost += a * (1 + wst.carcass / 100) * cRate;
+        const billed = a * (1 + wst.carcass / 100);
+        details.push({ category: p.pack === "Drawer Pack" ? "Drawer panel" : "Carcass board", item: p.name, specification: `${p.w}×${p.h}×${p.t ?? ""} mm · ${p.qty} per cabinet`, netQty: a, wastePct: wst.carcass, billableQty: billed, uom: "sqft", rate: cRate, amount: billed * cRate });
       }
     });
-    const bandM = m.panels.reduce((s, p) => s + (p.band ? perim(p.w, p.h) * p.qty : 0), 0);
-    cost += bandM * (1 + wst.carcass / 100) * rates.EDGEBAND_PER_RMT;
+    const bandM = m.panels.reduce((s, p) => s + (p.band ? perim(p.w, p.h) * p.qty * l.qty : 0), 0);
+    if (bandM > 0) {
+      const billed = bandM * (1 + wst.carcass / 100);
+      details.push({ category: "Edge band", item: "0.8mm edge band", specification: "All four edges of banded panels", netQty: bandM, wastePct: wst.carcass, billableQty: billed, uom: "RMT", rate: rates.EDGEBAND_PER_RMT, amount: billed * rates.EDGEBAND_PER_RMT });
+    }
     m.hardware.forEach((h) => {
       if (/^HINGE$/i.test(h.name)) {
-        if (rates.HINGE > 0) cost += h.qty * rates.HINGE; else unpriced.add("Hinges");
+        const hingeItem = findCostingItem({ group: "Hinge", subgroup: "0 CRANK", type: "100° Soft Close", brand: "Hettich" });
+        if (rates.HINGE > 0) details.push({ category: "Hardware", item: hingeItem?.materialDescription ?? "Hinge", specification: "Hettich 0 crank · 100° soft close", netQty: h.qty * l.qty, wastePct: 0, billableQty: h.qty * l.qty, uom: "nos", rate: rates.HINGE, amount: h.qty * l.qty * rates.HINGE });
+        else unpriced.add("Hinges");
       }
       if (/^DRAWER BOX SET/i.test(h.name)) {
-        if (rates.DRAWER_HB > 0) cost += h.qty * rates.DRAWER_HB; else unpriced.add("Drawer box sets (LB/HB)");
+        const family = famSetOf(m.zk)[m.fk];
+        const variant = family?.variants?.find((candidate: any) => candidate.id === m.vid);
+        const mix = family && variant ? drawerBreakdown(family, variant) : [{ cls: "HIGH" as DrawerClass, n: h.qty }];
+        mix.forEach(({ cls, n }) => {
+          const subgroup = cls === "LOW" ? "Low Back" : "High Back";
+          const masterDrawer = findCostingItem({ group: "Drawer System", subgroup, brand: m.drawerModel });
+          const drawerRate = masterDrawer?.currentRate ?? 0;
+          if (drawerRate > 0) details.push({ category: "Drawer system", item: masterDrawer?.materialDescription ?? `${m.drawerModel} ${subgroup}`, specification: `${n} per cabinet · ${masterDrawer?.type ?? subgroup}`, netQty: n * l.qty, wastePct: 0, billableQty: n * l.qty, uom: "set", rate: drawerRate, amount: n * l.qty * drawerRate });
+          else unpriced.add(`${m.drawerModel} drawer box sets (${cls === "LOW" ? "LB" : "HB"})`);
+        });
       }
     });
-    lines.push({ label: `${l.elevation} · ${m.code}`, qty: l.qty, cost: cost * l.qty });
+    const cost = details.reduce((sum, detail) => sum + detail.amount, 0);
+    lines.push({ label: `${l.elevation} · ${m.code}`, code: m.code, qty: l.qty, unitCost: l.qty ? cost / l.qty : cost, cost, details });
   });
 
   // Fillers & visible panels — shutter-type panels, costed at the shutter rate.
@@ -1274,9 +1302,16 @@ function computeCosting(
     const st = extraRows[i];
     if (st === undefined) return; // countertops emit no panels
     const rate = shutterRate(st);
-    let cost = sqft(p.w, p.h) * p.qty * (1 + wst.shutter / 100) * rate;
-    if (p.band) cost += perim(p.w, p.h) * p.qty * (1 + wst.carcass / 100) * rates.EDGEBAND_PER_RMT;
-    lines.push({ label: `${p.name}`, qty: p.qty, cost });
+    const net = sqft(p.w, p.h) * p.qty;
+    const billed = net * (1 + wst.shutter / 100);
+    const details: CostDetail[] = [{ category: "Shutter board", item: p.name, specification: `${p.w}×${p.h}×${p.t ?? ""} mm`, netQty: net, wastePct: wst.shutter, billableQty: billed, uom: "sqft", rate, amount: billed * rate }];
+    if (p.band) {
+      const band = perim(p.w, p.h) * p.qty;
+      const bandBilled = band * (1 + wst.carcass / 100);
+      details.push({ category: "Edge band", item: "0.8mm edge band", specification: "All four edges", netQty: band, wastePct: wst.carcass, billableQty: bandBilled, uom: "RMT", rate: rates.EDGEBAND_PER_RMT, amount: bandBilled * rates.EDGEBAND_PER_RMT });
+    }
+    const cost = details.reduce((sum, detail) => sum + detail.amount, 0);
+    lines.push({ label: `${p.name}`, qty: p.qty, unitCost: p.qty ? cost / p.qty : cost, cost, details });
   });
 
   return { lines, total: lines.reduce((a, x) => a + x.cost, 0), unpriced: [...unpriced] };
@@ -1712,13 +1747,35 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
                 </>}
               </>}
 
-              {/* ---- Costing (user sees rupee totals only) ---- */}
+              {/* ---- Costing with an auditable per-cabinet breakdown ---- */}
               <SecHead title="Costing (Rs)" />
               {costing.lines.length === 0 ? <div className="empty">Add cabinets to see costing.</div> : <>
-                <Tbl head={["Item", "Qty", "Cost (Rs)"]} num={[1, 2]}
+                <Tbl head={["Cabinet / Item", "Qty", "Per cabinet (Rs)", "Total (Rs)"]} num={[1, 2, 3]}
                   rows={[
-                    ...costing.lines.map((c) => [c.label, c.qty, c.cost.toFixed(0)]),
-                    [<b key="t">Total</b>, "", <b key="v">{costing.total.toFixed(0)}</b>],
+                    ...costing.lines.map((c) => [
+                      <details key={c.label}>
+                        <summary style={{ cursor: "pointer", color: "var(--acc)", fontWeight: 650 }}>{c.label}</summary>
+                        <div style={{ margin: "10px 0 4px", overflowX: "auto" }}>
+                          <table style={{ width: "100%", minWidth: 1040, borderCollapse: "collapse", fontSize: 11 }}>
+                            <thead><tr>{["Category", "Main item", "Specification", "Net qty", "Waste", "Billable qty", "Basis", "Rate (Rs)", "Amount (Rs)"].map((heading) => <th key={heading} style={{ padding: "6px 7px", background: "#EEF1EE", border: "1px solid #D8DEDA", textAlign: "left" }}>{heading}</th>)}</tr></thead>
+                            <tbody>{c.details.map((detail, index) => <tr key={`${detail.category}-${detail.item}-${index}`}>
+                              <td style={{ padding: "6px 7px", border: "1px solid #E3E7E4" }}>{detail.category}</td>
+                              <td style={{ padding: "6px 7px", border: "1px solid #E3E7E4" }}>{detail.item}</td>
+                              <td style={{ padding: "6px 7px", border: "1px solid #E3E7E4" }}>{detail.specification}</td>
+                              <td style={{ padding: "6px 7px", border: "1px solid #E3E7E4", textAlign: "right" }}>{detail.netQty.toFixed(3)}</td>
+                              <td style={{ padding: "6px 7px", border: "1px solid #E3E7E4", textAlign: "right" }}>{detail.wastePct}%</td>
+                              <td style={{ padding: "6px 7px", border: "1px solid #E3E7E4", textAlign: "right" }}>{detail.billableQty.toFixed(3)}</td>
+                              <td style={{ padding: "6px 7px", border: "1px solid #E3E7E4" }}>{detail.uom}</td>
+                              <td style={{ padding: "6px 7px", border: "1px solid #E3E7E4", textAlign: "right" }}>{detail.rate.toFixed(2)}</td>
+                              <td style={{ padding: "6px 7px", border: "1px solid #E3E7E4", textAlign: "right", fontWeight: 650 }}>{detail.amount.toFixed(2)}</td>
+                            </tr>)}</tbody>
+                            <tfoot><tr><td colSpan={8} style={{ padding: "7px", textAlign: "right", fontWeight: 700 }}>Cabinet line total</td><td style={{ padding: "7px", textAlign: "right", fontWeight: 700 }}>{c.cost.toFixed(2)}</td></tr></tfoot>
+                          </table>
+                        </div>
+                      </details>,
+                      c.qty, c.unitCost.toFixed(2), c.cost.toFixed(2),
+                    ]),
+                    [<b key="t">Project costing total</b>, "", "", <b key="v">{costing.total.toFixed(2)}</b>],
                   ]} />
                 {costing.unpriced.length > 0 && (
                   <Stub list={costing.unpriced.map((u) => `${u} — no rate set yet; not included in the total. An admin can set the rate on /admin.`)} />
