@@ -1315,10 +1315,11 @@ type CostDetail = {
 type LineCost = { label: string; code?: string; qty: number; unitCost: number; cost: number; details: CostDetail[] };
 type CostingResult = { lines: LineCost[]; total: number; unpriced: string[] };
 type ChargeMode = "sqft" | "direct";
-type ServiceCharge = { mode: ChargeMode; value: number };
+type NumericInput = number | "";
+type ServiceCharge = { mode: ChargeMode; value: NumericInput };
 type ProjectPricingInputs = {
-  conversionPct: number;
-  profitPct: number;
+  conversionPct: NumericInput;
+  profitPct: NumericInput;
   transportation: ServiceCharge;
   installation: ServiceCharge;
   loading: ServiceCharge;
@@ -1326,11 +1327,11 @@ type ProjectPricingInputs = {
 };
 
 const DEFAULT_PROJECT_PRICING: ProjectPricingInputs = {
-  conversionPct: 0,
-  profitPct: 0,
-  transportation: { mode: "direct", value: 0 },
-  installation: { mode: "direct", value: 0 },
-  loading: { mode: "direct", value: 0 },
+  conversionPct: "",
+  profitPct: "",
+  transportation: { mode: "direct", value: "" },
+  installation: { mode: "direct", value: "" },
+  loading: { mode: "direct", value: "" },
   includeTax: false,
 };
 
@@ -1595,26 +1596,41 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
     [project, fillers, visiblePanels, extras, shType, rates, waste],
   );
   const projectPricing = useMemo(() => {
-    const billableSqft = costing.lines.reduce(
-      (lineTotal, line) => lineTotal + line.details.reduce(
+    const cabinetAreas = costing.lines.map((line) => ({
+      label: line.label,
+      sqft: line.details.reduce(
         (detailTotal, detail) => detailTotal + (detail.uom === "sqft" ? detail.billableQty : 0),
         0,
       ),
-      0,
-    );
+    }));
+    const billableSqft = cabinetAreas.reduce((total, line) => total + line.sqft, 0);
     const serviceAmount = (charge: ServiceCharge) => charge.mode === "sqft"
-      ? charge.value * billableSqft
-      : charge.value;
+      ? Number(charge.value || 0) * billableSqft
+      : Number(charge.value || 0);
     const baseCost = costing.total;
-    const conversion = baseCost * projectPricingInputs.conversionPct / 100;
+    const conversionPct = Number(projectPricingInputs.conversionPct || 0);
+    const profitPct = Number(projectPricingInputs.profitPct || 0);
+    const conversion = baseCost * conversionPct / 100;
     const convertedCost = baseCost + conversion;
-    const profit = convertedCost * projectPricingInputs.profitPct / 100;
+    const profit = convertedCost * profitPct / 100;
     const transportation = serviceAmount(projectPricingInputs.transportation);
     const installation = serviceAmount(projectPricingInputs.installation);
     const loading = serviceAmount(projectPricingInputs.loading);
     const subtotal = convertedCost + profit + transportation + installation + loading;
     const tax = projectPricingInputs.includeTax ? subtotal * 0.18 : 0;
-    return { billableSqft, baseCost, conversion, convertedCost, profit, transportation, installation, loading, subtotal, tax, grandTotal: subtotal + tax };
+    const allocatedCharges = cabinetAreas.map((line) => {
+      const share = billableSqft > 0 ? line.sqft / billableSqft : 0;
+      const allocation = (charge: ServiceCharge, total: number) => charge.mode === "sqft"
+        ? line.sqft * Number(charge.value || 0)
+        : total * share;
+      return {
+        ...line,
+        transportation: allocation(projectPricingInputs.transportation, transportation),
+        installation: allocation(projectPricingInputs.installation, installation),
+        loading: allocation(projectPricingInputs.loading, loading),
+      };
+    });
+    return { billableSqft, baseCost, conversion, convertedCost, profit, transportation, installation, loading, subtotal, tax, grandTotal: subtotal + tax, allocatedCharges };
   }, [costing, projectPricingInputs]);
   const allStubs = useMemo(() => [...new Set(project.flatMap((l) => l.m.stubs))], [project]);
 
@@ -1965,11 +1981,11 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
                     <Fld label="Conversion (%)">
                       <input type="number" min={0} step="0.01" value={projectPricingInputs.conversionPct}
-                        onChange={(e) => setProjectPricingInputs((p) => ({ ...p, conversionPct: Math.max(0, Number(e.target.value) || 0) }))} />
+                        placeholder="0" onChange={(e) => setProjectPricingInputs((p) => ({ ...p, conversionPct: e.target.value === "" ? "" : Math.max(0, Number(e.target.value)) }))} />
                     </Fld>
                     <Fld label="Profit (%)">
                       <input type="number" min={0} step="0.01" value={projectPricingInputs.profitPct}
-                        onChange={(e) => setProjectPricingInputs((p) => ({ ...p, profitPct: Math.max(0, Number(e.target.value) || 0) }))} />
+                        placeholder="0" onChange={(e) => setProjectPricingInputs((p) => ({ ...p, profitPct: e.target.value === "" ? "" : Math.max(0, Number(e.target.value)) }))} />
                     </Fld>
                     {([
                       ["Transportation", "transportation"],
@@ -1984,28 +2000,49 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
                             <option value="sqft">Rs / sqft</option>
                           </select>
                           <input aria-label={`${label} rate`} type="number" min={0} step="0.01" value={projectPricingInputs[key].value}
-                            onChange={(e) => setProjectPricingInputs((p) => ({ ...p, [key]: { ...p[key], value: Math.max(0, Number(e.target.value) || 0) } }))} />
+                            placeholder="0" onChange={(e) => setProjectPricingInputs((p) => ({ ...p, [key]: { ...p[key], value: e.target.value === "" ? "" : Math.max(0, Number(e.target.value)) } }))} />
                         </div>
                       </Fld>
                     ))}
-                    <Fld label="Tax">
-                      <label style={{ display: "flex", alignItems: "center", gap: 8, minHeight: 36, fontWeight: 600 }}>
-                        <input type="checkbox" checked={projectPricingInputs.includeTax}
-                          onChange={(e) => setProjectPricingInputs((p) => ({ ...p, includeTax: e.target.checked }))} />
-                        Include GST (18%)
-                      </label>
-                    </Fld>
+                    <label style={{ display: "flex", alignItems: "center", gap: 8, minHeight: 36, alignSelf: "end", paddingBottom: 2, fontWeight: 650, cursor: "pointer" }}>
+                      <input type="checkbox" checked={projectPricingInputs.includeTax}
+                        onChange={(e) => setProjectPricingInputs((p) => ({ ...p, includeTax: e.target.checked }))} />
+                      Include GST (18%)
+                    </label>
+                  </div>
+
+                  <div style={{ marginTop: 14, overflowX: "auto" }}>
+                    <table style={{ width: "100%", minWidth: 780, borderCollapse: "collapse", background: "white", fontSize: 12 }}>
+                      <thead><tr>{["Cabinet / item", "Billable sqft", "Transportation", "Installation", "Loading / Unloading"].map((heading) => <th key={heading} style={{ padding: "7px 9px", background: "#EEF1EE", border: "1px solid #D8DEDA", textAlign: heading === "Cabinet / item" ? "left" : "right" }}>{heading}</th>)}</tr></thead>
+                      <tbody>{projectPricing.allocatedCharges.map((line, index) => <tr key={`${line.label}-${index}`}>
+                        <td style={{ padding: "7px 9px", border: "1px solid #E3E7E4" }}>{line.label}</td>
+                        <td style={{ padding: "7px 9px", border: "1px solid #E3E7E4", textAlign: "right" }}>{line.sqft.toFixed(3)}</td>
+                        <td style={{ padding: "7px 9px", border: "1px solid #E3E7E4", textAlign: "right" }}>Rs {line.transportation.toFixed(2)}</td>
+                        <td style={{ padding: "7px 9px", border: "1px solid #E3E7E4", textAlign: "right" }}>Rs {line.installation.toFixed(2)}</td>
+                        <td style={{ padding: "7px 9px", border: "1px solid #E3E7E4", textAlign: "right" }}>Rs {line.loading.toFixed(2)}</td>
+                      </tr>)}</tbody>
+                      <tfoot><tr>
+                        <td style={{ padding: "8px 9px", border: "1px solid #D8DEDA", fontWeight: 750 }}>All cabinets total</td>
+                        <td style={{ padding: "8px 9px", border: "1px solid #D8DEDA", textAlign: "right", fontWeight: 750 }}>{projectPricing.billableSqft.toFixed(3)}</td>
+                        <td style={{ padding: "8px 9px", border: "1px solid #D8DEDA", textAlign: "right", fontWeight: 750 }}>Rs {projectPricing.transportation.toFixed(2)}</td>
+                        <td style={{ padding: "8px 9px", border: "1px solid #D8DEDA", textAlign: "right", fontWeight: 750 }}>Rs {projectPricing.installation.toFixed(2)}</td>
+                        <td style={{ padding: "8px 9px", border: "1px solid #D8DEDA", textAlign: "right", fontWeight: 750 }}>Rs {projectPricing.loading.toFixed(2)}</td>
+                      </tr></tfoot>
+                    </table>
+                    {(projectPricingInputs.transportation.mode === "direct" || projectPricingInputs.installation.mode === "direct" || projectPricingInputs.loading.mode === "direct") && (
+                      <p style={{ margin: "6px 0 0", color: "#617069", fontSize: 11 }}>Direct service prices are allocated to each cabinet in proportion to its billable square footage.</p>
+                    )}
                   </div>
 
                   <div style={{ marginTop: 16, overflowX: "auto" }}>
                     <table style={{ width: "100%", borderCollapse: "collapse", background: "white" }}>
                       <tbody>{[
                         ["Base cabinet / item costing", projectPricing.baseCost],
-                        [`Conversion (${projectPricingInputs.conversionPct.toFixed(2)}%)`, projectPricing.conversion],
-                        [`Profit (${projectPricingInputs.profitPct.toFixed(2)}% of cost after conversion)`, projectPricing.profit],
-                        [`Transportation${projectPricingInputs.transportation.mode === "sqft" ? ` (${projectPricingInputs.transportation.value.toFixed(2)} / sqft)` : " (direct)"}`, projectPricing.transportation],
-                        [`Installation${projectPricingInputs.installation.mode === "sqft" ? ` (${projectPricingInputs.installation.value.toFixed(2)} / sqft)` : " (direct)"}`, projectPricing.installation],
-                        [`Loading / Unloading${projectPricingInputs.loading.mode === "sqft" ? ` (${projectPricingInputs.loading.value.toFixed(2)} / sqft)` : " (direct)"}`, projectPricing.loading],
+                        [`Conversion (${Number(projectPricingInputs.conversionPct || 0).toFixed(2)}%)`, projectPricing.conversion],
+                        [`Profit (${Number(projectPricingInputs.profitPct || 0).toFixed(2)}% of cost after conversion)`, projectPricing.profit],
+                        [`Transportation${projectPricingInputs.transportation.mode === "sqft" ? ` (${Number(projectPricingInputs.transportation.value || 0).toFixed(2)} / sqft)` : " (direct)"}`, projectPricing.transportation],
+                        [`Installation${projectPricingInputs.installation.mode === "sqft" ? ` (${Number(projectPricingInputs.installation.value || 0).toFixed(2)} / sqft)` : " (direct)"}`, projectPricing.installation],
+                        [`Loading / Unloading${projectPricingInputs.loading.mode === "sqft" ? ` (${Number(projectPricingInputs.loading.value || 0).toFixed(2)} / sqft)` : " (direct)"}`, projectPricing.loading],
                       ].map(([label, amount]) => <tr key={String(label)}>
                         <td style={{ padding: "7px 9px", border: "1px solid #E3E7E4" }}>{label}</td>
                         <td style={{ padding: "7px 9px", border: "1px solid #E3E7E4", textAlign: "right" }}>Rs {Number(amount).toFixed(2)}</td>

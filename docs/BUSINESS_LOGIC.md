@@ -127,3 +127,8 @@ cabinet/item costing has been calculated:
 Billable project sqft is the sum of all square-foot costing rows after their
 applicable board wastage. The screen shows this area beside the factor inputs so
 that per-square-foot service charges remain auditable.
+
+The project summary also shows billable sqft and service charges cabinet by
+cabinet. Per-sqft charges are calculated directly for each cabinet. A direct
+project charge is allocated between cabinets in proportion to their billable
+square footage; the allocation does not alter the project charge total.
