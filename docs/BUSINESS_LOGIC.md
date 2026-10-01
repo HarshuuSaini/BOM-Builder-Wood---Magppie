@@ -111,3 +111,19 @@ still produced; a stub names the gap.
 ## Reference figure
 
 `BC.SH` 600 × 720 × 560, board option A → **22.978 sqft**, **11.806 RMT**.
+# Project pricing factors
+
+The bottom of the project Costing section applies commercial factors after the
+cabinet/item costing has been calculated:
+
+1. `conversion = base costing × conversion %`
+2. `converted cost = base costing + conversion`
+3. `profit = converted cost × profit %`
+4. Transportation, installation, and loading/unloading are each either a
+   direct project amount or `rate × billable project sqft`.
+5. `subtotal = converted cost + profit + all three service charges`
+6. When enabled, `GST = subtotal × 18%`; the final project price is subtotal + GST.
+
+Billable project sqft is the sum of all square-foot costing rows after their
+applicable board wastage. The screen shows this area beside the factor inputs so
+that per-square-foot service charges remain auditable.

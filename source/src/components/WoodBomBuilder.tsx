@@ -1314,6 +1314,25 @@ type CostDetail = {
 };
 type LineCost = { label: string; code?: string; qty: number; unitCost: number; cost: number; details: CostDetail[] };
 type CostingResult = { lines: LineCost[]; total: number; unpriced: string[] };
+type ChargeMode = "sqft" | "direct";
+type ServiceCharge = { mode: ChargeMode; value: number };
+type ProjectPricingInputs = {
+  conversionPct: number;
+  profitPct: number;
+  transportation: ServiceCharge;
+  installation: ServiceCharge;
+  loading: ServiceCharge;
+  includeTax: boolean;
+};
+
+const DEFAULT_PROJECT_PRICING: ProjectPricingInputs = {
+  conversionPct: 0,
+  profitPct: 0,
+  transportation: { mode: "direct", value: 0 },
+  installation: { mode: "direct", value: 0 },
+  loading: { mode: "direct", value: 0 },
+  includeTax: false,
+};
 
 function carcassMasterItem(board: string, panel: Panel): CostingMasterItem | undefined {
   if (/glass/i.test(panel.mat ?? "")) return findCostingItem({ group: "Glass", thicknessMm: panel.t ?? null });
@@ -1500,6 +1519,7 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
   const [countertops, setCountertops] = useState<CountertopRow[]>([]);
   const [accessories, setAccessories] = useState<AccessoryRow[]>([]);
   const [waste, setWaste] = useState({ ...WASTE });
+  const [projectPricingInputs, setProjectPricingInputs] = useState<ProjectPricingInputs>(DEFAULT_PROJECT_PRICING);
 
   const nextIdOf = (list: { id: number }[]) => list.reduce((m, r) => Math.max(m, r.id), 0) + 1;
   const addFiller = () => setFillers((c) => [...c, { id: nextIdOf(c), zone: "base", customShade: "", qty: 1, customHeight: "", customWidth: "", elevation: "" }]);
@@ -1574,6 +1594,28 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
     () => computeCosting(project, fillers, visiblePanels, extras.panels, shType, rates, waste),
     [project, fillers, visiblePanels, extras, shType, rates, waste],
   );
+  const projectPricing = useMemo(() => {
+    const billableSqft = costing.lines.reduce(
+      (lineTotal, line) => lineTotal + line.details.reduce(
+        (detailTotal, detail) => detailTotal + (detail.uom === "sqft" ? detail.billableQty : 0),
+        0,
+      ),
+      0,
+    );
+    const serviceAmount = (charge: ServiceCharge) => charge.mode === "sqft"
+      ? charge.value * billableSqft
+      : charge.value;
+    const baseCost = costing.total;
+    const conversion = baseCost * projectPricingInputs.conversionPct / 100;
+    const convertedCost = baseCost + conversion;
+    const profit = convertedCost * projectPricingInputs.profitPct / 100;
+    const transportation = serviceAmount(projectPricingInputs.transportation);
+    const installation = serviceAmount(projectPricingInputs.installation);
+    const loading = serviceAmount(projectPricingInputs.loading);
+    const subtotal = convertedCost + profit + transportation + installation + loading;
+    const tax = projectPricingInputs.includeTax ? subtotal * 0.18 : 0;
+    return { billableSqft, baseCost, conversion, convertedCost, profit, transportation, installation, loading, subtotal, tax, grandTotal: subtotal + tax };
+  }, [costing, projectPricingInputs]);
   const allStubs = useMemo(() => [...new Set(project.flatMap((l) => l.m.stubs))], [project]);
 
   /* --- Zoho: raw-material search per board group --- */
@@ -1915,6 +1957,67 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
                 {costing.unpriced.length > 0 && (
                   <Stub list={costing.unpriced.map((u) => `${u} — no rate set yet; not included in the total. An admin can set the rate on /admin.`)} />
                 )}
+                <div style={{ marginTop: 18, padding: 16, border: "1px solid #D8DEDA", borderRadius: 8, background: "#FAFBFA" }}>
+                  <h3 style={{ margin: "0 0 4px" }}>Project pricing factors</h3>
+                  <p style={{ margin: "0 0 14px", color: "#617069", fontSize: 12 }}>
+                    Per-sqft charges use {projectPricing.billableSqft.toFixed(3)} sqft, including board wastage.
+                  </p>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
+                    <Fld label="Conversion (%)">
+                      <input type="number" min={0} step="0.01" value={projectPricingInputs.conversionPct}
+                        onChange={(e) => setProjectPricingInputs((p) => ({ ...p, conversionPct: Math.max(0, Number(e.target.value) || 0) }))} />
+                    </Fld>
+                    <Fld label="Profit (%)">
+                      <input type="number" min={0} step="0.01" value={projectPricingInputs.profitPct}
+                        onChange={(e) => setProjectPricingInputs((p) => ({ ...p, profitPct: Math.max(0, Number(e.target.value) || 0) }))} />
+                    </Fld>
+                    {([
+                      ["Transportation", "transportation"],
+                      ["Installation", "installation"],
+                      ["Loading / Unloading", "loading"],
+                    ] as const).map(([label, key]) => (
+                      <Fld key={key} label={label}>
+                        <div style={{ display: "grid", gridTemplateColumns: "112px 1fr", gap: 6 }}>
+                          <select aria-label={`${label} calculation method`} value={projectPricingInputs[key].mode}
+                            onChange={(e) => setProjectPricingInputs((p) => ({ ...p, [key]: { ...p[key], mode: e.target.value as ChargeMode } }))}>
+                            <option value="direct">Direct price</option>
+                            <option value="sqft">Rs / sqft</option>
+                          </select>
+                          <input aria-label={`${label} rate`} type="number" min={0} step="0.01" value={projectPricingInputs[key].value}
+                            onChange={(e) => setProjectPricingInputs((p) => ({ ...p, [key]: { ...p[key], value: Math.max(0, Number(e.target.value) || 0) } }))} />
+                        </div>
+                      </Fld>
+                    ))}
+                    <Fld label="Tax">
+                      <label style={{ display: "flex", alignItems: "center", gap: 8, minHeight: 36, fontWeight: 600 }}>
+                        <input type="checkbox" checked={projectPricingInputs.includeTax}
+                          onChange={(e) => setProjectPricingInputs((p) => ({ ...p, includeTax: e.target.checked }))} />
+                        Include GST (18%)
+                      </label>
+                    </Fld>
+                  </div>
+
+                  <div style={{ marginTop: 16, overflowX: "auto" }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse", background: "white" }}>
+                      <tbody>{[
+                        ["Base cabinet / item costing", projectPricing.baseCost],
+                        [`Conversion (${projectPricingInputs.conversionPct.toFixed(2)}%)`, projectPricing.conversion],
+                        [`Profit (${projectPricingInputs.profitPct.toFixed(2)}% of cost after conversion)`, projectPricing.profit],
+                        [`Transportation${projectPricingInputs.transportation.mode === "sqft" ? ` (${projectPricingInputs.transportation.value.toFixed(2)} / sqft)` : " (direct)"}`, projectPricing.transportation],
+                        [`Installation${projectPricingInputs.installation.mode === "sqft" ? ` (${projectPricingInputs.installation.value.toFixed(2)} / sqft)` : " (direct)"}`, projectPricing.installation],
+                        [`Loading / Unloading${projectPricingInputs.loading.mode === "sqft" ? ` (${projectPricingInputs.loading.value.toFixed(2)} / sqft)` : " (direct)"}`, projectPricing.loading],
+                      ].map(([label, amount]) => <tr key={String(label)}>
+                        <td style={{ padding: "7px 9px", border: "1px solid #E3E7E4" }}>{label}</td>
+                        <td style={{ padding: "7px 9px", border: "1px solid #E3E7E4", textAlign: "right" }}>Rs {Number(amount).toFixed(2)}</td>
+                      </tr>)}</tbody>
+                      <tfoot>
+                        <tr><td style={{ padding: "8px 9px", border: "1px solid #D8DEDA", fontWeight: 700 }}>Subtotal before tax</td><td style={{ padding: "8px 9px", border: "1px solid #D8DEDA", textAlign: "right", fontWeight: 700 }}>Rs {projectPricing.subtotal.toFixed(2)}</td></tr>
+                        <tr><td style={{ padding: "8px 9px", border: "1px solid #D8DEDA" }}>GST (18%){projectPricingInputs.includeTax ? "" : " — not included"}</td><td style={{ padding: "8px 9px", border: "1px solid #D8DEDA", textAlign: "right" }}>Rs {projectPricing.tax.toFixed(2)}</td></tr>
+                        <tr style={{ background: "#E8F3EF", color: "#126350" }}><td style={{ padding: "10px 9px", border: "1px solid #BED8CF", fontWeight: 800 }}>Final project price</td><td style={{ padding: "10px 9px", border: "1px solid #BED8CF", textAlign: "right", fontWeight: 800, fontSize: 16 }}>Rs {projectPricing.grandTotal.toFixed(2)}</td></tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                </div>
               </>}
 
               {/* ---- Raw Material Selection ---- */}
