@@ -1463,11 +1463,18 @@ function hardwareMasterItem(name: string): CostingMasterItem | undefined {
   return undefined;
 }
 
+function profileMasterItem(profile: Profile, neon: string): CostingMasterItem | undefined {
+  const profileName = NEON_LABEL[neon] ?? neon;
+  const type = `${profileName} ${profile.type === "V" ? "Shutter" : "Handle"} Profile`;
+  return COSTING_ITEMS.find((item) => item.group === "Profile" && item.type === type && item.rateBasis === "MTR");
+}
+
 /**
  * Per the costing sheet: carcass sqft × board rate, shutter sqft × shutter-type
- * rate (each after its wastage %), edge band per RMT. Drawer boxes, hinges and
- * accessories are priced only once their rates are set on /admin — until then
- * they are listed as unpriced rather than silently costed at zero.
+ * rate (each after its wastage %), edge band and profiles per running metre.
+ * Drawer boxes, hinges and accessories are priced only once their rates are
+ * set on /admin — until then they are listed as unpriced rather than silently
+ * costed at zero.
  */
 function computeCosting(
   project: ProjectLine[],
@@ -1518,6 +1525,27 @@ function computeCosting(
       if (!bandM || !master) return;
       const billed = bandM * (1 + wst.carcass / 100);
       addDetail({ category: shutter ? "Shutter edge band" : "Carcass edge band", itemCode: master.id, item: master.materialDescription, specification: `${master.subgroup} · ${master.thicknessMm ?? "—"}mm`, netQty: bandM, wastePct: wst.carcass, billableQty: billed, uom: "RMT", rate: master.currentRate, amount: billed * master.currentRate });
+    });
+    m.profiles.forEach((profile) => {
+      const masterProfile = profileMasterItem(profile, m.neon);
+      if (!masterProfile) {
+        unpriced.add(`${profile.name} (${profile.type})`);
+        return;
+      }
+      const netM = profile.len / 1000 * profile.qty * l.qty;
+      const billedM = netM * (1 + wst.profile / 100);
+      addDetail({
+        category: "Profile",
+        itemCode: masterProfile.id,
+        item: masterProfile.materialDescription,
+        specification: `${masterProfile.type} · ${profile.type === "V" ? "vertical" : "horizontal"} · ${profile.len}mm × ${profile.qty} per cabinet`,
+        netQty: netM,
+        wastePct: wst.profile,
+        billableQty: billedM,
+        uom: "RMT",
+        rate: masterProfile.currentRate,
+        amount: billedM * masterProfile.currentRate,
+      });
     });
     m.hardware.flatMap(expandHardwarePack).forEach((h) => {
       if (/^HINGE\b/i.test(h.name)) {
