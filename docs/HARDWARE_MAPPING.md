@@ -1,32 +1,27 @@
-# Stone-to-Wood Hardware Mapping
+# Hardware Pack Master
 
-Hardware-pack composition comes from `source/src/data/hardware_packs.json`.
-Confirmed replacements from the approved wood costing master are maintained in
-`source/src/data/hardware_component_mapping.json`. The application replaces
-the stone description with the wood master description before UI, BOM, CSV,
-stock and costing processing.
+Hardware-pack composition comes from the approved workbook's `pack` sheet and
+is generated into `source/src/data/hardware_packs.json`. Pack component names
+are already the approved wood item descriptions, so there is no stone-to-wood
+translation layer.
 
-## Confirmed replacements
+The 16 current definitions cover:
 
-12 component descriptions map to wood master rows: KITCHEN-054, 061, 062,
-067, 083, 084, 086, 100, 102, 121 and 122 (KITCHEN-086 is used by two matching
-slim-hinge descriptions).
+- Hinge 0-crank packs for 2, 3 and 5 hinges
+- Blind-hinge packs for 2, 3 and 5 hinges
+- Base, wall/loft and tall cabinet-joint packs
+- Base top-profile packs for 300, 450, 600, 900 and 1050 mm
+- Wall dish-rack bottom-profile packs for 600 and 900 mm
 
-## Still requiring a wood equivalent
+## Components without a KITCHEN rate
 
-- Hinge 0 crank without soft close (Lian)
-- Handle screw 8×4
-- Bondtite fast and clear for stone
-- HPL 2.5mm carcass fixing
-- Dowsil 789 transparent silicone
-- Lian tandem Low H90 drawer
-- Nylon insert for stone
-- Chipboard screw 13×4.8
-- Lian tandem High H175 drawer
-- Lian tandem High H239 drawer
-- Wall-hanger LH cover cap
-- Wall-hanger RH cover cap
-- Hilti PVC insert 120×8
-- Wall-hanging PVC packing 100×100×12
+- PVC INSERT 13XX5 ID 5 UTA
+- SCREW FOR CHIP BOARD 16XX4 SS 304 CINE
+- DOOR BUMPER XX BS2-6 EBC
+- MINI FIX SET OF 3 PCS XX 9290887+9289656+4005 HET
+- WOODEN DOWEL DOWEL 40XX8 DP840 EBC
+- ALU PROF FOR SINK 3000X20X20 ANODISED 2412 OML
+- END CONNECTOR FOR SINK PROF XX BLACK UTA
 
-These remain unmapped rather than borrowing a non-equivalent wood rate.
+These are expanded in the BOM but remain visibly unpriced until matching rows
+are added to the KITCHEN sheet.

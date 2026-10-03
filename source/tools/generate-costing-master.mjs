@@ -27,12 +27,10 @@ const items = rows
   .filter((row) => s(row["Material Description"]))
   .map((row, index) => ({
     id: `KITCHEN-${String(index + 1).padStart(3, "0")}`,
-    sNo: n(row["S. No."]) ?? index + 1,
+    sNo: n(row.SN) ?? n(row["S. No."]) ?? index + 1,
     elevation: s(row.Elevation),
-    sourceSubgroup: s(row.__EMPTY),
     materialDescription: s(row["Material Description"]),
     remark: s(row.Remark),
-    unitCost: n(row["Unit Cost"]),
     unit: s(row.Unit),
     sqft: n(row.SQFT),
     price: n(row.Price),
@@ -42,23 +40,19 @@ const items = rows
     type: s(row.Type),
     brand: s(row.Brand),
     thicknessMm: n(row["Thickness (mm)"]),
-    rateBasis: s(row["Rate Basis"]),
-    previousRate: n(row["Previous Rate"]),
-    currentRate: n(row["Current Rate"]),
-    rateChange: n(row["Rate Change (₹)"]),
-    rateChangePercent: n(row["Rate Change (%)"]),
+    rateBasis: s(row["Rate Basis"]).toUpperCase(),
+    currentRate: s(row["Rate Basis"]).toUpperCase() === "SQFT"
+      ? n(row["Sq.FT. Price"])
+      : n(row.Price),
   }));
 
-if (items.length !== 122) {
-  throw new Error(`Expected 122 KITCHEN items, found ${items.length}.`);
-}
 if (items.some((item) => !item.group || !item.subgroup || !item.rateBasis || item.currentRate == null)) {
   throw new Error("One or more master items is missing Group, Subgroup, Rate Basis, or Current Rate.");
 }
 
 const payload = {
   schemaVersion: 1,
-  source: "Cost_Master_Updated.xlsx / KITCHEN",
+  source: `${path.basename(inputPath)} / KITCHEN`,
   generatedAt: new Date().toISOString(),
   currency: "INR",
   items,

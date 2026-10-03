@@ -20,7 +20,6 @@ import boardFinishesData from "@/data/board_finishes.json";
 import laminateFinishesData from "@/data/laminate_finishes.json";
 import edgebandFinishesData from "@/data/edgeband_finishes.json";
 import hardwarePacksData from "@/data/hardware_packs.json";
-import hardwareComponentMappingData from "@/data/hardware_component_mapping.json";
 import { getPartBaseName, getPanelBaseName, normalizePartOrPanelName } from "@/lib/naming";
 import { exportBomWorkbook, exportBomCsv, type AccessoryExportRow } from "@/lib/export";
 import { COSTING_ITEMS, DEFAULT_RATES, SHUTTER_RATE_KEY, findCostingItem, type CostingMasterItem, type CostingRates } from "@/lib/costing";
@@ -181,47 +180,22 @@ const sqft = (w: number, h: number) => (w * h) / SQDIV;
 const perim = (w: number, h: number) => (2 * (w + h)) / 1000;
 const r3 = (n: number) => Math.round(n * 1000) / 1000;
 const legCount = (w: number) => (w <= 150 ? 2 : w >= 1050 ? 6 : 4);
-const hingeN = (h: number) => (h <= 900 ? 3 : h <= 1600 ? 4 : h <= 2100 ? 5 : 6);
+const hingePackCount = (h: number) => (h <= 720 ? 2 : h <= 1050 ? 3 : 5);
 
 type HardwareComponent = { name: string; qty: number; uom: string; pack: string };
 type HardwarePackDefinition = { component: string; qty: number; uom: string };
 const HARDWARE_PACK_DEFINITIONS = hardwarePacksData.definitions as Record<string, HardwarePackDefinition[]>;
-const HARDWARE_COMPONENT_MAPPING = hardwareComponentMappingData as Record<string, string>;
 
-function woodHardwareName(stoneName: string): string {
-  const masterId = HARDWARE_COMPONENT_MAPPING[stoneName];
-  return masterId ? COSTING_ITEMS.find((item) => item.id === masterId)?.materialDescription ?? stoneName : stoneName;
-}
-
-/** Exact pack contents from the stone app architecture's HARDWARE_PACK_DEFINITIONS. */
+/** Exact pack contents from the approved costing workbook's pack sheet. */
 function expandHardwarePack(h: Hardware): HardwareComponent[] {
   const pack = h.name;
   const definition = HARDWARE_PACK_DEFINITIONS[pack];
   if (definition) return definition.map((component) => ({
-    name: woodHardwareName(component.component),
+    name: component.component,
     qty: component.qty * h.qty,
     uom: component.uom,
     pack,
   }));
-  // The reference table omits a standard 3D Set/5. Retain the architecture's
-  // established quantity formula so a 5-hinge tall cabinet still expands.
-  const hinge = pack.match(/^HARDWARE PACK 3D HINGE 0 CRANK Set\/(\d+)$/);
-  const loftHinge = pack.match(/^HARDWARE PACK HINGE W\/OUT SOFT CLOSE Set\/(\d+)$/);
-  const glassHinge = pack.match(/^HARDWARE PACK SLIM HINGE FOR GLASS Set\/(\d+)$/);
-  if (hinge || loftHinge || glassHinge) {
-    const match = hinge ?? loftHinge ?? glassHinge;
-    const n = Number(match?.[1] ?? 0);
-    const hingeName = glassHinge
-      ? "HINGE SLIM FOR ALU PROFILE 0 CRANK SOFT CLOSE 95 DEG XX GUN BLACK DPOA-209 LIAN"
-      : loftHinge
-        ? "HINGE 0 CRANK W/OUT SOFT CLOSE 95 DEG XX GUN BLACK DPW-209 LIAN"
-        : "HINGE 0 CRANK SOFT CLOSE 5 HOLE XX BLACK 3D MS CRY";
-    return [
-      { name: woodHardwareName(hingeName), qty: n * h.qty, uom: "PCS", pack },
-      { name: woodHardwareName("SCREW FOR CHIP BOARD 16XX4 SS 304 CINE"), qty: n * 4 * h.qty, uom: "PCS", pack },
-      { name: woodHardwareName("DOOR BUMPERS 12.0 MM X 3.2 MM BS2-1 EBC"), qty: 4 * h.qty, uom: "PCS", pack },
-    ];
-  }
   return [{ name: h.name, qty: h.qty, uom: h.uom ?? "nos", pack: h.pack ?? "Hardware Pack" }];
 }
 
@@ -691,8 +665,8 @@ function buildShutters(
         w: W - 3, h: upperH, qty: 1, drill: null, pack: "Shutter Pack",
         t: S.t, mat: S.mat, band: S.band,
       });
-      const upperHinges = hingeN(upperH);
-      hardware.push({ name: `HARDWARE PACK 3D HINGE 0 CRANK Set/${upperHinges}`, qty: 1, uom: "set", pack: "Shutter Pack" });
+      const upperHinges = hingePackCount(upperH);
+      hardware.push({ name: `HARDWARE PACK HINGE 0 CRANK Set/${upperHinges}`, qty: 1, uom: "set", pack: "Shutter Pack" });
     }
     pkRows.push({ pack: "Shutter Pack", type: "sub_bom", qty: fronts.length + (z.tall && fk === "APP" ? 1 : 0) });
     const totalArea = fronts.reduce((sum, front) => {
@@ -737,13 +711,13 @@ function buildShutters(
     });
   }
 
-  const hingeQty = hingeN(H) * leaves;
-  const hingePack = ZONES[zk].kind === "loft"
-    ? `HARDWARE PACK HINGE W/OUT SOFT CLOSE Set/${hingeQty}`
-    : isGlassShutterFam(fk)
-      ? `HARDWARE PACK SLIM HINGE FOR GLASS Set/${hingeQty}`
-      : `HARDWARE PACK 3D HINGE 0 CRANK Set/${hingeQty}`;
-  hardware.push({ name: hingePack, qty: 1, uom: "set", pack: "Shutter Pack" });
+  const hingesPerLeaf = hingePackCount(H);
+  if (isGlassShutterFam(fk)) {
+    hardware.push({ name: "HINGE SLIM FOR ALU PROFILE 0 CRANK SOFT CLOSE 95 DEG XX GUN BLACK DPOA-209 BLACK SQU", qty: hingesPerLeaf * leaves, uom: "PCS", pack: "Shutter Pack" });
+  } else {
+    const hingePack = `HARDWARE PACK HINGE ${ZONES[zk].blind ? "BLIND " : "0 CRANK "}Set/${hingesPerLeaf}`;
+    hardware.push({ name: hingePack, qty: leaves, uom: "set", pack: "Shutter Pack" });
+  }
   pkRows.push({ pack: "Shutter Pack", type: "sub_bom", qty: leaves });
 
   return { leaves, leafW, leafH };
@@ -854,6 +828,25 @@ function buildCarcassInnerRaw(cfg: {
   }
 
   pkRows.push({ pack: PK, type: "sub_bom", qty: 1 });
+
+  /* --- approved workbook hardware packs --- */
+  const jointPack = z.tall
+    ? "HARDWARE PACK CABINET JOINT TALL"
+    : z.kind === "wall" || z.kind === "loft"
+      ? "HARDWARE PACK CABINET JOINT WALL / LOFT"
+      : !z.kind
+        ? "HARDWARE PACK CABINET JOINT BASE"
+        : "";
+  if (jointPack) hardware.push({ name: jointPack, qty: 1, uom: "set", pack: PK });
+
+  const baseProfilePack = `HARDWARE PACK BASE CABINET ${W}MM TOP PROFILE`;
+  if (!z.tall && !z.kind && HARDWARE_PACK_DEFINITIONS[baseProfilePack]) {
+    hardware.push({ name: baseProfilePack, qty: 1, uom: "set", pack: PK });
+  }
+  const dishRackProfilePack = `HARDWARE PACK WALL DISHRACK CABINET ${W}MM BOTTOM PROFILE`;
+  if (fk === "WDR" && HARDWARE_PACK_DEFINITIONS[dishRackProfilePack]) {
+    hardware.push({ name: dishRackProfilePack, qty: 1, uom: "set", pack: PK });
+  }
 
   /* --- shutters --- */
   const sh = buildShutters(zk, fk, v, handle, shType, neon, W, H, panels, profiles, hardware, pkRows, stubs);
@@ -1336,30 +1329,35 @@ const DEFAULT_PROJECT_PRICING: ProjectPricingInputs = {
 };
 
 function carcassMasterItem(board: string, panel: Panel): CostingMasterItem | undefined {
-  if (/glass/i.test(panel.mat ?? "")) return findCostingItem({ group: "Glass", thicknessMm: panel.t ?? null });
+  if (/glass/i.test(panel.mat ?? "")) return findCostingItem({ group: "Glass Type", thicknessMm: panel.t ?? null });
   if (panel.pack === "Drawer Pack" && /BWP Plywood/i.test(panel.mat ?? "")) {
-    return findCostingItem({ group: "Board", subgroup: "BWR Ply Raw", thicknessMm: panel.t ?? null });
+    return COSTING_ITEMS.find((item) => item.group === "Drawer Material" && /BWP Ply/i.test(item.subgroup));
   }
-  if (board === "A") return panel.t === T_BACK
-    ? findCostingItem({ group: "Board", subgroup: "Plywood BSL", type: "Carcass Postlam", thicknessMm: 8 })
-    : findCostingItem({ group: "Board", subgroup: "BWP Ply BSL", type: "Carcass Postlam", thicknessMm: 18 });
-  if (board === "B") return findCostingItem({ group: "Board", subgroup: panel.t === T_BACK ? "MDF SF BSL" : "MDF BSL", type: "Carcass Prelam", thicknessMm: panel.t ?? null });
-  if (board === "C") return findCostingItem({ group: "Board", subgroup: "Particle Board BSL", type: "Carcass Prelam", thicknessMm: panel.t ?? null });
+  const isBack = /Back/i.test(panel.name) || panel.t === T_BACK;
+  const group = isBack ? "Carcass Back Material" : "Carcass/ Shelf Material";
+  const elevation = board === "A" ? "CARCASS POSTLAM BWP PLY"
+    : board === "B" ? "CARCASS PRELAM MDF"
+      : board === "C" ? "CARCASS PRELAM PARTICAL" : "";
+  if (elevation) return COSTING_ITEMS.find((item) => item.elevation === elevation && item.group === group);
   return undefined;
 }
 
 function shutterMasterItem(shutterType: string): CostingMasterItem | undefined {
-  const map: Record<string, { subgroup: string; type: string }> = {
-    PRELAM_HDHMR: { subgroup: "HDHMR OSL", type: "Shutter Prelam" },
-    PRELAM_MDF: { subgroup: "MDF OSL", type: "Shutter Prelam" },
-    PRELAM_PARTICAL: { subgroup: "Particle Board OSL", type: "Shutter Prelam" },
-    POSTLAM_HDHMR: { subgroup: "HDHMR OSL", type: "Shutter Postlam" },
-    POSTLAM_MDF: { subgroup: "MDF OSL", type: "Shutter Postlam" },
-    POSTLAM_PARTICAL: { subgroup: "Particle Board OSL", type: "Shutter Postlam" },
-    POSTLAM_BWP: { subgroup: "BWP Ply OSL", type: "Shutter Postlam" },
+  const map: Record<string, string> = {
+    PRELAM_HDHMR: "SHUTTER PRELAM HDHMR",
+    PRELAM_MDF: "SHUTTER PRELAM MDF",
+    PRELAM_PARTICAL: "SHUTTER PRELAM PARTICAL",
+    POSTLAM_HDHMR: "SHUTTER POSTLAM HDHMR",
+    POSTLAM_MDF: "SHUTTER POSTLAM MDF",
+    POSTLAM_PARTICAL: "SHUTTER POSTLAM PARTICAL",
+    POSTLAM_BWP: "SHUTTER POSTLAM BWP PLY",
   };
-  const selected = map[shutterType];
-  return selected ? findCostingItem({ group: "Board", subgroup: selected.subgroup, type: selected.type, thicknessMm: 18 }) : undefined;
+  const elevation = map[shutterType];
+  if (elevation) return findCostingItem({ elevation, group: "Shutter Material", thicknessMm: 18 });
+  if (shutterType === "MEMBRANE_HDHMR") return findCostingItem({ elevation: "SHUTTER MEMBRANE", group: "Shutter Material", subgroup: "Membrane (Modern) HDHMR OSM", thicknessMm: 18 });
+  if (shutterType === "PU1_HDHMR") return findCostingItem({ elevation: "SHUTTER PU LQD", group: "Shutter Material", subgroup: "PU HDHMR (Modern) OSP", thicknessMm: 18 });
+  if (shutterType === "PU2_HDHMR") return findCostingItem({ elevation: "SHUTTER PU LQD", group: "Shutter Material", subgroup: "PU HDHMR (Modern) BSP", thicknessMm: 18 });
+  return undefined;
 }
 
 /**
@@ -1432,7 +1430,7 @@ function computeCosting(
         const mix = family && variant ? drawerBreakdown(family, variant) : [{ cls: "HIGH" as DrawerClass, n: h.qty }];
         mix.forEach(({ cls, n }) => {
           const subgroup = cls === "LOW" ? "Low Back" : "High Back";
-          const masterDrawer = findCostingItem({ group: "Drawer System", subgroup, brand: m.drawerModel });
+          const masterDrawer = COSTING_ITEMS.find((item) => item.group === "Drawer System" && item.brand.toLowerCase() === m.drawerModel.toLowerCase() && item.subgroup.toLowerCase().includes(subgroup.toLowerCase()));
           const drawerRate = masterDrawer?.currentRate ?? 0;
           if (drawerRate > 0) details.push({ category: "Drawer system", itemCode: masterDrawer?.id ?? "—", item: masterDrawer?.materialDescription ?? `${m.drawerModel} ${subgroup}`, specification: `${n} per cabinet · ${masterDrawer?.type ?? subgroup}`, netQty: n * l.qty, wastePct: 0, billableQty: n * l.qty, uom: "set", rate: drawerRate, amount: n * l.qty * drawerRate });
           else unpriced.add(`${m.drawerModel} drawer box sets (${cls === "LOW" ? "LB" : "HB"})`);

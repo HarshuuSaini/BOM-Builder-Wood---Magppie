@@ -2,12 +2,11 @@ import masterJson from "@/data/costing_master.json";
 
 export type RateBasis = "SQFT" | "MTR" | "KG" | "SET" | "PCS";
 export type CostingMasterItem = {
-  id: string; sNo: number; elevation: string; sourceSubgroup: string;
-  materialDescription: string; remark: string; unitCost: number | null; unit: string;
+  id: string; sNo: number; elevation: string;
+  materialDescription: string; remark: string; unit: string;
   sqft: number | null; price: number | null; sqftPrice: number | null;
   group: string; subgroup: string; type: string; brand: string;
-  thicknessMm: number | null; rateBasis: RateBasis; previousRate: number | null;
-  currentRate: number; rateChange: number | null; rateChangePercent: number | null;
+  thicknessMm: number | null; rateBasis: RateBasis; currentRate: number;
 };
 export type CostingMaster = {
   schemaVersion: number; source: string; generatedAt: string; currency: string;
@@ -18,7 +17,7 @@ export const COSTING_MASTER = masterJson as CostingMaster;
 export const COSTING_ITEMS = COSTING_MASTER.items;
 
 export function findCostingItem(match: Partial<Pick<CostingMasterItem,
-  "group" | "subgroup" | "type" | "brand" | "thicknessMm" | "rateBasis"
+  "elevation" | "group" | "subgroup" | "type" | "brand" | "thicknessMm" | "rateBasis"
 >>): CostingMasterItem | undefined {
   return COSTING_ITEMS.find((item) => Object.entries(match).every(([key, value]) =>
     item[key as keyof CostingMasterItem] === value));
@@ -37,19 +36,21 @@ export type CostingRates = Record<RateKey, number>;
 const rate = (match: Parameters<typeof findCostingItem>[0]) => findCostingItem(match)?.currentRate ?? 0;
 
 export const DEFAULT_RATES: CostingRates = {
-  CARCASS_POSTLAM_PLY: rate({ group: "Board", subgroup: "BWP Ply BSL", type: "Carcass Postlam", thicknessMm: 18 }),
-  CARCASS_PRELAM_MDF: rate({ group: "Board", subgroup: "MDF BSL", type: "Carcass Prelam", thicknessMm: 18 }),
-  CARCASS_PRELAM_PB: rate({ group: "Board", subgroup: "Particle Board BSL", type: "Carcass Prelam", thicknessMm: 18 }),
-  CARCASS_PRELAM_HDHMR: rate({ group: "Board", subgroup: "HDHMR BSL", type: "Carcass Prelam", thicknessMm: 18 }),
-  SHUTTER_PRELAM_PB: rate({ group: "Board", subgroup: "Particle Board OSL", type: "Shutter Prelam", thicknessMm: 18 }),
-  SHUTTER_PRELAM_MDF: rate({ group: "Board", subgroup: "MDF OSL", type: "Shutter Prelam", thicknessMm: 18 }),
-  SHUTTER_PRELAM_HDHMR: rate({ group: "Board", subgroup: "HDHMR OSL", type: "Shutter Prelam", thicknessMm: 18 }),
+  CARCASS_POSTLAM_PLY: rate({ elevation: "CARCASS POSTLAM BWP PLY", group: "Carcass/ Shelf Material", thicknessMm: 18 }),
+  CARCASS_PRELAM_MDF: rate({ elevation: "CARCASS PRELAM MDF", group: "Carcass/ Shelf Material", thicknessMm: 18 }),
+  CARCASS_PRELAM_PB: rate({ elevation: "CARCASS PRELAM PARTICAL", group: "Carcass/ Shelf Material", thicknessMm: 18 }),
+  CARCASS_PRELAM_HDHMR: rate({ elevation: "CARCASS PRELAM HDHMR", group: "Carcass/ Shelf Material", thicknessMm: 18 }),
+  SHUTTER_PRELAM_PB: rate({ elevation: "SHUTTER PRELAM PARTICAL", group: "Shutter Material", thicknessMm: 18 }),
+  SHUTTER_PRELAM_MDF: rate({ elevation: "SHUTTER PRELAM MDF", group: "Shutter Material", thicknessMm: 18 }),
+  SHUTTER_PRELAM_HDHMR: rate({ elevation: "SHUTTER PRELAM HDHMR", group: "Shutter Material", thicknessMm: 18 }),
   SHUTTER_UV_HDHMR: 0,
-  SHUTTER_POSTLAM_PLY: rate({ group: "Board", subgroup: "BWP Ply OSL", type: "Shutter Postlam", thicknessMm: 18 }),
-  SHUTTER_MEMBRANE: 0, SHUTTER_PU_SINGLE: 0, SHUTTER_PU_DOUBLE: 0,
+  SHUTTER_POSTLAM_PLY: rate({ elevation: "SHUTTER POSTLAM BWP PLY", group: "Shutter Material", thicknessMm: 18 }),
+  SHUTTER_MEMBRANE: rate({ elevation: "SHUTTER MEMBRANE", subgroup: "Membrane (Modern) HDHMR OSM", thicknessMm: 18 }),
+  SHUTTER_PU_SINGLE: rate({ elevation: "SHUTTER PU LQD", subgroup: "PU HDHMR (Modern) OSP", thicknessMm: 18 }),
+  SHUTTER_PU_DOUBLE: rate({ elevation: "SHUTTER PU LQD", subgroup: "PU HDHMR (Modern) BSP", thicknessMm: 18 }),
   EDGEBAND_PER_RMT: rate({ group: "Edge Band", subgroup: "Carcass", rateBasis: "MTR" }),
-  DRAWER_LB: rate({ group: "Drawer System", subgroup: "Low Back", brand: "Blum" }),
-  DRAWER_HB: rate({ group: "Drawer System", subgroup: "High Back", brand: "Blum" }),
+  DRAWER_LB: rate({ elevation: "DRAWER LOW BACK", group: "Drawer System", brand: "Blum" }),
+  DRAWER_HB: rate({ elevation: "DRAWER HIGH BACK", group: "Drawer System", brand: "Blum" }),
   HINGE: rate({ group: "Hinge", subgroup: "0 CRANK", type: "100° Soft Close", brand: "Hettich" }),
   ACC_GALLERY_TRAY: 0, ACC_BIN: 0,
 };

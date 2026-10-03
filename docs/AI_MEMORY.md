@@ -65,7 +65,7 @@ three consumers that were copied unmodified from stone.
 |---|---|
 | `src/components/WoodBomBuilder.tsx` | The builder. All construction logic. Start here. |
 | `src/lib/rawmaterial.ts` | Board/laminate resolution against Zoho. Ported + renamed. |
-| `src/data/costing_master.json` | The 122-row costing master used by the app. |
+| `src/data/costing_master.json` | The 94-row costing master generated from the approved KITCHEN sheet. |
 | `tools/generate-costing-master.mjs` | Regenerates costing JSON from the approved Excel workbook. |
 | `src/lib/export.ts` | Excel/CSV export. Ported + renamed. |
 | `src/lib/naming.ts` | Panel/part name normalisation. **Verbatim from stone.** |
@@ -227,14 +227,16 @@ the user has hinted at nesting/optimisation beyond a flat wastage percentage —
 
 - Only the Excel `KITCHEN` sheet feeds costing; `Sheet1` and `Sheet2` are not
   modified or imported.
-- Every master row carries Group, Subgroup, Type, Brand, Thickness, Rate Basis,
-  Previous Rate, Current Rate, Rate Change and Rate Change %.
+- Every master row carries Group, Subgroup, Type, Brand, Thickness, Rate Basis
+  and Current Rate.
 - Boards use `SQFT`; profiles use `MTR` where applicable; hardware uses its
   actual `PCS`, `SET` or `KG` basis.
-- `Previous Rate` is not calculated from Unit Cost. On a monthly update, copy
-  the old Current Rate into Previous Rate, then enter the new Current Rate.
+- Current Rate comes from `Sq.FT. Price` for SQFT items and `Price` for all
+  other rate bases. `Unit Cost` is not imported or used.
 - Regenerate with:
   `node tools/generate-costing-master.mjs /absolute/path/to/approved.xlsx`
+- Regenerate packs with:
+  `node tools/generate-hardware-packs.mjs /absolute/path/to/approved.xlsx`
 - Verify `npm run build`, commit the JSON, and redeploy. Vercel functions cannot
   persist edits back into a bundled JSON file, so `/admin` is intentionally a
   searchable read-only view rather than a misleading save form.
@@ -243,19 +245,13 @@ the user has hinted at nesting/optimisation beyond a flat wastage percentage —
   net quantity, wastage, billable quantity, rate basis, master rate and amount.
   Drawer Low/High Back rates are separated and matched to the selected brand;
   missing brand rates are flagged as unpriced rather than substituted.
-- Hardware packs follow the stone architecture's complete
-  `HARDWARE_PACK_DEFINITIONS` contract. The 36 packs / 107 component rows are
-  stored in `source/src/data/hardware_packs.json` and regenerated verbatim with
-  `source/tools/generate-hardware-packs.mjs`. UI, CSV, Full BOM, stock check and
-  costing all use this one table. It covers hinge variants, PVC legs, carcass
-  fixing, low/high drawer packs, wall hangers, drawer fixing sizes, bottle
-  pullouts and Kaku fittings. A cabinet carries one pack (`qty 1 set`) and the
-  downstream views expand its exact component quantities.
-- Stone pack components are translated to confirmed wood-master items through
-  `source/src/data/hardware_component_mapping.json`. Twelve matches currently
-  resolve to wood item descriptions/rates; the fourteen unmatched stone-only
-  components are documented in `docs/HARDWARE_MAPPING.md` and must not be
-  costed using guessed substitutes.
+- Hardware packs come only from the approved workbook's `pack` sheet. The 16
+  definitions are stored in `source/src/data/hardware_packs.json`; UI, CSV,
+  Full BOM, stock check and costing all expand this one table. The sheet covers
+  standard/blind hinge sets, cabinet joints, base top profiles and wall
+  dish-rack bottom profiles. Component descriptions are already wood item
+  names, so no stone-to-wood translation file is used. Components missing from
+  KITCHEN remain visibly unpriced and are listed in `docs/HARDWARE_MAPPING.md`.
 
 ---
 

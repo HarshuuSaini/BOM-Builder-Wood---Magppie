@@ -5,15 +5,14 @@ import type { CostingMasterItem } from "@/lib/costing";
 
 const COLUMNS: Array<{ key: keyof CostingMasterItem; label: string; numeric?: boolean }> = [
   { key: "sNo", label: "S.No", numeric: true }, { key: "elevation", label: "Elevation" },
-  { key: "sourceSubgroup", label: "Source Subgroup" }, { key: "materialDescription", label: "Material Description" },
-  { key: "remark", label: "Remark" }, { key: "unitCost", label: "Unit Cost", numeric: true },
+  { key: "materialDescription", label: "Material Description" },
+  { key: "remark", label: "Remark" },
   { key: "unit", label: "Unit" }, { key: "sqft", label: "SQFT", numeric: true },
   { key: "price", label: "Price", numeric: true }, { key: "sqftPrice", label: "Sq.FT Price", numeric: true },
   { key: "group", label: "Group" }, { key: "subgroup", label: "Subgroup" },
   { key: "type", label: "Type" }, { key: "brand", label: "Brand" },
   { key: "thicknessMm", label: "Thickness (mm)", numeric: true }, { key: "rateBasis", label: "Rate Basis" },
-  { key: "previousRate", label: "Previous Rate", numeric: true }, { key: "currentRate", label: "Current Rate", numeric: true },
-  { key: "rateChange", label: "Rate Change (₹)", numeric: true }, { key: "rateChangePercent", label: "Rate Change (%)", numeric: true },
+  { key: "currentRate", label: "Current Rate", numeric: true },
 ];
 const number = new Intl.NumberFormat("en-IN", { maximumFractionDigits: 2 });
 
@@ -70,7 +69,7 @@ export default function AdminPage() {
       <input aria-label="Search costing master" style={{ ...input, width: 280 }} value={query} placeholder="Search item, type, brand, remark…" onChange={(e) => setQuery(e.target.value)} />
       <select aria-label="Filter by group" style={input} value={group} onChange={(e) => setGroup(e.target.value)}>{groups.map((value) => <option key={value}>{value}</option>)}</select>
     </div></header>
-    <p style={{ margin: "14px 0", padding: "10px 12px", background: "#EEF6F3", borderLeft: "3px solid #15645A", color: "#36534E" }}>This page reads bundled JSON. For a monthly revision, move Current Rate to Previous Rate in the approved Excel, enter the new Current Rate, regenerate JSON, and redeploy.</p>
+    <p style={{ margin: "14px 0", padding: "10px 12px", background: "#EEF6F3", borderLeft: "3px solid #15645A", color: "#36534E" }}>This page reads bundled JSON generated from the approved KITCHEN sheet. Price is the current rate; square-foot items use Sq.FT. Price. Unit Cost is not imported.</p>
     <p style={{ color: "#66757F", fontSize: 12 }}>Showing {filtered.length} of {items.length} items.</p>
     <div style={{ overflow: "auto", maxHeight: "calc(100vh - 235px)", border: "1px solid #D8DEDA" }}><table style={{ borderCollapse: "separate", borderSpacing: 0, minWidth: 2500, width: "100%" }}>
       <thead><tr>{COLUMNS.map((column) => <th key={column.key} style={{ position: "sticky", top: 0, zIndex: 1, padding: "9px 10px", background: "#E7ECE9", borderBottom: "1px solid #C9D1CC", textAlign: column.numeric ? "right" : "left", whiteSpace: "nowrap" }}>{column.label}</th>)}</tr></thead>
