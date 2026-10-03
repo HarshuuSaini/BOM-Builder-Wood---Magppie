@@ -1581,6 +1581,13 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
   const [project, setProject] = useState<ProjectLine[]>([]);
   const [tab, setTab] = useState<"packets" | "raw" | "totals">("packets");
 
+  useEffect(() => {
+    if (project.length === 0) {
+      setHingeLocked(false);
+      setDrawerLocked(false);
+    }
+  }, [project.length]);
+
   /* --- new sections: fillers / visible panels / countertop / accessories --- */
   const [fillers, setFillers] = useState<FillerRow[]>([]);
   const [visiblePanels, setVisiblePanels] = useState<VisiblePanelRow[]>([]);
