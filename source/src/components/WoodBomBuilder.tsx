@@ -1569,6 +1569,7 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
   const [neon] = useState("NEON50");
   const [hingeLocked, setHingeLocked] = useState(false);
   const [drawerModel, setDrawerModel] = useState("Hettich");
+  const [drawerLocked, setDrawerLocked] = useState(false);
   const [finish, setFinish] = useState((boardFinishesData as string[])[0] ?? "White");
   const [elevation, setElevation] = useState("AA");
   const [qty, setQty] = useState(1);
@@ -1650,6 +1651,7 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
   const addLine = () => {
     setProject((p) => [...p, { id: Date.now() + Math.random(), m, qty, elevation }]);
     if (!drawerOnly) setHingeLocked(true);
+    if (fam.drawers) setDrawerLocked(true);
   };
   const delLine = (id: number) => setProject((p) => p.filter((x) => x.id !== id));
 
@@ -1837,9 +1839,10 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
 
           {fam.drawers && (
             <Fld label="Drawer model">
-              <select value={drawerModel} onChange={(e) => setDrawerModel(e.target.value)}>
+              <select value={drawerModel} disabled={drawerLocked} onChange={(e) => setDrawerModel(e.target.value)}>
                 {DRAWER_MODELS.map((x) => <option key={x}>{x}</option>)}
               </select>
+              {drawerLocked && <Hint>Locked for this kitchen plan.</Hint>}
             </Fld>
           )}
 
