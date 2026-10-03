@@ -871,11 +871,13 @@ function buildCarcassInnerRaw(cfg: {
 
   const baseProfilePack = `HARDWARE PACK BASE CABINET ${W}MM TOP PROFILE`;
   if (!z.tall && !z.kind && HARDWARE_PACK_DEFINITIONS[baseProfilePack]) {
-    hardware.push({ name: baseProfilePack, qty: 1, uom: "set", pack: PK });
+    hardware.push({ name: baseProfilePack, qty: 1, uom: "set", pack: baseProfilePack });
+    pkRows.push({ pack: baseProfilePack, type: "hardware", qty: 1 });
   }
   const dishRackProfilePack = `HARDWARE PACK WALL DISHRACK CABINET ${W}MM BOTTOM PROFILE`;
   if (fk === "WDR" && HARDWARE_PACK_DEFINITIONS[dishRackProfilePack]) {
-    hardware.push({ name: dishRackProfilePack, qty: 1, uom: "set", pack: PK });
+    hardware.push({ name: dishRackProfilePack, qty: 1, uom: "set", pack: dishRackProfilePack });
+    pkRows.push({ pack: dishRackProfilePack, type: "hardware", qty: 1 });
   }
 
   /* --- shutters --- */
@@ -1086,7 +1088,7 @@ function buildFullBomData(project: ProjectLine[], so: string, finish: string, ws
         "SO Qty": h.qty * q, "Actual Qty": h.qty * q, Unit: h.uom ?? "nos",
       }));
       expandHardwarePack(h).filter((component) => component.name !== h.name).forEach((component) => rows.push(makeRow({
-        SO: so, Elevation: line.elevation, "Main Group": "Cabinet", "Sub Group": "Hardware Pack",
+        SO: so, Elevation: line.elevation, "Main Group": "Cabinet", "Sub Group": component.pack,
         Level: 3, Item: component.name, Type: "component",
         "SO Qty": r3(component.qty * q), "Actual Qty": r3(component.qty * q), Unit: component.uom,
       })));
