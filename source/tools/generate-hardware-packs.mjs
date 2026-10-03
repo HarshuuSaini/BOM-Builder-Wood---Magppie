@@ -36,6 +36,18 @@ for (const row of rows) {
 for (const [type, components] of Object.entries(definitions)) {
   if (!components.length) throw new Error(`${type} has no component rows.`);
 }
+
+// The approved pack tab does not list PVC leg packs. Keep the stone pack
+// structure (2/4/6 legs), but replace its stone-only contents with the exact
+// wood items and prices maintained on the Hardware sheet.
+for (const count of [2, 4, 6]) {
+  const type = `HARDWARE PACK PVC LEG SET/${count}`;
+  definitions[type] = [
+    { component: "LEG PVC 100 MM ADJUSTABLE CRY", qty: count, uom: "PCS" },
+    { component: "SKIRTING CLIP FOR LEG Q PLINTH CRY", qty: count, uom: "PCS" },
+  ];
+  metadata[type] = { cabinet: "Base cabinet", quantity: 1, uom: "set" };
+}
 const payload = {
   schemaVersion: 1,
   source: `${path.basename(sourcePath)} / pack`,

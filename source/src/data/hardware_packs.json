@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "source": "Cost (1).xlsx / pack",
-  "generatedAt": "2026-10-03T07:14:12.368Z",
-  "packCount": 16,
+  "generatedAt": "2026-10-03T07:38:31.939Z",
+  "packCount": 19,
   "metadata": {
     "HARDWARE PACK HINGE 0 CRANK Set/2": {
       "cabinet": "Cabinet with H <=720",
@@ -83,6 +83,21 @@
       "cabinet": "",
       "quantity": 600,
       "uom": "MM"
+    },
+    "HARDWARE PACK PVC LEG SET/2": {
+      "cabinet": "Base cabinet",
+      "quantity": 1,
+      "uom": "set"
+    },
+    "HARDWARE PACK PVC LEG SET/4": {
+      "cabinet": "Base cabinet",
+      "quantity": 1,
+      "uom": "set"
+    },
+    "HARDWARE PACK PVC LEG SET/6": {
+      "cabinet": "Base cabinet",
+      "quantity": 1,
+      "uom": "set"
     }
   },
   "definitions": {
@@ -405,6 +420,42 @@
       {
         "component": "SCREW FOR CHIP BOARD 16XX4 SS 304 CINE",
         "qty": 8,
+        "uom": "PCS"
+      }
+    ],
+    "HARDWARE PACK PVC LEG SET/2": [
+      {
+        "component": "LEG PVC 100 MM ADJUSTABLE CRY",
+        "qty": 2,
+        "uom": "PCS"
+      },
+      {
+        "component": "SKIRTING CLIP FOR LEG Q PLINTH CRY",
+        "qty": 2,
+        "uom": "PCS"
+      }
+    ],
+    "HARDWARE PACK PVC LEG SET/4": [
+      {
+        "component": "LEG PVC 100 MM ADJUSTABLE CRY",
+        "qty": 4,
+        "uom": "PCS"
+      },
+      {
+        "component": "SKIRTING CLIP FOR LEG Q PLINTH CRY",
+        "qty": 4,
+        "uom": "PCS"
+      }
+    ],
+    "HARDWARE PACK PVC LEG SET/6": [
+      {
+        "component": "LEG PVC 100 MM ADJUSTABLE CRY",
+        "qty": 6,
+        "uom": "PCS"
+      },
+      {
+        "component": "SKIRTING CLIP FOR LEG Q PLINTH CRY",
+        "qty": 6,
         "uom": "PCS"
       }
     ]

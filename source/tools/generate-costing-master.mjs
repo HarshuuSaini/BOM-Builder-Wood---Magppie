@@ -2,7 +2,8 @@
 
 /**
  * Generate the application's static costing master from the approved Excel
- * workbook. Only the KITCHEN sheet is read. Usage:
+ * workbook. KITCHEN supplies boards and cabinet items; Hardware supplies the
+ * individual components used when hardware packs are expanded. Usage:
  *
  *   node tools/generate-costing-master.mjs /path/to/Cost_Master_Updated.xlsx
  */
@@ -16,17 +17,15 @@ if (!inputPath) throw new Error("Pass the approved costing workbook path.");
 
 const outputPath = path.resolve("src/data/costing_master.json");
 const workbook = XLSX.readFile(inputPath, { cellFormula: true, cellNF: true });
-const sheet = workbook.Sheets.KITCHEN;
-if (!sheet) throw new Error("The workbook does not contain a KITCHEN sheet.");
-
-const rows = XLSX.utils.sheet_to_json(sheet, { defval: null, raw: true });
 const n = (value) => typeof value === "number" && Number.isFinite(value) ? value : null;
 const s = (value) => value == null ? "" : String(value).trim();
 
-const items = rows
-  .filter((row) => s(row["Material Description"]))
-  .map((row, index) => ({
-    id: `KITCHEN-${String(index + 1).padStart(3, "0")}`,
+function readItems(sheetName, prefix) {
+  const sheet = workbook.Sheets[sheetName];
+  if (!sheet) throw new Error(`The workbook does not contain a ${sheetName} sheet.`);
+  const rows = XLSX.utils.sheet_to_json(sheet, { defval: null, raw: true });
+  return rows.filter((row) => s(row["Material Description"]) && s(row.Group) && s(row.Subgroup) && s(row["Rate Basis"])).map((row, index) => ({
+    id: `${prefix}-${String(index + 1).padStart(3, "0")}`,
     sNo: n(row.SN) ?? n(row["S. No."]) ?? index + 1,
     elevation: s(row.Elevation),
     materialDescription: s(row["Material Description"]),
@@ -45,6 +44,9 @@ const items = rows
       ? n(row["Sq.FT. Price"])
       : n(row.Price),
   }));
+}
+
+const items = [...readItems("KITCHEN", "KITCHEN"), ...readItems("Hardware", "HARDWARE")];
 
 if (items.some((item) => !item.group || !item.subgroup || !item.rateBasis || item.currentRate == null)) {
   throw new Error("One or more master items is missing Group, Subgroup, Rate Basis, or Current Rate.");
@@ -52,7 +54,7 @@ if (items.some((item) => !item.group || !item.subgroup || !item.rateBasis || ite
 
 const payload = {
   schemaVersion: 1,
-  source: `${path.basename(inputPath)} / KITCHEN`,
+  source: `${path.basename(inputPath)} / KITCHEN + Hardware`,
   generatedAt: new Date().toISOString(),
   currency: "INR",
   items,

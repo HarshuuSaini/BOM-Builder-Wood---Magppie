@@ -22,7 +22,7 @@ import edgebandFinishesData from "@/data/edgeband_finishes.json";
 import hardwarePacksData from "@/data/hardware_packs.json";
 import { getPartBaseName, getPanelBaseName, normalizePartOrPanelName } from "@/lib/naming";
 import { exportBomWorkbook, exportBomCsv, type AccessoryExportRow } from "@/lib/export";
-import { COSTING_ITEMS, DEFAULT_RATES, SHUTTER_RATE_KEY, findCostingItem, type CostingMasterItem, type CostingRates } from "@/lib/costing";
+import { COSTING_ITEMS, DEFAULT_RATES, findCostingItem, type CostingMasterItem, type CostingRates } from "@/lib/costing";
 import type { BomReportRow } from "@/lib/types";
 
 /* ------------------------------------------------------------------ */
@@ -203,26 +203,28 @@ function expandHardwarePack(h: Hardware): HardwareComponent[] {
 /*  Boards & shutter types                                             */
 /* ------------------------------------------------------------------ */
 
-const BOARDS: Record<string, {
-  label: string; core: string; coreT: number; lam: boolean;
-  back: string; backCoreT: number;
-}> = {
-  A: {
-    label: "16mm ply + 0.8mm laminate both faces",
-    core: "16mm BWP Plywood", coreT: 16, lam: true,
-    back: "6mm BWP Plywood", backCoreT: 6,
-  },
-  B: {
-    label: "18mm prelaminated MDF",
-    core: "18mm Prelaminated MDF", coreT: 18, lam: false,
-    back: "8mm Prelaminated MDF", backCoreT: 8,
-  },
-  C: {
-    label: "18mm prelaminated particle board",
-    core: "18mm Prelaminated Particle Board", coreT: 18, lam: false,
-    back: "8mm Prelaminated Particle Board", backCoreT: 8,
-  },
-};
+const CARCASS_BOARD_ITEMS = COSTING_ITEMS.filter((item) => item.group === "Carcass/ Shelf Material");
+const CARCASS_BACK_ITEMS = COSTING_ITEMS.filter((item) => item.group === "Carcass Back Material");
+const SHUTTER_BOARD_ITEMS = COSTING_ITEMS.filter((item) => item.group === "Shutter Material");
+const DEFAULT_BOARD_ID = CARCASS_BOARD_ITEMS.find((item) => item.elevation === "CARCASS POSTLAM BWP PLY")?.id
+  ?? CARCASS_BOARD_ITEMS[0]?.id ?? "";
+const DEFAULT_SHTYPE = SHUTTER_BOARD_ITEMS.find((item) => item.elevation === "SHUTTER POSTLAM BWP PLY")?.id
+  ?? SHUTTER_BOARD_ITEMS[0]?.id ?? "";
+
+function carcassBoardOf(id: string) {
+  const item = CARCASS_BOARD_ITEMS.find((candidate) => candidate.id === id) ?? CARCASS_BOARD_ITEMS[0];
+  const backItem = CARCASS_BACK_ITEMS.find((candidate) => candidate.elevation === item?.elevation)
+    ?? CARCASS_BACK_ITEMS[0];
+  return {
+    item, backItem,
+    label: item?.subgroup ?? "Carcass board",
+    core: item?.materialDescription ?? "Carcass board",
+    coreT: item?.thicknessMm ?? T,
+    lam: false,
+    back: backItem?.materialDescription ?? "Carcass back board",
+    backCoreT: backItem?.thicknessMm ?? T_BACK,
+  };
+}
 
 /**
  * Shutter material matrix — every row of Shutter_Material.xlsx (Sep 2026), one
@@ -234,28 +236,21 @@ const BOARDS: Record<string, {
  * `rate` names the costing key on /admin.
  */
 type ShFamily = "PRELAM" | "POSTLAM" | "MEMBRANE" | "PU1" | "PU2" | "GLASS";
-
-const SHUTTER_TYPES: Record<string, {
-  label: string; band: boolean; mat: string; t: number; fam: ShFamily; rate: string;
-}> = {
-  PRELAM_HDHMR:     { label: "Prelaminated — HDHMR (SF)",        band: true,  mat: "18MM PRELAMINATED HDHMR SF",         t: 18, fam: "PRELAM",   rate: "SHUTTER_PRELAM_HDHMR" },
-  PRELAM_MDF:       { label: "Prelaminated — MDF (SF)",          band: true,  mat: "18MM PRELAMINATED MDF SF",           t: 18, fam: "PRELAM",   rate: "SHUTTER_PRELAM_MDF" },
-  PRELAM_PARTICAL:  { label: "Prelaminated — Partical (SF)",     band: true,  mat: "18MM PRELAMINATED PARTICAL SF",      t: 18, fam: "PRELAM",   rate: "SHUTTER_PRELAM_PB" },
-  POSTLAM_HDHMR:    { label: "Postlam — HDHMR raw (SF)",         band: true,  mat: "18MM POSTLAM HDHMR RAW SF",          t: 16, fam: "POSTLAM",  rate: "SHUTTER_POSTLAM_PLY" },
-  POSTLAM_MDF:      { label: "Postlam — MDF raw (SF)",           band: true,  mat: "18MM POSTLAM MDF RAW SF",            t: 16, fam: "POSTLAM",  rate: "SHUTTER_POSTLAM_PLY" },
-  POSTLAM_PARTICAL: { label: "Postlam — Partical raw (SF)",      band: true,  mat: "18MM POSTLAM PARTICAL RAW SF",       t: 16, fam: "POSTLAM",  rate: "SHUTTER_POSTLAM_PLY" },
-  POSTLAM_BWP:      { label: "Postlam — BWP Ply raw (SF)",       band: true,  mat: "18MM POSTLAM BWP PLY RAW SF",        t: 16, fam: "POSTLAM",  rate: "SHUTTER_POSTLAM_PLY" },
-  MEMBRANE_HDHMR:   { label: "Membrane one side — HDHMR OSR (HG)", band: false, mat: "18MM MEMBRANE ONE SIDE HDHMR OSR HG", t: 18, fam: "MEMBRANE", rate: "SHUTTER_MEMBRANE" },
-  MEMBRANE_MDF:     { label: "Membrane one side — MDF OSR (HG)", band: false, mat: "18MM MEMBRANE ONE SIDE MDF OSR HG",  t: 18, fam: "MEMBRANE", rate: "SHUTTER_MEMBRANE" },
-  PU1_HDHMR:        { label: "PU one side — HDHMR OSR (HG)",     band: false, mat: "18MM PU ONE SIDE HDHMR OSR HG",      t: 18, fam: "PU1",      rate: "SHUTTER_PU_SINGLE" },
-  PU1_MDF:          { label: "PU one side — MDF OSR (HG)",       band: false, mat: "18MM PU ONE SIDE MDF OSR HG",        t: 18, fam: "PU1",      rate: "SHUTTER_PU_SINGLE" },
-  PU2_HDHMR:        { label: "PU both sides — HDHMR raw (HG)",   band: false, mat: "18MM PU BOTH SIDE HDHMR RAW HG",     t: 18, fam: "PU2",      rate: "SHUTTER_PU_DOUBLE" },
-  PU2_MDF:          { label: "PU both sides — MDF raw (HG)",     band: false, mat: "18MM PU BOTH SIDE MDF RAW HG",       t: 18, fam: "PU2",      rate: "SHUTTER_PU_DOUBLE" },
-  GLASS:            { label: "Glass",                            band: false, mat: "5mm Toughened Glass",                t: 5,  fam: "GLASS",    rate: "" },
+type ShutterSpec = { label: string; band: boolean; mat: string; t: number; fam: ShFamily };
+const GLASS_SHUTTER_SPEC: ShutterSpec = { label: "Glass", band: false, mat: "5mm Toughened Glass", t: 5, fam: "GLASS" };
+function shutterFamily(item: CostingMasterItem): ShFamily {
+  const text = `${item.elevation} ${item.subgroup}`.toUpperCase();
+  if (text.includes("MEMBRANE")) return "MEMBRANE";
+  if (text.includes("SHUTTER PU") || text.startsWith("PU ")) return text.includes("BSP") ? "PU2" : "PU1";
+  return text.includes("POSTLAM") ? "POSTLAM" : "PRELAM";
+}
+const shOf = (st: string): ShutterSpec => {
+  if (st === "GLASS") return GLASS_SHUTTER_SPEC;
+  const item = SHUTTER_BOARD_ITEMS.find((candidate) => candidate.id === st)
+    ?? SHUTTER_BOARD_ITEMS.find((candidate) => candidate.id === DEFAULT_SHTYPE);
+  const fam = item ? shutterFamily(item) : "PRELAM";
+  return item ? { label: item.subgroup, band: fam === "PRELAM" || fam === "POSTLAM", mat: item.materialDescription, t: item.thicknessMm ?? 18, fam } : GLASS_SHUTTER_SPEC;
 };
-
-const DEFAULT_SHTYPE = "POSTLAM_BWP";
-const shOf = (st: string) => SHUTTER_TYPES[st] ?? SHUTTER_TYPES[DEFAULT_SHTYPE];
 const shFamOf = (st: string): ShFamily => shOf(st).fam;
 
 /** Only the glass branch keeps the stone frame machinery. */
@@ -459,7 +454,8 @@ function shDeduct(isBase: boolean, handle: string, loc: string): number {
 /** Shelf material is derived from the shutter type, not the zone. */
 function shelfMaterialOf(fk: string, board: string): { mat: string; t: number; band: boolean } {
   if (isGlassShutterFam(fk)) return { mat: `${GLASS_SHELF_T}mm Toughened Glass`, t: GLASS_SHELF_T, band: false };
-  return { mat: BOARDS[board].core, t: T, band: true };
+  const selected = carcassBoardOf(board);
+  return { mat: selected.core, t: selected.coreT, band: true };
 }
 
 function shelfCount(zk: string, fk: string, fam: any, H: number): number {
@@ -778,7 +774,7 @@ function buildCarcassInnerRaw(cfg: {
   const z = ZONES[zk];
   const isBase = !z.tall && !z.kind;
   const fam = famSetOf(zk)[fk];
-  const B = BOARDS[board];
+  const B = carcassBoardOf(board);
 
   const panels: Panel[] = [];
   const profiles: Profile[] = [];
@@ -808,11 +804,11 @@ function buildCarcassInnerRaw(cfg: {
   if (fam.special === "MD") {
     stubs.push("MD back panel height — parked at the construction stage. With no bottom panel the back is grooved on three edges only, so the +9 allowance does not apply symmetrically.");
   } else if (fam.backStrips) {
-    add(`Panels- CR Back Strip ${T_BACK}mm ${bw}x75`, bw, 75, 2, T_BACK, B.back, false);
+    add(`Panels- CR Back Strip ${B.backCoreT}mm ${bw}x75`, bw, 75, 2, B.backCoreT, B.back, false);
   } else {
     if (fam.special === "REF") stubs.push("REF short back wall — stone uses H − 1874 to clear the fridge recess. Wood equivalent not yet defined; a full-height back is emitted meanwhile.");
     if (fam.special === "APP") stubs.push("APP twin back walls — stone splits upper/lower at H − 1349. Wood equivalent not yet defined; a single back is emitted meanwhile.");
-    add(`Panels- CR Back ${T_BACK}mm ${bw}x${bh}`, bw, bh, 1, T_BACK, B.back, false);
+    add(`Panels- CR Back ${B.backCoreT}mm ${bw}x${bh}`, bw, bh, 1, B.backCoreT, B.back, false);
   }
 
   /* --- sink / hob / dish-rack: rails instead of the stone alu frame --- */
@@ -1336,30 +1332,32 @@ function carcassMasterItem(board: string, panel: Panel): CostingMasterItem | und
   if (panel.pack === "Drawer Pack" && /BWP Plywood/i.test(panel.mat ?? "")) {
     return COSTING_ITEMS.find((item) => item.group === "Drawer Material" && /BWP Ply/i.test(item.subgroup));
   }
-  const isBack = /Back/i.test(panel.name) || panel.t === T_BACK;
-  const group = isBack ? "Carcass Back Material" : "Carcass/ Shelf Material";
-  const elevation = board === "A" ? "CARCASS POSTLAM BWP PLY"
-    : board === "B" ? "CARCASS PRELAM MDF"
-      : board === "C" ? "CARCASS PRELAM PARTICAL" : "";
-  if (elevation) return COSTING_ITEMS.find((item) => item.elevation === elevation && item.group === group);
-  return undefined;
+  const selected = carcassBoardOf(board);
+  return /Back/i.test(panel.name) ? selected.backItem : selected.item;
 }
 
 function shutterMasterItem(shutterType: string): CostingMasterItem | undefined {
-  const map: Record<string, string> = {
-    PRELAM_HDHMR: "SHUTTER PRELAM HDHMR",
-    PRELAM_MDF: "SHUTTER PRELAM MDF",
-    PRELAM_PARTICAL: "SHUTTER PRELAM PARTICAL",
-    POSTLAM_HDHMR: "SHUTTER POSTLAM HDHMR",
-    POSTLAM_MDF: "SHUTTER POSTLAM MDF",
-    POSTLAM_PARTICAL: "SHUTTER POSTLAM PARTICAL",
-    POSTLAM_BWP: "SHUTTER POSTLAM BWP PLY",
-  };
-  const elevation = map[shutterType];
-  if (elevation) return findCostingItem({ elevation, group: "Shutter Material", thicknessMm: 18 });
-  if (shutterType === "MEMBRANE_HDHMR") return findCostingItem({ elevation: "SHUTTER MEMBRANE", group: "Shutter Material", subgroup: "Membrane (Modern) HDHMR OSM", thicknessMm: 18 });
-  if (shutterType === "PU1_HDHMR") return findCostingItem({ elevation: "SHUTTER PU LQD", group: "Shutter Material", subgroup: "PU HDHMR (Modern) OSP", thicknessMm: 18 });
-  if (shutterType === "PU2_HDHMR") return findCostingItem({ elevation: "SHUTTER PU LQD", group: "Shutter Material", subgroup: "PU HDHMR (Modern) BSP", thicknessMm: 18 });
+  return SHUTTER_BOARD_ITEMS.find((item) => item.id === shutterType);
+}
+
+const hardwareNameKey = (value: string) => value.toUpperCase().replace(/\bXX\b/g, "").replace(/[^A-Z0-9]/g, "");
+function hardwareMasterItem(name: string): CostingMasterItem | undefined {
+  const key = hardwareNameKey(name);
+  const exact = COSTING_ITEMS.find((item) => hardwareNameKey(item.materialDescription) === key);
+  if (exact) return exact;
+  const upper = name.toUpperCase();
+  const hardware = COSTING_ITEMS.filter((item) => item.id.startsWith("HARDWARE-"));
+  if (upper.includes("MINI FIX")) return hardware.find((item) => item.subgroup === "Mini Fix");
+  if (upper.includes("DOWEL")) return hardware.find((item) => item.subgroup === "Dowel");
+  if (upper.includes("PVC INSERT")) return hardware.find((item) => item.subgroup === "PVC Insert");
+  if (upper.includes("DOOR BUMPER") || upper.includes("PVC BUFFER")) return hardware.find((item) => item.subgroup === "Buffer");
+  if (upper.includes("END CONNECTOR")) return hardware.find((item) => item.subgroup === "Profile Connector");
+  if (upper.includes("LEG PVC")) return hardware.find((item) => item.subgroup === "PVC Leg");
+  if (upper.includes("SKIRTING CLIP")) return hardware.find((item) => item.subgroup === "Skirting Clip");
+  if (upper.includes("SCREW")) {
+    const size = upper.match(/(?:XX|X)?(16|25|30|75)\s*MM/)?.[1];
+    return hardware.find((item) => item.subgroup === "Screw" && (!size || item.type.includes(size)));
+  }
   return undefined;
 }
 
@@ -1379,10 +1377,7 @@ function computeCosting(
   const unpriced = new Set<string>();
 
   // Compatibility fallback for filler/visible-panel rows outside a cabinet.
-  const shutterRate = (st: string): number => {
-    const key = shOf(st).rate;
-    return key ? (rates[key as keyof CostingRates] ?? 0) : 0;
-  };
+  void rates;
 
   project.forEach((l) => {
     const m = l.m;
@@ -1422,9 +1417,9 @@ function computeCosting(
     });
     m.hardware.flatMap(expandHardwarePack).forEach((h) => {
       if (/^HINGE\b/i.test(h.name)) {
-        const hingeItem = COSTING_ITEMS.find((item) => item.materialDescription.toUpperCase() === h.name.toUpperCase());
-        if (hingeItem) details.push({ category: "Hardware", itemCode: hingeItem.id, item: h.name, specification: h.pack, netQty: h.qty * l.qty, wastePct: 0, billableQty: h.qty * l.qty, uom: "nos", rate: hingeItem.currentRate, amount: h.qty * l.qty * hingeItem.currentRate });
-        else unpriced.add(h.name);
+        const hingeItem = hardwareMasterItem(h.name);
+        const rate = hingeItem?.currentRate ?? 1;
+        details.push({ category: "Hardware", itemCode: hingeItem?.id ?? "FALLBACK-1", item: hingeItem?.materialDescription ?? h.name, specification: h.pack, netQty: h.qty * l.qty, wastePct: 0, billableQty: h.qty * l.qty, uom: "nos", rate, amount: h.qty * l.qty * rate });
         return;
       }
       if (/^DRAWER BOX SET/i.test(h.name)) {
@@ -1440,9 +1435,9 @@ function computeCosting(
         });
         return;
       }
-      const masterHardware = COSTING_ITEMS.find((item) => item.materialDescription.toUpperCase() === h.name.toUpperCase());
-      if (masterHardware) addDetail({ category: masterHardware.group, itemCode: masterHardware.id, item: masterHardware.materialDescription, specification: h.pack, netQty: h.qty * l.qty, wastePct: 0, billableQty: h.qty * l.qty, uom: masterHardware.rateBasis === "SET" ? "set" : "nos", rate: masterHardware.currentRate, amount: h.qty * l.qty * masterHardware.currentRate });
-      else if (h.name !== m.hardware.find((source) => source.name === h.name)?.name) unpriced.add(h.name);
+      const masterHardware = hardwareMasterItem(h.name);
+      const rate = masterHardware?.currentRate ?? 1;
+      addDetail({ category: masterHardware?.group ?? "Hardware", itemCode: masterHardware?.id ?? "FALLBACK-1", item: masterHardware?.materialDescription ?? h.name, specification: h.pack, netQty: h.qty * l.qty, wastePct: 0, billableQty: h.qty * l.qty, uom: masterHardware?.rateBasis === "SET" ? "set" : "nos", rate, amount: h.qty * l.qty * rate });
     });
     const cost = details.reduce((sum, detail) => sum + detail.amount, 0);
     lines.push({ label: `${l.elevation} · ${m.code}`, code: m.code, qty: l.qty, unitCost: l.qty ? cost / l.qty : cost, cost, details });
@@ -1454,7 +1449,7 @@ function computeCosting(
     const st = extraRows[i];
     if (st === undefined) return; // countertops emit no panels
     const boardItem = shutterMasterItem(st);
-    const rate = boardItem?.currentRate ?? shutterRate(st);
+    const rate = boardItem?.currentRate ?? 0;
     const net = sqft(p.w, p.h) * p.qty;
     const billed = net * (1 + wst.shutter / 100);
     const details: CostDetail[] = [{ category: "Shutter board", itemCode: boardItem?.id ?? "—", item: boardItem?.materialDescription ?? shOf(st).mat, specification: `${boardItem?.subgroup ?? shOf(st).label} · ${boardItem?.thicknessMm ?? p.t ?? "—"}mm`, netQty: net, wastePct: wst.shutter, billableQty: billed, uom: "sqft", rate, amount: billed * rate }];
@@ -1502,7 +1497,7 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
   const [vid, setVid] = useState("single");
   const [hand, setHand] = useState("LHS");
   const [handle, setHandle] = useState("STD");
-  const [board, setBoard] = useState("A");
+  const [board, setBoard] = useState(DEFAULT_BOARD_ID);
   const [shType, setShType] = useState(DEFAULT_SHTYPE);
   const [neon, setNeon] = useState("NEON20");
   const [drawerModel, setDrawerModel] = useState("Hettich");
@@ -1731,11 +1726,11 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
             {handle === "XCJ" && <Hint>Top depth cuts to {D - CJ_CUT}. Base shutters lose 33mm.</Hint>}
           </Fld>
 
-          <Fld label="Carcass board">
+          <Fld label="Carcass board type">
             <select value={board} onChange={(e) => setBoard(e.target.value)}>
-              {Object.entries(BOARDS).map(([k, b]) => <option key={k} value={k}>{k} — {b.label}</option>)}
+              {CARCASS_BOARD_ITEMS.map((item) => <option key={item.id} value={item.id}>{item.subgroup} · {item.thicknessMm ?? "—"}mm</option>)}
             </select>
-            <Hint>Back: {BOARDS[board].back} · nominal {T_BACK}mm</Hint>
+            <Hint>{carcassBoardOf(board).core} · Back: {carcassBoardOf(board).backItem?.subgroup ?? "—"} · {carcassBoardOf(board).backCoreT}mm</Hint>
           </Fld>
 
           {!fam.noShutter && (isGlass ? (
@@ -1744,10 +1739,9 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
               <Hint>Glass family — inset {SH_INSET[neon]}mm, frame {SH_FRAME[neon]}mm.</Hint>
             </Fld>
           ) : (
-            <Fld label="Shutter type">
+            <Fld label="Shutter board type">
               <select value={shType} onChange={(e) => setShType(e.target.value)}>
-                {Object.entries(SHUTTER_TYPES).filter(([k]) => k !== "GLASS")
-                  .map(([k, s]) => <option key={k} value={k}>{s.label}</option>)}
+                {SHUTTER_BOARD_ITEMS.map((item) => <option key={item.id} value={item.id}>{item.subgroup} · {item.thicknessMm ?? "—"}mm</option>)}
               </select>
               <Hint>{shOf(shType).mat} · cut at {shOf(shType).t}mm · {shOf(shType).band ? `${BAND_T}mm band, all edges` : "no edge band"}</Hint>
             </Fld>
@@ -1890,7 +1884,7 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
                     <input key="q" type="number" min={1} value={f.qty} onChange={(e) => updVp(f.id, { qty: Math.max(1, +e.target.value) })} style={{ width: 58 }} />,
                     <select key="t" value={f.shutterType} onChange={(e) => updVp(f.id, { shutterType: e.target.value })}>
                       <option value="">Default ({shOf(shType).label})</option>
-                      {Object.entries(SHUTTER_TYPES).filter(([k]) => k !== "GLASS").map(([k, s]) => <option key={k} value={k}>{s.label}</option>)}</select>,
+                      {SHUTTER_BOARD_ITEMS.map((item) => <option key={item.id} value={item.id}>{item.subgroup} · {item.thicknessMm ?? "—"}mm</option>)}</select>,
                     <select key="s" value={f.customShade} onChange={(e) => updVp(f.id, { customShade: e.target.value })}>
                       <option value="">Default ({finish})</option>
                       {(boardFinishesData as string[]).map((x) => <option key={x}>{x}</option>)}</select>,
