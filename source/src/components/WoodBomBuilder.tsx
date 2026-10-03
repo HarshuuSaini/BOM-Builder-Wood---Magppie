@@ -776,6 +776,7 @@ function buildCarcassInnerRaw(cfg: {
 }) {
   const { zk, fk, v, hand, handle, board, shType, neon, W, H, D, drawerModel } = cfg;
   const z = ZONES[zk];
+  const isBase = !z.tall && !z.kind;
   const fam = famSetOf(zk)[fk];
   const B = BOARDS[board];
 
@@ -791,13 +792,15 @@ function buildCarcassInnerRaw(cfg: {
   const add = (name: string, w: number, h: number, qty: number, t: number, mat: string, band: boolean, drill: string | null = null) =>
     panels.push({ name, w: Math.round(w), h: Math.round(h), qty, drill, pack: PK, t, mat, band });
 
-  /* --- sides run full height; top and bottom sit between them --- */
+  /* --- sides run full height; base cabinets have no top panel --- */
   add(`Panels- CR Side ${T}mm ${D}x${H}`, D, H, 2, T, carc, true, hand === "LHS" ? "LH" : "RH");
 
-  const topD = handle === "XCJ" ? D - CJ_CUT : D;
-  add(`Panels- CR Top ${T}mm ${W - 2 * T}x${topD}`, W - 2 * T, topD, 1, T, carc, true);
+  if (!isBase) {
+    const topD = handle === "XCJ" ? D - CJ_CUT : D;
+    add(`Panels- CR Top ${T}mm ${W - 2 * T}x${topD}`, W - 2 * T, topD, 1, T, carc, true);
+  }
 
-  if (!fam.noBottom) add(`Panels- CR Bottom ${T}mm ${W - 2 * T}x${D}`, W - 2 * T, D, 1, T, carc, true);
+  if (fk !== "WDR" && !fam.noBottom) add(`Panels- CR Bottom ${T}mm ${W - 2 * T}x${D}`, W - 2 * T, D, 1, T, carc, true);
 
   /* --- back: grooved, +9 allowance, never banded --- */
   const bw = W - 2 * T + GROOVE;

@@ -2,14 +2,14 @@
 
 ## Construction
 
-Every cabinet is **full sides**: sides run the full height, top and bottom sit
-between them.
+Every cabinet is **full sides**: sides run the full height. Base cabinets omit
+the top panel. Wall dish-rack cabinets omit the bottom panel.
 
 | Panel | Formula | Thk | Band |
 |---|---|---|---|
 | Side LH/RH | `D × H`, qty 2 | 18 | yes |
-| Top | `(W − 2t) × D` — gola cuts depth to `D − 23` | 18 | yes |
-| Bottom | `(W − 2t) × D` | 18 | yes |
+| Top | `(W − 2t) × D` — non-base only; gola cuts depth to `D − 23` | 18 | yes |
+| Bottom | `(W − 2t) × D` — omitted for WDR dish-rack | 18 | yes |
 | Back | `(W − 2t + 9) × (H − 2t + 9)` | 8 | **no** |
 | Shelf | `(W − 2t − 1) × (D − 28)` | 18 or 8 glass | yes / no |
 | Top rails (SK, HO, WDR) | `(W − 2t) × 100`, qty 2 | 18 | yes |
@@ -66,7 +66,8 @@ Glass is bought by area, not by the sheet.
 ## Hardware
 
 `legCount(w)` = 2 if w ≤ 150, 6 if w ≥ 1050, else 4.
-`hingeN(h)` = 3 if h ≤ 900, 4 if ≤ 1600, 5 if ≤ 2100, else 6.
+Workbook hinge packs use 2 hinges per leaf when H ≤ 720, 3 when H ≤ 1050,
+and 5 above 1050.
 Drawer boxes, rolling shutters and skirting are bought-in.
 
 ## Drawer boxes
