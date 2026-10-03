@@ -738,7 +738,7 @@ function buildShutters(
 
   const hingesPerLeaf = hingePackCount(H);
   if (isGlassShutterFam(fk)) {
-    hardware.push({ name: "HINGE SLIM FOR ALU PROFILE 0 CRANK SOFT CLOSE 95 DEG XX GUN BLACK DPOA-209 BLACK SQU", qty: hingesPerLeaf * leaves, uom: "PCS", pack: "Shutter Pack" });
+    hardware.push({ name: hingeItemFor(hingeChoice, hingeModeFor(zk, fk)), qty: hingesPerLeaf * leaves, uom: "PCS", pack: "Shutter Pack" });
   } else {
     const hingeMode = hingeModeFor(zk, fk);
     const packType = hingeMode === "blind" ? "BLIND" : hingeMode === "wide" ? "165 DEGREE" : "0 CRANK";
@@ -1566,7 +1566,8 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
   const [board, setBoard] = useState(DEFAULT_BOARD_ID);
   const [shType, setShType] = useState(DEFAULT_SHTYPE);
   const [hingeChoice, setHingeChoice] = useState<HingeChoice>("Hettich Soft Close");
-  const [neon, setNeon] = useState("NEON20");
+  const [neon] = useState("NEON50");
+  const [hingeLocked, setHingeLocked] = useState(false);
   const [drawerModel, setDrawerModel] = useState("Hettich");
   const [finish, setFinish] = useState((boardFinishesData as string[])[0] ?? "White");
   const [elevation, setElevation] = useState("AA");
@@ -1623,6 +1624,7 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
   const v = fam.variants.find((x: any) => x.id === vid) ?? fam.variants[0];
   const sizes = useMemo(() => defSizes(zk, fkSafe), [zk, fkSafe]);
   const isGlass = isGlassShutterFam(fkSafe);
+  const drawerOnly = !!fam.drawers && !fam.fixedDpn && !(ZONES[zk].tall && fkSafe === "APP");
 
   const m = useMemo(
     () => buildModel({ zk, fk: fkSafe, vid: v.id, hand, handle, board, shType, hingeChoice, neon, W, H, D, drawerModel, finish }),
@@ -1645,7 +1647,10 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
     setW(s.w[0]); setH(s.h[0]); setD(s.d);
   }, [zk, fams]);
 
-  const addLine = () => setProject((p) => [...p, { id: Date.now() + Math.random(), m, qty, elevation }]);
+  const addLine = () => {
+    setProject((p) => [...p, { id: Date.now() + Math.random(), m, qty, elevation }]);
+    if (!drawerOnly) setHingeLocked(true);
+  };
   const delLine = (id: number) => setProject((p) => p.filter((x) => x.id !== id));
 
   const extras = useMemo(
@@ -1800,12 +1805,12 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
             {handle === "XCJ" && <Hint>Top depth cuts to {D - CJ_CUT}. Base shutters lose 33mm.</Hint>}
           </Fld>
 
-          {fam.p2 === "SH" && !isGlass && (
+          {!drawerOnly && (
             <Fld label="Hinge brand and type">
-              <select value={hingeChoice} onChange={(e) => setHingeChoice(e.target.value as HingeChoice)}>
+              <select value={hingeChoice} disabled={hingeLocked} onChange={(e) => setHingeChoice(e.target.value as HingeChoice)}>
                 {HINGE_CHOICES.map((choice) => <option key={choice} value={choice}>{choice}</option>)}
               </select>
-              <Hint>{hingeModeFor(zk, fkSafe) === "wide" ? "165° · Pullout cabinet" : hingeModeFor(zk, fkSafe) === "blind" ? "Blind hinge · Blind cabinet" : "95–110° · Standard cabinet"}</Hint>
+              <Hint>{hingeLocked ? "Locked for this kitchen plan · " : ""}{hingeModeFor(zk, fkSafe) === "wide" ? "165° · Pullout cabinet" : hingeModeFor(zk, fkSafe) === "blind" ? "Blind hinge · Blind cabinet" : "95–110° · Standard cabinet"}</Hint>
             </Fld>
           )}
 
@@ -1818,8 +1823,8 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
 
           {!fam.noShutter && (isGlass ? (
             <Fld label="Neon profile">
-              <Seg opts={[["NEON20", "Neon 20"], ["NEON50", "Neon 50"]]} val={neon} set={setNeon} />
-              <Hint>Glass family — inset {SH_INSET[neon]}mm, frame {SH_FRAME[neon]}mm.</Hint>
+              <div className="fixed-value">Neon 50</div>
+              <Hint>Glass shutters use Neon 50 only — inset {SH_INSET.NEON50}mm, frame {SH_FRAME.NEON50}mm.</Hint>
             </Fld>
           ) : (
             <Fld label="Shutter board type">
