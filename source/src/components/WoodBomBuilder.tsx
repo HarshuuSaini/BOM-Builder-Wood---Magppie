@@ -900,10 +900,14 @@ function buildCarcassInnerRaw(cfg: {
     add(`Panels- CR Back ${B.backCoreT}mm ${bw}x${bh}`, bw, bh, 1, B.backCoreT, B.back, false);
   }
 
-  /* --- sink / hob / dish-rack: rails instead of the stone alu frame --- */
+  /* --- framed units: hob has no rails; sink keeps only the back rail --- */
   if (fam.top === "frame") {
-    add(`Panels- CR Top Rail Front ${T}mm ${W - 2 * T}x100`, W - 2 * T, 100, 1, T, carc, true);
-    add(`Panels- CR Top Rail Back ${T}mm ${W - 2 * T}x100`, W - 2 * T, 100, 1, T, carc, true);
+    if (fk !== "HO" && fk !== "SK") {
+      add(`Panels- CR Top Rail Front ${T}mm ${W - 2 * T}x100`, W - 2 * T, 100, 1, T, carc, true);
+    }
+    if (fk !== "HO") {
+      add(`Panels- CR Top Rail Back ${T}mm ${W - 2 * T}x100`, W - 2 * T, 100, 1, T, carc, true);
+    }
   }
 
   /* --- shelves: material follows the shutter type --- */
