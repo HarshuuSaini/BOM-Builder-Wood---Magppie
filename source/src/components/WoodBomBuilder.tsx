@@ -56,6 +56,7 @@ interface Hardware {
   qty: number;
   uom?: string;
   pack?: string;
+  hingeItemName?: string;
 }
 
 interface Consumable {
@@ -98,6 +99,7 @@ type CarcassModel = {
   handle: string;
   board: string;
   shType: string;
+  hingeChoice: HingeChoice;
   neon: string;
   drawerModel: string;
   W: number;
@@ -175,6 +177,30 @@ const WASTE = { carcass: 10, shutter: 20, profile: 20 };
 
 const ELEVATIONS = ["AA", "BB", "CC", "DD", "EE", "FF", "GG", "HH", "JJ", "KK"];
 const DRAWER_MODELS = ["Lian", "Hettich", "Blum", "Hafele", "Grass"];
+const HINGE_CHOICES = [
+  "Hettich Soft Close", "Hettich Non Soft Close",
+  "Hafele Soft Close", "Hafele Non Soft Close",
+  "Blum Soft Close", "Blum Non Soft Close",
+  "Magppie Soft Close", "Magppie Non Soft Close",
+] as const;
+type HingeChoice = (typeof HINGE_CHOICES)[number];
+type HingeMode = "standard" | "blind" | "wide";
+
+function hingeModeFor(zk: string, fk: string): HingeMode {
+  if (ZONES[zk].blind) return "blind";
+  return ["BPO", "WBP", "PPN"].includes(fk) ? "wide" : "standard";
+}
+
+function hingeItemFor(choice: HingeChoice, mode: HingeMode): string {
+  const [brand] = choice.split(" ");
+  const soft = !choice.includes("Non Soft");
+  const candidates = COSTING_ITEMS.filter((item) => item.group === "Hinge" && item.brand.toLowerCase() === brand.toLowerCase())
+    .filter((item) => mode === "blind" ? item.subgroup === "BLIND" : mode === "wide" ? item.subgroup.includes("165") : item.subgroup === "0 CRANK");
+  const selected = candidates.find((item) => soft ? !/WITHOUT|W\/OUT|NON SOFT/i.test(item.type) : /WITHOUT|W\/OUT|NON SOFT/i.test(item.type));
+  if (selected) return selected.materialDescription;
+  const angle = mode === "blind" ? "BLIND" : mode === "wide" ? "165 DEGREE" : "95-110 DEGREE";
+  return `${brand.toUpperCase()} ${soft ? "SOFT CLOSE" : "NON SOFT CLOSE"} HINGE ${angle}`;
+}
 
 const sqft = (w: number, h: number) => (w * h) / SQDIV;
 const perim = (w: number, h: number) => (2 * (w + h)) / 1000;
@@ -189,9 +215,11 @@ const HARDWARE_PACK_DEFINITIONS = hardwarePacksData.definitions as Record<string
 /** Exact pack contents from the approved costing workbook's pack sheet. */
 function expandHardwarePack(h: Hardware): HardwareComponent[] {
   const pack = h.name;
-  const definition = HARDWARE_PACK_DEFINITIONS[pack];
+  const wideCount = pack.match(/^HARDWARE PACK HINGE 165 DEGREE Set\/(\d+)$/i)?.[1];
+  const definition = HARDWARE_PACK_DEFINITIONS[pack]
+    ?? (wideCount ? HARDWARE_PACK_DEFINITIONS[`HARDWARE PACK HINGE 0 CRANK Set/${wideCount}`] : undefined);
   if (definition) return definition.map((component) => ({
-    name: component.component,
+    name: h.hingeItemName && /^HINGE\b/i.test(component.component) ? h.hingeItemName : component.component,
     qty: component.qty * h.qty,
     uom: component.uom,
     pack,
@@ -618,6 +646,7 @@ function buildShutters(
   v: any,
   handle: string,
   shType: string,
+  hingeChoice: HingeChoice,
   neon: string,
   W: number,
   H: number,
@@ -662,7 +691,7 @@ function buildShutters(
         t: S.t, mat: S.mat, band: S.band,
       });
       const upperHinges = hingePackCount(upperH);
-      hardware.push({ name: `HARDWARE PACK HINGE 0 CRANK Set/${upperHinges}`, qty: 1, uom: "set", pack: "Shutter Pack" });
+      hardware.push({ name: `HARDWARE PACK HINGE 0 CRANK Set/${upperHinges}`, qty: 1, uom: "set", pack: "Shutter Pack", hingeItemName: hingeItemFor(hingeChoice, "standard") });
     }
     pkRows.push({ pack: "Shutter Pack", type: "sub_bom", qty: fronts.length + (z.tall && fk === "APP" ? 1 : 0) });
     const totalArea = fronts.reduce((sum, front) => {
@@ -711,8 +740,10 @@ function buildShutters(
   if (isGlassShutterFam(fk)) {
     hardware.push({ name: "HINGE SLIM FOR ALU PROFILE 0 CRANK SOFT CLOSE 95 DEG XX GUN BLACK DPOA-209 BLACK SQU", qty: hingesPerLeaf * leaves, uom: "PCS", pack: "Shutter Pack" });
   } else {
-    const hingePack = `HARDWARE PACK HINGE ${ZONES[zk].blind ? "BLIND " : "0 CRANK "}Set/${hingesPerLeaf}`;
-    hardware.push({ name: hingePack, qty: leaves, uom: "set", pack: "Shutter Pack" });
+    const hingeMode = hingeModeFor(zk, fk);
+    const packType = hingeMode === "blind" ? "BLIND" : hingeMode === "wide" ? "165 DEGREE" : "0 CRANK";
+    const hingePack = `HARDWARE PACK HINGE ${packType} Set/${hingesPerLeaf}`;
+    hardware.push({ name: hingePack, qty: leaves, uom: "set", pack: "Shutter Pack", hingeItemName: hingeItemFor(hingeChoice, hingeMode) });
   }
   pkRows.push({ pack: "Shutter Pack", type: "sub_bom", qty: leaves });
 
@@ -767,10 +798,10 @@ function explodePanelForTree(p: Panel, finish: string): TreeItem[] {
 
 function buildCarcassInnerRaw(cfg: {
   zk: string; fk: string; v: any; hand: string; handle: string;
-  board: string; shType: string; neon: string;
+  board: string; shType: string; hingeChoice: HingeChoice; neon: string;
   W: number; H: number; D: number; drawerModel: string;
 }) {
-  const { zk, fk, v, hand, handle, board, shType, neon, W, H, D, drawerModel } = cfg;
+  const { zk, fk, v, hand, handle, board, shType, hingeChoice, neon, W, H, D, drawerModel } = cfg;
   const z = ZONES[zk];
   const isBase = !z.tall && !z.kind;
   const fam = famSetOf(zk)[fk];
@@ -848,7 +879,7 @@ function buildCarcassInnerRaw(cfg: {
   }
 
   /* --- shutters --- */
-  const sh = buildShutters(zk, fk, v, handle, shType, neon, W, H, panels, profiles, hardware, pkRows, stubs);
+  const sh = buildShutters(zk, fk, v, handle, shType, hingeChoice, neon, W, H, panels, profiles, hardware, pkRows, stubs);
 
   /* --- drawers --- */
   addDrawerBoxes(fk, v, W, D, drawerModel, panels, hardware, pkRows, stubs);
@@ -912,7 +943,7 @@ function buildCarcassInnerRaw(cfg: {
 
 function buildModel(cfg: {
   zk: string; fk: string; vid: string; hand: string; handle: string;
-  board: string; shType: string; neon: string;
+  board: string; shType: string; hingeChoice: HingeChoice; neon: string;
   W: number; H: number; D: number; drawerModel: string; finish?: string;
 }): CarcassModel {
   const fam = famSetOf(cfg.zk)[cfg.fk];
@@ -1499,6 +1530,7 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
   const [handle, setHandle] = useState("STD");
   const [board, setBoard] = useState(DEFAULT_BOARD_ID);
   const [shType, setShType] = useState(DEFAULT_SHTYPE);
+  const [hingeChoice, setHingeChoice] = useState<HingeChoice>("Hettich Soft Close");
   const [neon, setNeon] = useState("NEON20");
   const [drawerModel, setDrawerModel] = useState("Hettich");
   const [finish, setFinish] = useState((boardFinishesData as string[])[0] ?? "White");
@@ -1554,8 +1586,8 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
   const isGlass = isGlassShutterFam(fkSafe);
 
   const m = useMemo(
-    () => buildModel({ zk, fk: fkSafe, vid: v.id, hand, handle, board, shType, neon, W, H, D, drawerModel, finish }),
-    [zk, fkSafe, v.id, hand, handle, board, shType, neon, W, H, D, drawerModel, finish],
+    () => buildModel({ zk, fk: fkSafe, vid: v.id, hand, handle, board, shType, hingeChoice, neon, W, H, D, drawerModel, finish }),
+    [zk, fkSafe, v.id, hand, handle, board, shType, hingeChoice, neon, W, H, D, drawerModel, finish],
   );
 
   const onZone = useCallback((z: string) => {
@@ -1725,6 +1757,15 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
             <Seg opts={[["STD", "Standard"], ["XCJ", "Gola"]]} val={handle} set={setHandle} />
             {handle === "XCJ" && <Hint>Top depth cuts to {D - CJ_CUT}. Base shutters lose 33mm.</Hint>}
           </Fld>
+
+          {!fam.noShutter && !isGlass && (
+            <Fld label="Hinge brand and type">
+              <select value={hingeChoice} onChange={(e) => setHingeChoice(e.target.value as HingeChoice)}>
+                {HINGE_CHOICES.map((choice) => <option key={choice} value={choice}>{choice}</option>)}
+              </select>
+              <Hint>{hingeModeFor(zk, fkSafe) === "wide" ? "165° · Pullout cabinet" : hingeModeFor(zk, fkSafe) === "blind" ? "Blind hinge · Blind cabinet" : "95–110° · Standard cabinet"}</Hint>
+            </Fld>
+          )}
 
           <Fld label="Carcass board type">
             <select value={board} onChange={(e) => setBoard(e.target.value)}>
