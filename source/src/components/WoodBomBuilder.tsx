@@ -645,6 +645,7 @@ function buildShutters(
   fk: string,
   v: any,
   handle: string,
+  hand: string,
   shType: string,
   hingeChoice: HingeChoice,
   neon: string,
@@ -708,6 +709,41 @@ function buildShutters(
   const leafH = H - shDeduct(isBase, handle, "SH");
   const st = isGlassShutterFam(fk) ? "GLASS" : shType;
   const S = shOf(st);
+
+  // Blind cabinets inherit the stone layout: one functional shutter plus one
+  // fixed dummy shutter. Wall/loft use a 450mm active bay; all other blind
+  // zones use 550mm. The fixed panel is always a solid selected shutter board,
+  // even when the functional shutter is glass.
+  if (z.blind) {
+    const blindW = z.kind === "wall" || z.kind === "loft" ? 450 : 550;
+    const activeW = Math.max(0, blindW - 3);
+    const fixedW = Math.max(0, W - blindW - 3);
+    const activeH = H - shDeduct(isBase, handle, "RH");
+    const fixedH = H - 3;
+
+    if (st === "GLASS") {
+      const frame = SH_FRAME[neon];
+      panels.push({ name: `Panels- SH Blind Active Glass ${GLASS_T}mm ${activeW}x${activeH}`, w: activeW, h: activeH, qty: 1, drill: hand, pack: "Shutter Pack", t: GLASS_T, mat: `${GLASS_T}mm Toughened Glass`, band: false });
+      profiles.push({ name: `ALU PROF ${NEON_LABEL[neon].toUpperCase()} ${frame}MM`, len: activeH, qty: 2, type: "V", pack: "Shutter Pack" });
+      profiles.push({ name: `ALU PROF ${NEON_LABEL[neon].toUpperCase()} ${frame}MM`, len: activeW, qty: 2, type: "H", pack: "Shutter Pack" });
+      hardware.push({ name: "CORNER CONNECTOR FOR GLASS SHUTTER", qty: 4, uom: "nos", pack: "Shutter Pack" });
+    } else {
+      panels.push({ name: `Panels- SH Blind Active ${S.t}mm ${activeW}x${activeH}`, w: activeW, h: activeH, qty: 1, drill: hand, pack: "Shutter Pack", t: S.t, mat: S.mat, band: S.band });
+    }
+
+    if (fixedW > 0) {
+      const fixed = shOf(shType);
+      panels.push({ name: `Panels- SH Blind Fixed ${fixed.t}mm ${fixedW}x${fixedH}`, w: fixedW, h: fixedH, qty: 1, drill: "FIXED", pack: "Shutter Pack", t: fixed.t, mat: fixed.mat, band: fixed.band });
+      hardware.push({ name: "HARDWARE PACK L BRACKET (fixed dummy)", qty: 1, uom: "set", pack: "Shutter Pack" });
+    }
+
+    const hinges = hingePackCount(activeH);
+    const hingePack = `HARDWARE PACK HINGE BLIND Set/${hinges}`;
+    hardware.push({ name: hingePack, qty: 1, uom: "set", pack: "Shutter Pack", hingeItemName: hingeItemFor(hingeChoice, "blind") });
+    pkRows.push({ pack: "Shutter Pack", type: "sub_bom", qty: fixedW > 0 ? 2 : 1 });
+    const totalArea = activeW * activeH + fixedW * fixedH;
+    return { leaves: fixedW > 0 ? 2 : 1, leafW: totalArea / Math.max(1, activeH * (fixedW > 0 ? 2 : 1)), leafH: activeH };
+  }
 
   if (st === "GLASS") {
     const inset = SH_INSET[neon];
@@ -881,7 +917,7 @@ function buildCarcassInnerRaw(cfg: {
   }
 
   /* --- shutters --- */
-  const sh = buildShutters(zk, fk, v, handle, shType, hingeChoice, neon, W, H, panels, profiles, hardware, pkRows, stubs);
+  const sh = buildShutters(zk, fk, v, handle, hand, shType, hingeChoice, neon, W, H, panels, profiles, hardware, pkRows, stubs);
 
   /* --- drawers --- */
   addDrawerBoxes(fk, v, W, D, drawerModel, panels, hardware, pkRows, stubs);
@@ -1449,9 +1485,10 @@ function computeCosting(
     m.panels.forEach((p) => {
       const a = sqft(p.w, p.h) * p.qty * l.qty;
       if (p.pack === "Shutter Pack") {
-        if (st === "GLASS") { unpriced.add("Glass shutters"); return; }
-        const masterItem = shutterMasterItem(st);
-        if (!masterItem) { unpriced.add(`${shOf(st).label} shutter board`); return; }
+        const panelShutterType = /glass/i.test(p.mat ?? "") ? "GLASS" : m.shType;
+        if (panelShutterType === "GLASS") { unpriced.add("Glass shutters"); return; }
+        const masterItem = shutterMasterItem(panelShutterType);
+        if (!masterItem) { unpriced.add(`${shOf(panelShutterType).label} shutter board`); return; }
         const billed = a * (1 + wst.shutter / 100);
         addDetail({ category: "Shutter board", itemCode: masterItem.id, item: masterItem.materialDescription, specification: `${masterItem.subgroup} · ${masterItem.thicknessMm ?? "—"}mm`, netQty: a, wastePct: wst.shutter, billableQty: billed, uom: "sqft", rate: masterItem.currentRate, amount: billed * masterItem.currentRate });
       } else {
