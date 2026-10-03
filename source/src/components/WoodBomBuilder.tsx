@@ -1374,20 +1374,22 @@ function shutterMasterItem(shutterType: string): CostingMasterItem | undefined {
 const hardwareNameKey = (value: string) => value.toUpperCase().replace(/\bXX\b/g, "").replace(/[^A-Z0-9]/g, "");
 function hardwareMasterItem(name: string): CostingMasterItem | undefined {
   const key = hardwareNameKey(name);
-  const exact = COSTING_ITEMS.find((item) => hardwareNameKey(item.materialDescription) === key);
+  // Costing authority is the KITCHEN sheet. Hardware-sheet rows are retained
+  // for pack composition/reference only and must not supply cabinet rates.
+  const kitchenItems = COSTING_ITEMS.filter((item) => item.id.startsWith("KITCHEN-"));
+  const exact = kitchenItems.find((item) => hardwareNameKey(item.materialDescription) === key);
   if (exact) return exact;
   const upper = name.toUpperCase();
-  const hardware = COSTING_ITEMS.filter((item) => item.id.startsWith("HARDWARE-"));
-  if (upper.includes("MINI FIX")) return hardware.find((item) => item.subgroup === "Mini Fix");
-  if (upper.includes("DOWEL")) return hardware.find((item) => item.subgroup === "Dowel");
-  if (upper.includes("PVC INSERT")) return hardware.find((item) => item.subgroup === "PVC Insert");
-  if (upper.includes("DOOR BUMPER") || upper.includes("PVC BUFFER")) return hardware.find((item) => item.subgroup === "Buffer");
-  if (upper.includes("END CONNECTOR")) return hardware.find((item) => item.subgroup === "Profile Connector");
-  if (upper.includes("LEG PVC")) return hardware.find((item) => item.subgroup === "PVC Leg");
-  if (upper.includes("SKIRTING CLIP")) return hardware.find((item) => item.subgroup === "Skirting Clip");
+  if (upper.includes("MINI FIX")) return kitchenItems.find((item) => item.subgroup === "Mini Fix");
+  if (upper.includes("DOWEL")) return kitchenItems.find((item) => item.subgroup === "Dowel");
+  if (upper.includes("PVC INSERT")) return kitchenItems.find((item) => item.subgroup === "PVC Insert");
+  if (upper.includes("DOOR BUMPER") || upper.includes("PVC BUFFER")) return kitchenItems.find((item) => item.subgroup === "Buffer");
+  if (upper.includes("END CONNECTOR")) return kitchenItems.find((item) => item.subgroup === "Profile Connector");
+  if (upper.includes("LEG PVC")) return kitchenItems.find((item) => item.subgroup === "PVC Leg");
+  if (upper.includes("SKIRTING CLIP")) return kitchenItems.find((item) => item.subgroup === "Skirting Clip");
   if (upper.includes("SCREW")) {
     const size = upper.match(/(?:XX|X)?(16|25|30|75)\s*MM/)?.[1];
-    return hardware.find((item) => item.subgroup === "Screw" && (!size || item.type.includes(size)));
+    return kitchenItems.find((item) => item.subgroup === "Screw" && (!size || item.type.includes(size)));
   }
   return undefined;
 }
