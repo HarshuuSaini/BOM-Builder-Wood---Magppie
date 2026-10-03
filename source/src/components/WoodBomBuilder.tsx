@@ -48,6 +48,7 @@ interface Profile {
   len: number;
   qty: number;
   type: string;
+  orientation?: "vertical" | "horizontal";
   pack: string;
 }
 
@@ -766,14 +767,23 @@ function buildShutters(
       drill: null, pack: "Shutter Pack", t: GLASS_T,
       mat: glassMat, band: false,
     });
-    profiles.push({
-      name: `ALU PROF ${NEON_LABEL[neon].toUpperCase()} ${frame}MM`,
-      len: Math.round(leafH), qty: 2 * leaves, type: "V", pack: "Shutter Pack",
-    });
-    profiles.push({
-      name: `ALU PROF ${NEON_LABEL[neon].toUpperCase()} ${frame}MM`,
-      len: Math.round(leafW), qty: 2 * leaves, type: "H", pack: "Shutter Pack",
-    });
+    if (z.tall && leaves === 2) {
+      // Each tall double-glass leaf has the handle profile on its meeting-side
+      // vertical edge. The outer vertical edge and both horizontal edges use
+      // the normal shutter profile.
+      profiles.push({ name: `ALU PROF ${NEON_LABEL[neon].toUpperCase()} ${frame}MM`, len: Math.round(leafH), qty: leaves, type: "V", orientation: "vertical", pack: "Shutter Pack" });
+      profiles.push({ name: `ALU PROF ${NEON_LABEL[neon].toUpperCase()} ${frame}MM`, len: Math.round(leafH), qty: leaves, type: "H", orientation: "vertical", pack: "Shutter Pack" });
+      profiles.push({ name: `ALU PROF ${NEON_LABEL[neon].toUpperCase()} ${frame}MM`, len: Math.round(leafW), qty: 2 * leaves, type: "V", orientation: "horizontal", pack: "Shutter Pack" });
+    } else {
+      profiles.push({
+        name: `ALU PROF ${NEON_LABEL[neon].toUpperCase()} ${frame}MM`,
+        len: Math.round(leafH), qty: 2 * leaves, type: "V", orientation: "vertical", pack: "Shutter Pack",
+      });
+      profiles.push({
+        name: `ALU PROF ${NEON_LABEL[neon].toUpperCase()} ${frame}MM`,
+        len: Math.round(leafW), qty: 2 * leaves, type: "H", orientation: "horizontal", pack: "Shutter Pack",
+      });
+    }
     hardware.push({ name: "CORNER CONNECTOR FOR GLASS SHUTTER", qty: 4 * leaves, uom: "nos", pack: "Shutter Pack" });
   } else {
     panels.push({
@@ -1538,7 +1548,7 @@ function computeCosting(
         category: "Profile",
         itemCode: masterProfile.id,
         item: masterProfile.materialDescription,
-        specification: `${masterProfile.type} · ${profile.type === "V" ? "vertical" : "horizontal"} · ${profile.len}mm × ${profile.qty} per cabinet`,
+        specification: `${masterProfile.type} · ${profile.orientation ?? (profile.type === "V" ? "vertical" : "horizontal")} · ${profile.len}mm × ${profile.qty} per cabinet`,
         netQty: netM,
         wastePct: wst.profile,
         billableQty: billedM,
