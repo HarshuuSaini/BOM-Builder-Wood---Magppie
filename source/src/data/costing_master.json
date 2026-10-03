@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "source": "Cost (1).xlsx / KITCHEN + Hardware",
-  "generatedAt": "2026-10-03T07:37:55.181Z",
+  "generatedAt": "2026-10-03T08:48:45.846Z",
   "currency": "INR",
   "items": [
     {
@@ -410,7 +410,7 @@
       "sqft": 32,
       "price": 2114.64,
       "sqftPrice": 66,
-      "group": "Shutter Material",
+      "group": "Drawer Material",
       "subgroup": "Prelam HDHMR BSL",
       "type": "Prelam",
       "brand": "",

@@ -34,7 +34,9 @@ function readItems(sheetName, prefix) {
     sqft: n(row.SQFT),
     price: n(row.Price),
     sqftPrice: n(row["Sq.FT. Price"]),
-    group: s(row.Group),
+    group: s(row.Subgroup) === "Prelam HDHMR BSL" && n(row["Thickness (mm)"]) === 16
+      ? "Drawer Material"
+      : s(row.Group),
     subgroup: s(row.Subgroup),
     type: s(row.Type),
     brand: s(row.Brand),
