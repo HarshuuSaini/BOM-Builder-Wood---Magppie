@@ -1479,6 +1479,18 @@ function profileMasterItem(profile: Profile, neon: string): CostingMasterItem | 
   return COSTING_ITEMS.find((item) => item.group === "Profile" && item.type === type && item.rateBasis === "MTR");
 }
 
+function otherAccessoryMasterItem(name: string): CostingMasterItem | undefined {
+  const upper = name.toUpperCase();
+  if (upper.includes("SKIRTING") && !upper.includes("CONNECTOR")) return COSTING_ITEMS.find((item) => item.id === "KITCHEN-092");
+  if (upper.includes("ELENOR") || upper.includes("ALU PROF FOR LIGHT")) return COSTING_ITEMS.find((item) => item.id === "KITCHEN-084");
+  if (upper.includes("DIFFUSER")) return COSTING_ITEMS.find((item) => item.id === "KITCHEN-085");
+  if (upper.includes("LED LIGHT") || upper.includes("FLEXIBLE LED")) return COSTING_ITEMS.find((item) => item.id === "KITCHEN-086");
+  if (upper.includes("EXTENSION WIRE")) return COSTING_ITEMS.find((item) => item.id === "KITCHEN-090");
+  if (upper.includes("12V 2A 24W")) return COSTING_ITEMS.find((item) => item.id === "KITCHEN-089");
+  if (upper.includes("12V 5A 60W")) return COSTING_ITEMS.find((item) => item.id === "KITCHEN-088");
+  return COSTING_ITEMS.find((item) => item.id.startsWith("KITCHEN-") && hardwareNameKey(item.materialDescription) === hardwareNameKey(name));
+}
+
 /**
  * Per the costing sheet: carcass sqft × board rate, shutter sqft × shutter-type
  * rate (each after its wastage %), edge band and profiles per running metre.
@@ -1490,6 +1502,7 @@ function computeCosting(
   project: ProjectLine[],
   fillers: FillerRow[], visiblePanels: VisiblePanelRow[],
   extrasPanels: Panel[],
+  otherAccessories: AccessoryRow[],
   masterAccessories: MasterAccessoryRow[],
   globalShType: string, rates: CostingRates, wst: WastePct,
 ): CostingResult {
@@ -1604,6 +1617,46 @@ function computeCosting(
     }
     const cost = details.reduce((sum, detail) => sum + detail.amount, 0);
     lines.push({ label: `${p.name}`, qty: p.qty, unitCost: p.qty ? cost / p.qty : cost, cost, details });
+  });
+
+  otherAccessories.forEach((accessory) => {
+    const details: CostDetail[] = [];
+    const addAccessoryDetail = (name: string, specification: string, netQty: number, billableQty: number, uom: CostDetail["uom"], wastePct = 0) => {
+      const item = otherAccessoryMasterItem(name);
+      const rate = item?.currentRate ?? 1;
+      details.push({
+        category: "Other accessory",
+        itemCode: item?.id ?? "FALLBACK-1",
+        item: item?.materialDescription ?? name,
+        specification,
+        netQty,
+        wastePct,
+        billableQty,
+        uom,
+        rate,
+        amount: billableQty * rate,
+      });
+    };
+    if (accessory.kind === "skirting") {
+      const netM = parseFloat(accessory.size) || defSkirtMeters(project);
+      addAccessoryDetail("PVC SKIRTING PROFILE 100MM", `${netM}m skirting run`, netM, netM * (1 + SKIRT_WASTE), "RMT", SKIRT_WASTE * 100);
+      if (accessory.straight > 0) addAccessoryDetail("SKIRTING STRAIGHT CONNECTOR", "Straight connector", accessory.straight, accessory.straight, "nos");
+      if (accessory.lconn > 0) addAccessoryDetail("SKIRTING L CONNECTOR", "L connector", accessory.lconn, accessory.lconn, "nos");
+    } else {
+      const heightMm = parseFloat(accessory.size) || 720;
+      const qty = accessory.qty || 1;
+      const netM = heightMm / 1000 * 2 * qty;
+      const billedM = Math.ceil(heightMm * (1 + ELENOR_WASTE)) / 1000 * 2 * qty;
+      addAccessoryDetail("ALU PROF FOR ELENOR 3000X15X15 ANODISED CHAMPAGNE HM-519 MINA", `${heightMm}mm × 2 per set`, netM, billedM, "RMT", ELENOR_WASTE * 100);
+      addAccessoryDetail("LIGHT FLEXIBLE LED LIGHT 3000K, 180 LED/MTR, 72W, W-5MM XX LED", `${heightMm}mm × 2 per set`, netM, billedM, "RMT", ELENOR_WASTE * 100);
+      addAccessoryDetail("PVC DIFFUSER FOR GRAND PROF 3000X6X WHITE 9099 VAI", `${heightMm}mm × 2 per set`, netM, billedM, "RMT", ELENOR_WASTE * 100);
+      addAccessoryDetail("TAPE FOR COVER CAP ADH 3M X20X 91031 3M", `${heightMm}mm × 2 per set`, netM, billedM, "RMT", ELENOR_WASTE * 100);
+      addAccessoryDetail("LIGHT EXTENSION WIRE TWP SP XX 14/38 SNO", "2m per set", 2 * qty, 2 * qty, "RMT");
+      if (accessory.driver) addAccessoryDetail(accessory.driver, "Driver", qty, qty, "nos");
+    }
+    const cost = details.reduce((sum, detail) => sum + detail.amount, 0);
+    const qty = accessory.qty || 1;
+    lines.push({ label: `${accessory.elevation ? `${accessory.elevation} · ` : ""}${ACC_LABEL[accessory.kind]}`, qty, unitCost: qty ? cost / qty : cost, cost, details });
   });
 
   masterAccessories.forEach((row) => {
@@ -1766,8 +1819,8 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
     ...buildMasterAccessoryRows(masterAccessories, soMode ? "SO" : ""),
   ], [accessories, masterAccessories, project, soMode]);
   const costing = useMemo(
-    () => computeCosting(project, fillers, visiblePanels, extras.panels, masterAccessories, shType, rates, waste),
-    [project, fillers, visiblePanels, extras, masterAccessories, shType, rates, waste],
+    () => computeCosting(project, fillers, visiblePanels, extras.panels, accessories, masterAccessories, shType, rates, waste),
+    [project, fillers, visiblePanels, extras, accessories, masterAccessories, shType, rates, waste],
   );
   const projectPricing = useMemo(() => {
     const cabinetAreas = costing.lines.map((line) => ({
