@@ -99,6 +99,7 @@ type CarcassModel = {
   handle: string;
   board: string;
   shType: string;
+  glassType: string;
   hingeChoice: HingeChoice;
   neon: string;
   drawerModel: string;
@@ -234,10 +235,18 @@ function expandHardwarePack(h: Hardware): HardwareComponent[] {
 const CARCASS_BOARD_ITEMS = COSTING_ITEMS.filter((item) => item.group === "Carcass/ Shelf Material");
 const CARCASS_BACK_ITEMS = COSTING_ITEMS.filter((item) => item.group === "Carcass Back Material");
 const SHUTTER_BOARD_ITEMS = COSTING_ITEMS.filter((item) => item.group === "Shutter Material");
+const GLASS_SHUTTER_ITEMS = COSTING_ITEMS.filter((item) => item.group === "Glass Type" && item.type === "Shutter Glass" && item.thicknessMm === 5);
+const GLASS_SHELF_ITEM = COSTING_ITEMS.find((item) => item.id === "KITCHEN-GLASS-6-CLEAR");
 const DEFAULT_BOARD_ID = CARCASS_BOARD_ITEMS.find((item) => item.elevation === "CARCASS POSTLAM BWP PLY")?.id
   ?? CARCASS_BOARD_ITEMS[0]?.id ?? "";
 const DEFAULT_SHTYPE = SHUTTER_BOARD_ITEMS.find((item) => item.elevation === "SHUTTER POSTLAM BWP PLY")?.id
   ?? SHUTTER_BOARD_ITEMS[0]?.id ?? "";
+const DEFAULT_GLASS_TYPE = GLASS_SHUTTER_ITEMS.find((item) => item.id === "KITCHEN-GLASS-5-TINTED")?.id
+  ?? GLASS_SHUTTER_ITEMS[0]?.id ?? "";
+
+function glassShutterItemOf(id: string): CostingMasterItem {
+  return GLASS_SHUTTER_ITEMS.find((item) => item.id === id) ?? GLASS_SHUTTER_ITEMS[0];
+}
 
 function carcassBoardOf(id: string) {
   const item = CARCASS_BOARD_ITEMS.find((candidate) => candidate.id === id) ?? CARCASS_BOARD_ITEMS[0];
@@ -286,7 +295,7 @@ const SH_INSET: Record<string, number> = { NEON20: 5, NEON50: 8 };
 const SH_FRAME: Record<string, number> = { NEON20: 25, NEON50: 50 };
 const NEON_LABEL: Record<string, string> = { NEON20: "Neon 20", NEON50: "Neon 50" };
 const GLASS_T = 5;
-const GLASS_SHELF_T = 8;
+const GLASS_SHELF_T = 6;
 
 const GLASS_SHUTTER_FAMS = new Set(["WGL", "SHFG", "DPNG", "PPNG", "BLNG", "LOWSG", "LGL"]);
 const isGlassShutterFam = (fk?: string) => !!fk && GLASS_SHUTTER_FAMS.has(fk);
@@ -481,7 +490,7 @@ function shDeduct(isBase: boolean, handle: string, loc: string): number {
 
 /** Shelf material is derived from the shutter type, not the zone. */
 function shelfMaterialOf(fk: string, board: string): { mat: string; t: number; band: boolean } {
-  if (isGlassShutterFam(fk)) return { mat: `${GLASS_SHELF_T}mm Toughened Glass`, t: GLASS_SHELF_T, band: false };
+  if (isGlassShutterFam(fk)) return { mat: GLASS_SHELF_ITEM?.materialDescription ?? `${GLASS_SHELF_T}mm Clear Glass`, t: GLASS_SHELF_T, band: false };
   const selected = carcassBoardOf(board);
   return { mat: selected.core, t: selected.coreT, band: true };
 }
@@ -647,6 +656,7 @@ function buildShutters(
   handle: string,
   hand: string,
   shType: string,
+  glassType: string,
   hingeChoice: HingeChoice,
   neon: string,
   W: number,
@@ -709,6 +719,8 @@ function buildShutters(
   const leafH = H - shDeduct(isBase, handle, "SH");
   const st = isGlassShutterFam(fk) ? "GLASS" : shType;
   const S = shOf(st);
+  const glassItem = glassShutterItemOf(glassType);
+  const glassMat = glassItem?.materialDescription ?? `${GLASS_T}mm Tinted Glass`;
 
   // Blind cabinets inherit the stone layout: one functional shutter plus one
   // fixed dummy shutter. Wall/loft use a 450mm active bay; all other blind
@@ -723,7 +735,7 @@ function buildShutters(
 
     if (st === "GLASS") {
       const frame = SH_FRAME[neon];
-      panels.push({ name: `Panels- SH Blind Active Glass ${GLASS_T}mm ${activeW}x${activeH}`, w: activeW, h: activeH, qty: 1, drill: hand, pack: "Shutter Pack", t: GLASS_T, mat: `${GLASS_T}mm Toughened Glass`, band: false });
+      panels.push({ name: `Panels- SH Blind Active ${glassItem?.subgroup ?? "Glass"} ${GLASS_T}mm ${activeW}x${activeH}`, w: activeW, h: activeH, qty: 1, drill: hand, pack: "Shutter Pack", t: GLASS_T, mat: glassMat, band: false });
       profiles.push({ name: `ALU PROF ${NEON_LABEL[neon].toUpperCase()} ${frame}MM`, len: activeH, qty: 2, type: "V", pack: "Shutter Pack" });
       profiles.push({ name: `ALU PROF ${NEON_LABEL[neon].toUpperCase()} ${frame}MM`, len: activeW, qty: 2, type: "H", pack: "Shutter Pack" });
       hardware.push({ name: "CORNER CONNECTOR FOR GLASS SHUTTER", qty: 4, uom: "nos", pack: "Shutter Pack" });
@@ -752,7 +764,7 @@ function buildShutters(
       name: `Panels- SH Glass ${GLASS_T}mm ${Math.round(leafW - inset)}x${Math.round(leafH - inset)}`,
       w: Math.round(leafW - inset), h: Math.round(leafH - inset), qty: leaves,
       drill: null, pack: "Shutter Pack", t: GLASS_T,
-      mat: `${GLASS_T}mm Toughened Glass`, band: false,
+      mat: glassMat, band: false,
     });
     profiles.push({
       name: `ALU PROF ${NEON_LABEL[neon].toUpperCase()} ${frame}MM`,
@@ -834,10 +846,10 @@ function explodePanelForTree(p: Panel, finish: string): TreeItem[] {
 
 function buildCarcassInnerRaw(cfg: {
   zk: string; fk: string; v: any; hand: string; handle: string;
-  board: string; shType: string; hingeChoice: HingeChoice; neon: string;
+  board: string; shType: string; glassType: string; hingeChoice: HingeChoice; neon: string;
   W: number; H: number; D: number; drawerModel: string;
 }) {
-  const { zk, fk, v, hand, handle, board, shType, hingeChoice, neon, W, H, D, drawerModel } = cfg;
+  const { zk, fk, v, hand, handle, board, shType, glassType, hingeChoice, neon, W, H, D, drawerModel } = cfg;
   const z = ZONES[zk];
   const isBase = !z.tall && !z.kind;
   const fam = famSetOf(zk)[fk];
@@ -917,7 +929,7 @@ function buildCarcassInnerRaw(cfg: {
   }
 
   /* --- shutters --- */
-  const sh = buildShutters(zk, fk, v, handle, hand, shType, hingeChoice, neon, W, H, panels, profiles, hardware, pkRows, stubs);
+  const sh = buildShutters(zk, fk, v, handle, hand, shType, glassType, hingeChoice, neon, W, H, panels, profiles, hardware, pkRows, stubs);
 
   /* --- drawers --- */
   addDrawerBoxes(fk, v, W, D, drawerModel, panels, hardware, pkRows, stubs);
@@ -981,7 +993,7 @@ function buildCarcassInnerRaw(cfg: {
 
 function buildModel(cfg: {
   zk: string; fk: string; vid: string; hand: string; handle: string;
-  board: string; shType: string; hingeChoice: HingeChoice; neon: string;
+  board: string; shType: string; glassType: string; hingeChoice: HingeChoice; neon: string;
   W: number; H: number; D: number; drawerModel: string; finish?: string;
 }): CarcassModel {
   const fam = famSetOf(cfg.zk)[cfg.fk];
@@ -1416,7 +1428,7 @@ const DEFAULT_PROJECT_PRICING: ProjectPricingInputs = {
 };
 
 function carcassMasterItem(board: string, panel: Panel): CostingMasterItem | undefined {
-  if (/glass/i.test(panel.mat ?? "")) return findCostingItem({ group: "Glass Type", thicknessMm: panel.t ?? null });
+  if (/glass/i.test(panel.mat ?? "")) return GLASS_SHELF_ITEM;
   if (panel.pack === "Drawer Pack" && /BWP Plywood/i.test(panel.mat ?? "")) {
     return COSTING_ITEMS.find((item) => item.group === "Drawer Material" && /BWP Ply/i.test(item.subgroup));
   }
@@ -1486,16 +1498,16 @@ function computeCosting(
       const a = sqft(p.w, p.h) * p.qty * l.qty;
       if (p.pack === "Shutter Pack") {
         const panelShutterType = /glass/i.test(p.mat ?? "") ? "GLASS" : m.shType;
-        if (panelShutterType === "GLASS") { unpriced.add("Glass shutters"); return; }
-        const masterItem = shutterMasterItem(panelShutterType);
+        const masterItem = panelShutterType === "GLASS" ? glassShutterItemOf(m.glassType) : shutterMasterItem(panelShutterType);
         if (!masterItem) { unpriced.add(`${shOf(panelShutterType).label} shutter board`); return; }
         const billed = a * (1 + wst.shutter / 100);
-        addDetail({ category: "Shutter board", itemCode: masterItem.id, item: masterItem.materialDescription, specification: `${masterItem.subgroup} · ${masterItem.thicknessMm ?? "—"}mm`, netQty: a, wastePct: wst.shutter, billableQty: billed, uom: "sqft", rate: masterItem.currentRate, amount: billed * masterItem.currentRate });
+        addDetail({ category: panelShutterType === "GLASS" ? "Shutter glass" : "Shutter board", itemCode: masterItem.id, item: masterItem.materialDescription, specification: `${masterItem.subgroup} · ${masterItem.thicknessMm ?? "—"}mm`, netQty: a, wastePct: wst.shutter, billableQty: billed, uom: "sqft", rate: masterItem.currentRate, amount: billed * masterItem.currentRate });
       } else {
         const masterItem = carcassMasterItem(m.board, p);
         if (!masterItem) { unpriced.add(`${p.mat ?? "Unknown"} ${p.t ?? ""}mm board`); return; }
         const billed = a * (1 + wst.carcass / 100);
-        addDetail({ category: p.pack === "Drawer Pack" ? "Drawer board" : /Back/i.test(p.name) ? "Carcass back board" : "Carcass board", itemCode: masterItem.id, item: masterItem.materialDescription, specification: `${masterItem.subgroup} · ${masterItem.thicknessMm ?? "—"}mm`, netQty: a, wastePct: wst.carcass, billableQty: billed, uom: "sqft", rate: masterItem.currentRate, amount: billed * masterItem.currentRate });
+        const category = /glass/i.test(p.mat ?? "") ? "Glass shelf" : p.pack === "Drawer Pack" ? "Drawer board" : /Back/i.test(p.name) ? "Carcass back board" : "Carcass board";
+        addDetail({ category, itemCode: masterItem.id, item: masterItem.materialDescription, specification: `${masterItem.subgroup} · ${masterItem.thicknessMm ?? "—"}mm`, netQty: a, wastePct: wst.carcass, billableQty: billed, uom: "sqft", rate: masterItem.currentRate, amount: billed * masterItem.currentRate });
       }
     });
     ([
@@ -1604,6 +1616,7 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
   const [handle, setHandle] = useState("STD");
   const [board, setBoard] = useState(DEFAULT_BOARD_ID);
   const [shType, setShType] = useState(DEFAULT_SHTYPE);
+  const [glassType, setGlassType] = useState(DEFAULT_GLASS_TYPE);
   const [hingeChoice, setHingeChoice] = useState<HingeChoice>("Hettich Soft Close");
   const [neon] = useState("NEON50");
   const [hingeLocked, setHingeLocked] = useState(false);
@@ -1674,8 +1687,8 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
   const drawerOnly = !!fam.drawers && !fam.fixedDpn && !(ZONES[zk].tall && fkSafe === "APP");
 
   const m = useMemo(
-    () => buildModel({ zk, fk: fkSafe, vid: v.id, hand, handle, board, shType, hingeChoice, neon, W, H, D, drawerModel, finish }),
-    [zk, fkSafe, v.id, hand, handle, board, shType, hingeChoice, neon, W, H, D, drawerModel, finish],
+    () => buildModel({ zk, fk: fkSafe, vid: v.id, hand, handle, board, shType, glassType, hingeChoice, neon, W, H, D, drawerModel, finish }),
+    [zk, fkSafe, v.id, hand, handle, board, shType, glassType, hingeChoice, neon, W, H, D, drawerModel, finish],
   );
 
   const onZone = useCallback((z: string) => {
@@ -1870,10 +1883,18 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
           </Fld>
 
           {!fam.noShutter && (isGlass ? (
-            <Fld label="Neon profile">
-              <div className="fixed-value">Neon 50</div>
-              <Hint>Glass shutters use Neon 50 only — inset {SH_INSET.NEON50}mm, frame {SH_FRAME.NEON50}mm.</Hint>
-            </Fld>
+            <>
+              <Fld label="Glass material type">
+                <select value={glassType} onChange={(e) => setGlassType(e.target.value)}>
+                  {GLASS_SHUTTER_ITEMS.map((item) => <option key={item.id} value={item.id}>{item.subgroup} · {item.thicknessMm}mm · ₹{item.currentRate}/sqft</option>)}
+                </select>
+                <Hint>Shutters use 5mm glass. Internal glass shelves use 6mm clear glass at ₹{GLASS_SHELF_ITEM?.currentRate ?? 135}/sqft.</Hint>
+              </Fld>
+              <Fld label="Neon profile">
+                <div className="fixed-value">Neon 50</div>
+                <Hint>Glass shutters use Neon 50 only — inset {SH_INSET.NEON50}mm, frame {SH_FRAME.NEON50}mm.</Hint>
+              </Fld>
+            </>
           ) : (
             <Fld label="Shutter board type">
               <select value={shType} onChange={(e) => setShType(e.target.value)}>
