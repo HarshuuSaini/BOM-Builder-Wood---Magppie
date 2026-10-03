@@ -1886,7 +1886,7 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
             <>
               <Fld label="Glass material type">
                 <select value={glassType} onChange={(e) => setGlassType(e.target.value)}>
-                  {GLASS_SHUTTER_ITEMS.map((item) => <option key={item.id} value={item.id}>{item.subgroup} · {item.thicknessMm}mm · ₹{item.currentRate}/sqft</option>)}
+                  {GLASS_SHUTTER_ITEMS.map((item) => <option key={item.id} value={item.id}>{item.subgroup}</option>)}
                 </select>
                 <Hint>Shutters use 5mm glass. Internal glass shelves use 6mm clear glass at ₹{GLASS_SHELF_ITEM?.currentRate ?? 135}/sqft.</Hint>
               </Fld>
