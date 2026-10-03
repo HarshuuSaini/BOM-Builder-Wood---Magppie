@@ -1800,7 +1800,7 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
             {handle === "XCJ" && <Hint>Top depth cuts to {D - CJ_CUT}. Base shutters lose 33mm.</Hint>}
           </Fld>
 
-          {!fam.noShutter && !isGlass && (
+          {fam.p2 === "SH" && !isGlass && (
             <Fld label="Hinge brand and type">
               <select value={hingeChoice} onChange={(e) => setHingeChoice(e.target.value as HingeChoice)}>
                 {HINGE_CHOICES.map((choice) => <option key={choice} value={choice}>{choice}</option>)}
