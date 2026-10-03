@@ -13,15 +13,16 @@
  *   → buildFullBomData → buildOosData → buildOptiData
  */
 
-import { useState, useMemo, useCallback, useEffect } from "react";
+import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import type { ReactNode } from "react";
+import * as XLSX from "xlsx-js-style";
 import { searchBoardItems, searchLaminateItems, searchHardwareItems } from "@/lib/rawmaterial";
 import boardFinishesData from "@/data/board_finishes.json";
 import laminateFinishesData from "@/data/laminate_finishes.json";
 import edgebandFinishesData from "@/data/edgeband_finishes.json";
 import hardwarePacksData from "@/data/hardware_packs.json";
 import { getPartBaseName, getPanelBaseName, normalizePartOrPanelName } from "@/lib/naming";
-import { exportBomWorkbook, exportBomCsv, type AccessoryExportRow } from "@/lib/export";
+import { exportBomWorkbook, exportBomCsv, type AccessoryExportRow, type ProjectSetupRow } from "@/lib/export";
 import { COSTING_ITEMS, DEFAULT_RATES, findCostingItem, type CostingMasterItem, type CostingRates } from "@/lib/costing";
 import type { BomReportRow } from "@/lib/types";
 
@@ -102,6 +103,7 @@ type CarcassModel = {
   board: string;
   shType: string;
   glassType: string;
+  finish: string;
   hingeChoice: HingeChoice;
   neon: string;
   drawerModel: string;
@@ -118,6 +120,7 @@ type CarcassModel = {
 
 type PkRow = { pack: string; type: string; qty: number };
 type ProjectLine = { id: number; m: CarcassModel; qty: number; elevation: string };
+type CabinetConfig = Pick<CarcassModel, "zk" | "fk" | "vid" | "hand" | "handle" | "board" | "shType" | "glassType" | "hingeChoice" | "neon" | "W" | "H" | "D" | "drawerModel" | "finish">;
 
 type FullBomRow = {
   SO: string;
@@ -1063,6 +1066,15 @@ function buildRawRows(m: CarcassModel): Array<{ item: string; pack: string; uom:
   return rows;
 }
 
+function cabinetPacketRows(m: CarcassModel): Array<{ pack: string; item: string; qty: number; unit: string }> {
+  return [
+    ...m.panels.map((panel) => ({ pack: panel.pack, item: `${panel.name} · ${panel.mat ?? ""}`, qty: panel.qty, unit: "pcs" })),
+    ...m.profiles.map((profile) => ({ pack: profile.pack, item: `${profile.name} · cut ${profile.len} mm`, qty: profile.qty, unit: "pcs" })),
+    ...m.hardware.flatMap(expandHardwarePack).map((part) => ({ pack: part.pack, item: part.name, qty: part.qty, unit: part.uom })),
+    ...m.cons.map((part) => ({ pack: part.pack, item: part.name, qty: part.qty, unit: part.uom })),
+  ];
+}
+
 function buildCSV(project: ProjectLine[]): string {
   const order: string[] = [];
   const map = new Map<string, { code: string; item: string; pack: string; uom: string; qty: number }>();
@@ -1457,6 +1469,164 @@ const DEFAULT_PROJECT_PRICING: ProjectPricingInputs = {
   includeTax: false,
 };
 
+type ProjectRestore = {
+  project: ProjectLine[];
+  fillers: FillerRow[];
+  visiblePanels: VisiblePanelRow[];
+  countertops: CountertopRow[];
+  accessories: AccessoryRow[];
+  masterAccessories: MasterAccessoryRow[];
+  waste: WastePct;
+  pricing: ProjectPricingInputs;
+  rawSelections: Array<{ key: string; id: string; name: string; sku: string; stock_on_hand?: number }>;
+  current?: { config: CabinetConfig; elevation: string; qty: number };
+  notice: string;
+};
+
+const PROJECT_FILE_FORMAT = "wood-bom-project";
+const isRecord = (value: unknown): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value);
+
+function cabinetConfig(model: CarcassModel): CabinetConfig {
+  const { zk, fk, vid, hand, handle, board, shType, glassType, hingeChoice, neon, W, H, D, drawerModel, finish } = model;
+  return { zk, fk, vid, hand, handle, board, shType, glassType, hingeChoice, neon, W, H, D, drawerModel, finish };
+}
+
+function projectSetupRows(data: Omit<ProjectRestore, "notice">): ProjectSetupRow[] {
+  const row = (kind: string, value: unknown): ProjectSetupRow => ({ "Record Type": kind, Data: JSON.stringify(value) });
+  return [
+    row("format", { name: PROJECT_FILE_FORMAT, version: 1 }),
+    row("settings", { waste: data.waste, pricing: data.pricing, current: data.current }),
+    ...data.project.map((line) => row("cabinet", { id: line.id, config: cabinetConfig(line.m), qty: line.qty, elevation: line.elevation })),
+    ...data.fillers.map((item) => row("filler", item)),
+    ...data.visiblePanels.map((item) => row("visible-panel", item)),
+    ...data.countertops.map((item) => row("countertop", item)),
+    ...data.accessories.map((item) => row("other-accessory", item)),
+    ...data.masterAccessories.map((item) => row("accessory", item)),
+    ...data.rawSelections.map((item) => row("raw-selection", item)),
+  ];
+}
+
+function validatedCabinetConfig(value: unknown): CabinetConfig {
+  if (!isRecord(value)) throw new Error("A cabinet configuration is missing.");
+  const config = value as CabinetConfig;
+  const family = typeof config.zk === "string" ? famSetOf(config.zk)[config.fk] : undefined;
+  if (!ZONES[config.zk] || !family || !family.variants.some((variant: { id: string }) => variant.id === config.vid)) {
+    throw new Error(`Unknown cabinet family or configuration: ${String(config.zk)} / ${String(config.fk)} / ${String(config.vid)}.`);
+  }
+  if (![config.W, config.H, config.D].every((n) => typeof n === "number" && Number.isFinite(n) && n > 0)) {
+    throw new Error("A cabinet has invalid width, height, or depth.");
+  }
+  if (!CARCASS_BOARD_ITEMS.some((item) => item.id === config.board) || !SHUTTER_BOARD_ITEMS.some((item) => item.id === config.shType)) {
+    throw new Error("A saved cabinet material is not available in the current master.");
+  }
+  if (!GLASS_SHUTTER_ITEMS.some((item) => item.id === config.glassType) || !HINGE_CHOICES.includes(config.hingeChoice) || !DRAWER_MODELS.includes(config.drawerModel)) {
+    throw new Error("A saved glass, hinge, or drawer option is not available.");
+  }
+  if (!["LHS", "RHS"].includes(config.hand) || !["STD", "XCJ"].includes(config.handle) || config.neon !== "NEON50" || typeof config.finish !== "string") {
+    throw new Error("A saved cabinet setting is invalid.");
+  }
+  return config;
+}
+
+function restoreProjectSetup(rows: Record<string, unknown>[]): ProjectRestore {
+  const records = rows.map((row) => ({ kind: String(row["Record Type"] ?? ""), data: JSON.parse(String(row.Data ?? "null")) as unknown }));
+  const format = records.find((record) => record.kind === "format")?.data;
+  if (!isRecord(format) || format.name !== PROJECT_FILE_FORMAT || format.version !== 1) throw new Error("Unsupported Project Setup format.");
+  const settings = records.find((record) => record.kind === "settings")?.data;
+  if (!isRecord(settings) || !isRecord(settings.waste) || !isRecord(settings.pricing)) throw new Error("Project settings are missing.");
+  const waste = settings.waste as WastePct;
+  if (![waste.carcass, waste.shutter, waste.profile].every((n) => typeof n === "number" && Number.isFinite(n) && n >= 0)) throw new Error("Saved wastage settings are invalid.");
+  const pricing = settings.pricing as ProjectPricingInputs;
+  const validNumberInput = (value: unknown) => value === "" || (typeof value === "number" && Number.isFinite(value) && value >= 0);
+  if (![pricing.transportation, pricing.installation, pricing.loading].every((charge) => isRecord(charge) && ["direct", "sqft"].includes(charge.mode as string) && validNumberInput(charge.value)) ||
+      !validNumberInput(pricing.conversionPct) || !validNumberInput(pricing.profitPct) || typeof pricing.includeTax !== "boolean") {
+    throw new Error("Saved pricing settings are invalid.");
+  }
+  const savedCurrent = settings.current;
+  const current = isRecord(savedCurrent)
+    ? { config: validatedCabinetConfig(savedCurrent.config), elevation: String(savedCurrent.elevation ?? ""), qty: Number(savedCurrent.qty) }
+    : undefined;
+  if (current && (!Number.isFinite(current.qty) || current.qty < 1)) throw new Error("Saved current cabinet quantity is invalid.");
+  const project = records.filter((record) => record.kind === "cabinet").map((record, index) => {
+    if (!isRecord(record.data) || typeof record.data.qty !== "number" || record.data.qty < 1 || !Number.isFinite(record.data.qty)) throw new Error("A saved cabinet quantity is invalid.");
+    const config = validatedCabinetConfig(record.data.config);
+    return { id: index + 1, m: buildModel(config), qty: record.data.qty, elevation: String(record.data.elevation ?? "") };
+  });
+  const values = <T extends { id: number; qty: number },>(kind: string): T[] => records.filter((record) => record.kind === kind).map((record) => {
+    if (!isRecord(record.data)) throw new Error(`A ${kind} row is invalid.`);
+    if (typeof record.data.id !== "number" || !Number.isFinite(record.data.id) || typeof record.data.qty !== "number" || !Number.isFinite(record.data.qty) || record.data.qty < 1) {
+      throw new Error(`A ${kind} row has an invalid id or quantity.`);
+    }
+    return record.data as T;
+  });
+  const rawSelections = records.filter((record) => record.kind === "raw-selection").map((record) => {
+    if (!isRecord(record.data) || typeof record.data.key !== "string" || typeof record.data.id !== "string" || !record.data.id) {
+      throw new Error("A saved raw material selection is invalid.");
+    }
+    return { key: record.data.key, id: record.data.id, name: String(record.data.name ?? ""), sku: String(record.data.sku ?? ""),
+      stock_on_hand: typeof record.data.stock_on_hand === "number" ? record.data.stock_on_hand : undefined };
+  });
+  return {
+    project, fillers: values<FillerRow>("filler"), visiblePanels: values<VisiblePanelRow>("visible-panel"),
+    countertops: values<CountertopRow>("countertop"), accessories: values<AccessoryRow>("other-accessory"),
+    masterAccessories: values<MasterAccessoryRow>("accessory"), waste, pricing, rawSelections, current,
+    notice: `Imported ${project.length} cabinet line${project.length === 1 ? "" : "s"} with saved materials, hardware choices, accessories, raw selections, and pricing settings.`,
+  };
+}
+
+function restoreLegacyBom(rows: Record<string, unknown>[]): ProjectRestore {
+  const cabinetRows = rows.filter((row) => Number(row.Level ?? row.level) === 0 && /^[A-Z]{2,3}-/.test(String(row.Item ?? row.itemName ?? "").trim()));
+  if (!cabinetRows.length) throw new Error("No cabinet master rows were found in this BOM export.");
+  const project = cabinetRows.map((row, index) => {
+    const code = String(row.Item ?? row.itemName).trim();
+    const parts = code.split("-");
+    if (parts.length < 11) throw new Error(`Cabinet code is incomplete: ${code}`);
+    const [zone, familyCode, handleToken, matToken] = parts;
+    const W = Number(parts[7]), H = Number(parts[8]), D = Number(parts[9]);
+    if (!ZONES[zone] || ![W, H, D].every((n) => Number.isFinite(n) && n > 0)) throw new Error(`Cannot read cabinet dimensions: ${code}`);
+    const hand = parts.slice(5, 7).includes("RHS") ? "RHS" : "LHS";
+    const rawFinish = parts.slice(11).join("-");
+    const finish = (boardFinishesData as string[]).find((name) => name.toUpperCase() === rawFinish) ?? rawFinish;
+    const candidates = Object.entries(famSetOf(zone)).flatMap(([fk, family]: [string, any]) => {
+      if (family.p2 !== familyCode || (isGlassShutterFam(fk) ? "GL" : "WD") !== matToken) return [];
+      return family.variants.map((variant: { id: string }) => ({ fk, vid: variant.id }));
+    }).filter(({ fk, vid }) => {
+      const config: CabinetConfig = { zk: zone, fk, vid, hand, handle: handleToken === "CJ" ? "XCJ" : "STD", board: DEFAULT_BOARD_ID, shType: DEFAULT_SHTYPE, glassType: DEFAULT_GLASS_TYPE, hingeChoice: HINGE_CHOICES[0], neon: "NEON50", W, H, D, drawerModel: DRAWER_MODELS[0], finish };
+      return buildModel(config).code.split("-").slice(0, 7).join("-") === parts.slice(0, 7).join("-");
+    });
+    if (candidates.length !== 1) throw new Error(`Cannot uniquely identify cabinet ${code} from this older export. Please use a new Excel BOM with Project Setup.`);
+    const config: CabinetConfig = { zk: zone, ...candidates[0], hand, handle: handleToken === "CJ" ? "XCJ" : "STD", board: DEFAULT_BOARD_ID, shType: DEFAULT_SHTYPE, glassType: DEFAULT_GLASS_TYPE, hingeChoice: HINGE_CHOICES[0], neon: "NEON50", W, H, D, drawerModel: DRAWER_MODELS[0], finish };
+    const qty = Number(row["SO Qty"] ?? row.quantityNeeded ?? 1);
+    if (!Number.isFinite(qty) || qty < 1) throw new Error(`Invalid cabinet quantity: ${code}`);
+    return { id: index + 1, m: buildModel(config), qty, elevation: String(row.Elevation ?? "") };
+  });
+  return { project, fillers: [], visiblePanels: [], countertops: [], accessories: [], masterAccessories: [], waste: { ...WASTE }, pricing: DEFAULT_PROJECT_PRICING, rawSelections: [],
+    notice: `Imported ${project.length} cabinet line${project.length === 1 ? "" : "s"} from an older BOM. That file did not save material, hinge, drawer, accessory, or pricing selections; review those before continuing.` };
+}
+
+async function readProjectFile(file: File): Promise<ProjectRestore> {
+  if (file.size > 10_000_000) throw new Error("The selected file is too large (maximum 10 MB).");
+  if (file.name.toLowerCase().endsWith(".json")) {
+    const data: unknown = JSON.parse(await file.text());
+    if (Array.isArray(data)) return restoreLegacyBom(data as Record<string, unknown>[]);
+    if (isRecord(data) && data.format === PROJECT_FILE_FORMAT && Array.isArray(data.rows)) return restoreProjectSetup(data.rows as Record<string, unknown>[]);
+    throw new Error("This JSON file is not a Wood BOM project export.");
+  }
+  const workbook = XLSX.read(await file.arrayBuffer(), { type: "array" });
+  const setupSheet = workbook.Sheets["Project Setup"];
+  if (setupSheet) return restoreProjectSetup(XLSX.utils.sheet_to_json<Record<string, unknown>>(setupSheet, { defval: "" }));
+  const bomSheet = workbook.Sheets["Full BOM"] ?? workbook.Sheets[workbook.SheetNames[0]];
+  if (!bomSheet) throw new Error("This file contains no BOM sheet.");
+  const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(bomSheet, { defval: "" });
+  if (rows.some((row) => typeof row["Cabinet Code"] === "string")) {
+    const codes = [...new Set(rows.map((row) => String(row["Cabinet Code"] ?? "").trim()).filter(Boolean))];
+    const restored = restoreLegacyBom(codes.map((code) => ({ Level: 0, Item: code, "SO Qty": 1 })));
+    restored.notice += " Raw CSV does not contain cabinet quantities or elevation; each distinct code was restored once.";
+    return restored;
+  }
+  return restoreLegacyBom(rows);
+}
+
 function carcassMasterItem(board: string, panel: Panel): CostingMasterItem | undefined {
   if (/glass/i.test(panel.mat ?? "")) return GLASS_SHELF_ITEM;
   if (panel.pack === "Drawer Pack" && /BWP Plywood/i.test(panel.mat ?? "")) {
@@ -1720,6 +1890,7 @@ function toReportRows(rows: FullBomRow[]): BomReportRow[] {
 /* ------------------------------------------------------------------ */
 
 export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMode?: boolean; planningMode?: boolean } = {}) {
+  const railRef = useRef<HTMLElement>(null);
   const [zk, setZk] = useState("BC");
   const [fk, setFk] = useState("SH");
   const [vid, setVid] = useState("single");
@@ -1740,6 +1911,9 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
   const [H, setH] = useState(720);
   const [D, setD] = useState(560);
   const [project, setProject] = useState<ProjectLine[]>([]);
+  const [editingLineId, setEditingLineId] = useState<number | null>(null);
+  const [importMessage, setImportMessage] = useState("");
+  const [importError, setImportError] = useState("");
   const [tab, setTab] = useState<"packets" | "raw" | "totals">("packets");
 
   useEffect(() => {
@@ -1819,11 +1993,59 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
   }, [zk, fams]);
 
   const addLine = () => {
-    setProject((p) => [...p, { id: Date.now() + Math.random(), m, qty, elevation }]);
+    if (editingLineId !== null) {
+      setProject((p) => p.map((line) => line.id === editingLineId ? { ...line, m, qty, elevation } : line));
+      setEditingLineId(null);
+    } else {
+      setProject((p) => [...p, { id: Date.now() + Math.random(), m, qty, elevation }]);
+    }
     if (!drawerOnly) setHingeLocked(true);
     if (fam.drawers) setDrawerLocked(true);
   };
-  const delLine = (id: number) => setProject((p) => p.filter((x) => x.id !== id));
+  const loadConfig = (config: CabinetConfig) => {
+    setZk(config.zk); setFk(config.fk); setVid(config.vid); setHand(config.hand);
+    setHandle(config.handle); setBoard(config.board); setShType(config.shType);
+    setGlassType(config.glassType); setHingeChoice(config.hingeChoice);
+    setDrawerModel(config.drawerModel); setFinish(config.finish);
+    setW(config.W); setH(config.H); setD(config.D);
+  };
+  const editLine = (line: ProjectLine) => {
+    loadConfig(cabinetConfig(line.m));
+    setElevation(line.elevation); setQty(line.qty); setEditingLineId(line.id);
+    railRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+  const delLine = (id: number) => {
+    if (editingLineId === id) setEditingLineId(null);
+    setProject((p) => p.filter((x) => x.id !== id));
+  };
+
+  const importFile = async (file: File) => {
+    setImportError(""); setImportMessage("");
+    try {
+      const restored = await readProjectFile(file);
+      if (project.length > 0 && !window.confirm("Replace the current project with the imported file?")) return;
+      setProject(restored.project);
+      setFillers(restored.fillers); setVisiblePanels(restored.visiblePanels);
+      setCountertops(restored.countertops); setAccessories(restored.accessories);
+      setMasterAccessories(restored.masterAccessories);
+      setWaste(restored.waste); setProjectPricingInputs(restored.pricing);
+      const current = restored.current ?? (restored.project[0] ? { config: cabinetConfig(restored.project[0].m), elevation: restored.project[0].elevation, qty: restored.project[0].qty } : undefined);
+      if (current) {
+        loadConfig(current.config); setElevation(current.elevation); setQty(current.qty);
+      }
+      setEditingLineId(null); setStockMap({});
+      setRawMap(Object.fromEntries(restored.rawSelections.map((selection) => [selection.key, {
+        loading: false, error: "", sel: selection.id,
+        items: [{ item_id: selection.id, name: selection.name, sku: selection.sku, stock_on_hand: selection.stock_on_hand }],
+      }])));
+      setHingeLocked(restored.project.some((line) => !famSetOf(line.m.zk)[line.m.fk]?.drawers || !!famSetOf(line.m.zk)[line.m.fk]?.fixedDpn));
+      setDrawerLocked(restored.project.some((line) => !!famSetOf(line.m.zk)[line.m.fk]?.drawers));
+      setImportMessage(restored.notice);
+      setTab("totals");
+    } catch (error) {
+      setImportError(error instanceof Error ? error.message : "Could not import this project file.");
+    }
+  };
 
   const extras = useMemo(
     () => buildExtrasBom(fillers, visiblePanels, countertops, project, soMode ? "SO" : "", shType, finish, waste),
@@ -1838,6 +2060,11 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
     ...buildAccessoryRows(accessories, project, soMode ? "SO" : ""),
     ...buildMasterAccessoryRows(masterAccessories, soMode ? "SO" : ""),
   ], [accessories, masterAccessories, project, soMode]);
+  const rawSelections = useMemo(() => Object.entries(rawMap).flatMap(([key, state]) => {
+    if (!state.sel) return [];
+    const item = state.items.find((candidate) => candidate.item_id === state.sel);
+    return [{ key, id: state.sel, name: item?.name ?? "", sku: item?.sku ?? "", stock_on_hand: item?.stock_on_hand }];
+  }), [rawMap]);
   const costing = useMemo(
     () => computeCosting(project, fillers, visiblePanels, extras.panels, accessories, masterAccessories, shType, rates, waste),
     [project, fillers, visiblePanels, extras, accessories, masterAccessories, shType, rates, waste],
@@ -1947,7 +2174,7 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
 
       <div className="body">
         {/* ---------------- Configure Unit ---------------- */}
-        <aside className="rail">
+        <aside className="rail" ref={railRef}>
           <h2>Configure unit</h2>
 
           <Fld label="Zone">
@@ -2051,7 +2278,8 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
             </div>
           </Fld>
 
-          <button className="add" disabled={W <= 0 || H <= 0 || D <= 0} onClick={addLine}>Add to project</button>
+          <button className="add" disabled={W <= 0 || H <= 0 || D <= 0} onClick={addLine}>{editingLineId === null ? "Add to project" : "Save cabinet changes"}</button>
+          {editingLineId !== null && <button className="x" onClick={() => setEditingLineId(null)}>Cancel edit</button>}
           <div className="code">{m.code}</div>
         </aside>
 
@@ -2104,9 +2332,26 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
               {project.length === 0 ? <div className="empty">Configure a cabinet and add it to start a project.</div> : <>
                 <h4>Project lines</h4>
                 <Tbl head={["Elev", "Cabinet", "Description", "W×H×D", "Qty", ""]} num={[4]}
-                  rows={project.map((l) => [l.elevation, l.m.code, famSetOf(l.m.zk)[l.m.fk].name,
-                    `${l.m.W}×${l.m.H}×${l.m.D}`, l.qty,
-                    <button key="x" className="x" onClick={() => delLine(l.id)}>remove</button>])} />
+                  rows={project.map((l) => {
+                    const packetRows = cabinetPacketRows(l.m);
+                    const packNames = [...new Set([...l.m.pkRows.map((row) => row.pack), ...packetRows.map((row) => row.pack)])];
+                    return [l.elevation,
+                      <details key={l.id}>
+                        <summary style={{ cursor: "pointer", color: "var(--acc)", fontWeight: 650 }}>{l.m.code}</summary>
+                        <div style={{ marginTop: 10, minWidth: 500 }}>
+                          {packNames.map((pack) => <div key={pack} style={{ marginBottom: 10 }}>
+                            <strong>{pack}</strong>
+                            <Tbl head={["Item", "Qty / cabinet", "Unit"]} num={[1]}
+                              rows={packetRows.filter((row) => row.pack === pack).map((row) => [row.item, r3(row.qty), row.unit])} />
+                          </div>)}
+                        </div>
+                      </details>,
+                      famSetOf(l.m.zk)[l.m.fk].name, `${l.m.W}×${l.m.H}×${l.m.D}`, l.qty,
+                      <div key="actions" style={{ display: "flex", gap: 8 }}>
+                        <button className="x" style={{ color: "var(--acc)" }} onClick={() => editLine(l)}>Edit</button>
+                        <button className="x" onClick={() => delLine(l.id)}>remove</button>
+                      </div>];
+                  })} />
 
                 <h4>Wastage % (editable)</h4>
                 <div className="g3" style={{ maxWidth: 420 }}>
@@ -2381,11 +2626,22 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
               <SecHead title="Downloads" />
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                 <button className="add" style={{ width: "auto", padding: "8px 16px" }} disabled={fullBom.length === 0}
-                  onClick={() => exportBomWorkbook(toReportRows(fullBom), accessoryRows)}>Excel BOM (.xlsx)</button>
+                  onClick={() => exportBomWorkbook(toReportRows(fullBom), accessoryRows, projectSetupRows({ project, fillers, visiblePanels, countertops, accessories, masterAccessories, waste, pricing: projectPricingInputs, rawSelections, current: W > 0 && H > 0 && D > 0 ? { config: cabinetConfig(m), elevation, qty } : undefined }))}>Excel BOM (.xlsx)</button>
                 <button className="add" style={{ width: "auto", padding: "8px 16px" }} disabled={fullBom.length === 0}
                   onClick={() => exportBomCsv(toReportRows(fullBom))}>Full BOM (.csv)</button>
                 <button className="add" style={{ width: "auto", padding: "8px 16px" }} disabled={project.length === 0}
                   onClick={() => dl("wood-bom.csv", buildCSV(project), "text/csv")}>Raw CSV</button>
+              </div>
+              <div style={{ marginTop: 12 }}>
+                <label htmlFor="project-import" style={{ display: "block", fontWeight: 650, marginBottom: 6 }}>Import project from an exported Excel BOM</label>
+                <input id="project-import" type="file" accept=".xlsx,.xls,.csv,.json" onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  if (file) void importFile(file);
+                  event.target.value = "";
+                }} />
+                <Hint>Import replaces the current project. Excel BOM files with a Project Setup sheet restore cabinet choices, accessories, wastage, and pricing.</Hint>
+                {importMessage && <p role="status" style={{ color: "var(--acc)" }}>{importMessage}</p>}
+                {importError && <p role="alert" style={{ color: "var(--flag)" }}>{importError}</p>}
               </div>
 
               <datalist id="elev-list">{ELEVATIONS.map((x) => <option key={x} value={x} />)}</datalist>

@@ -15,6 +15,8 @@ export type AccessoryExportRow = {
   "Zoho Item ID": string;
 };
 
+export type ProjectSetupRow = { "Record Type": string; Data: string };
+
 const COLS_FULL = [
   { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 6 }, { wch: 40 }, { wch: 18 },
   { wch: 10 }, { wch: 9 }, { wch: 9 }, { wch: 9 }, { wch: 11 }, { wch: 14 },
@@ -362,7 +364,7 @@ function applyFullBomColors(ws: XLSX.WorkSheet, data: FullBomExport[]) {
   }
 }
 
-export function exportBomWorkbook(rows: BomReportRow[], accessories: AccessoryExportRow[]) {
+export function exportBomWorkbook(rows: BomReportRow[], accessories: AccessoryExportRow[], projectSetup: ProjectSetupRow[] = []) {
   const workbook = XLSX.utils.book_new();
 
   const bomData = fullBomRows(rows);
@@ -376,6 +378,8 @@ export function exportBomWorkbook(rows: BomReportRow[], accessories: AccessoryEx
   addSheet(workbook, optiRowsFromOos(consolidated), "Opti", COLS_OPTI);
 
   if (accessories.length) addSheet(workbook, accessories, "Accessories", COLS_SF);
+
+  if (projectSetup.length) addSheet(workbook, projectSetup, "Project Setup", [{ wch: 20 }, { wch: 100 }]);
 
   XLSX.writeFile(workbook, `BOM_Report_${new Date().toISOString().slice(0, 10)}.xlsx`);
 }
