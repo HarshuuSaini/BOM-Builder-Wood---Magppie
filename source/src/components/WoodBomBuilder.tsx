@@ -2070,16 +2070,15 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
     [project, fillers, visiblePanels, extras, accessories, masterAccessories, shType, rates, waste],
   );
   const projectPricing = useMemo(() => {
-    const cabinetAreas = costing.lines.map((line) => ({
-      label: line.label,
-      sqft: line.details.reduce(
-        (detailTotal, detail) => detailTotal + (detail.uom === "sqft" ? detail.billableQty : 0),
-        0,
-      ),
+    const cabinetAreas = project.map((line) => ({
+      label: `${line.elevation} · ${line.m.code}`,
+      qty: line.qty,
+      eachSqft: sqft(line.m.W, line.m.H),
+      sqft: sqft(line.m.W, line.m.H) * line.qty,
     }));
-    const billableSqft = cabinetAreas.reduce((total, line) => total + line.sqft, 0);
+    const cabinetSqft = cabinetAreas.reduce((total, line) => total + line.sqft, 0);
     const serviceAmount = (charge: ServiceCharge) => charge.mode === "sqft"
-      ? Number(charge.value || 0) * billableSqft
+      ? Number(charge.value || 0) * cabinetSqft
       : Number(charge.value || 0);
     const baseCost = costing.total;
     const conversionPct = Number(projectPricingInputs.conversionPct || 0);
@@ -2093,7 +2092,7 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
     const subtotal = convertedCost + profit + transportation + installation + loading;
     const tax = projectPricingInputs.includeTax ? subtotal * 0.18 : 0;
     const allocatedCharges = cabinetAreas.map((line) => {
-      const share = billableSqft > 0 ? line.sqft / billableSqft : 0;
+      const share = cabinetSqft > 0 ? line.sqft / cabinetSqft : 0;
       const allocation = (charge: ServiceCharge, total: number) => charge.mode === "sqft"
         ? line.sqft * Number(charge.value || 0)
         : total * share;
@@ -2104,8 +2103,8 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
         loading: allocation(projectPricingInputs.loading, loading),
       };
     });
-    return { billableSqft, baseCost, conversion, convertedCost, profit, transportation, installation, loading, subtotal, tax, grandTotal: subtotal + tax, allocatedCharges };
-  }, [costing, projectPricingInputs]);
+    return { cabinetSqft, baseCost, conversion, convertedCost, profit, transportation, installation, loading, subtotal, tax, grandTotal: subtotal + tax, allocatedCharges };
+  }, [costing, project, projectPricingInputs]);
   const allStubs = useMemo(() => [...new Set(project.flatMap((l) => l.m.stubs))], [project]);
 
   /* --- Zoho: raw-material search per board group --- */
@@ -2504,7 +2503,7 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
                 <div style={{ marginTop: 18, padding: 16, border: "1px solid #D8DEDA", borderRadius: 8, background: "#FAFBFA" }}>
                   <h3 style={{ margin: "0 0 4px" }}>Project pricing factors</h3>
                   <p style={{ margin: "0 0 14px", color: "#617069", fontSize: 12 }}>
-                    Per-sqft charges use {projectPricing.billableSqft.toFixed(3)} sqft, including board wastage.
+                    Per-sqft charges use {projectPricing.cabinetSqft.toFixed(3)} sqft of cabinet front area (width × height × quantity).
                   </p>
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
                     <Fld label="Conversion (%)">
@@ -2540,25 +2539,27 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
                   </div>
 
                   <div style={{ marginTop: 14, overflowX: "auto" }}>
-                    <table style={{ width: "100%", minWidth: 780, borderCollapse: "collapse", background: "white", fontSize: 12 }}>
-                      <thead><tr>{["Cabinet / item", "Billable sqft", "Transportation", "Installation", "Loading / Unloading"].map((heading) => <th key={heading} style={{ padding: "7px 9px", background: "#EEF1EE", border: "1px solid #D8DEDA", textAlign: heading === "Cabinet / item" ? "left" : "right" }}>{heading}</th>)}</tr></thead>
+                    <table style={{ width: "100%", minWidth: 940, borderCollapse: "collapse", background: "white", fontSize: 12 }}>
+                      <thead><tr>{["Cabinet", "Qty", "Sqft / cabinet", "Total cabinet sqft", "Transportation", "Installation", "Loading / Unloading"].map((heading) => <th key={heading} style={{ padding: "7px 9px", background: "#EEF1EE", border: "1px solid #D8DEDA", textAlign: heading === "Cabinet" ? "left" : "right" }}>{heading}</th>)}</tr></thead>
                       <tbody>{projectPricing.allocatedCharges.map((line, index) => <tr key={`${line.label}-${index}`}>
                         <td style={{ padding: "7px 9px", border: "1px solid #E3E7E4" }}>{line.label}</td>
+                        <td style={{ padding: "7px 9px", border: "1px solid #E3E7E4", textAlign: "right" }}>{line.qty}</td>
+                        <td style={{ padding: "7px 9px", border: "1px solid #E3E7E4", textAlign: "right" }}>{line.eachSqft.toFixed(3)}</td>
                         <td style={{ padding: "7px 9px", border: "1px solid #E3E7E4", textAlign: "right" }}>{line.sqft.toFixed(3)}</td>
                         <td style={{ padding: "7px 9px", border: "1px solid #E3E7E4", textAlign: "right" }}>Rs {line.transportation.toFixed(2)}</td>
                         <td style={{ padding: "7px 9px", border: "1px solid #E3E7E4", textAlign: "right" }}>Rs {line.installation.toFixed(2)}</td>
                         <td style={{ padding: "7px 9px", border: "1px solid #E3E7E4", textAlign: "right" }}>Rs {line.loading.toFixed(2)}</td>
                       </tr>)}</tbody>
                       <tfoot><tr>
-                        <td style={{ padding: "8px 9px", border: "1px solid #D8DEDA", fontWeight: 750 }}>All cabinets total</td>
-                        <td style={{ padding: "8px 9px", border: "1px solid #D8DEDA", textAlign: "right", fontWeight: 750 }}>{projectPricing.billableSqft.toFixed(3)}</td>
+                        <td colSpan={3} style={{ padding: "8px 9px", border: "1px solid #D8DEDA", fontWeight: 750 }}>All cabinets total</td>
+                        <td style={{ padding: "8px 9px", border: "1px solid #D8DEDA", textAlign: "right", fontWeight: 750 }}>{projectPricing.cabinetSqft.toFixed(3)}</td>
                         <td style={{ padding: "8px 9px", border: "1px solid #D8DEDA", textAlign: "right", fontWeight: 750 }}>Rs {projectPricing.transportation.toFixed(2)}</td>
                         <td style={{ padding: "8px 9px", border: "1px solid #D8DEDA", textAlign: "right", fontWeight: 750 }}>Rs {projectPricing.installation.toFixed(2)}</td>
                         <td style={{ padding: "8px 9px", border: "1px solid #D8DEDA", textAlign: "right", fontWeight: 750 }}>Rs {projectPricing.loading.toFixed(2)}</td>
                       </tr></tfoot>
                     </table>
                     {(projectPricingInputs.transportation.mode === "direct" || projectPricingInputs.installation.mode === "direct" || projectPricingInputs.loading.mode === "direct") && (
-                      <p style={{ margin: "6px 0 0", color: "#617069", fontSize: 11 }}>Direct service prices are allocated to each cabinet in proportion to its billable square footage.</p>
+                      <p style={{ margin: "6px 0 0", color: "#617069", fontSize: 11 }}>Direct service prices are allocated to each cabinet in proportion to its front area.</p>
                     )}
                   </div>
 
