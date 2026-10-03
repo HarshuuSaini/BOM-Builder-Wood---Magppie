@@ -17,6 +17,22 @@ export type AccessoryExportRow = {
 
 export type ProjectSetupRow = { "Record Type": string; Data: string };
 
+export type CostingExportDetail = {
+  category: string; itemCode: string; item: string; specification: string;
+  netQty: number; wastePct: number; billableQty: number;
+  uom: string; rate: number; amount: number;
+};
+export type CostingExportLine = {
+  label: string; code?: string; qty: number; unitCost: number; cost: number;
+  details: CostingExportDetail[];
+};
+export type CostingExportArea = { eachSqft: number; sqft: number };
+export type CostingExportPricing = {
+  cabinetSqft: number; baseCost: number; conversion: number; profit: number;
+  transportation: number; installation: number; loading: number;
+  subtotal: number; tax: number; grandTotal: number;
+};
+
 const COLS_FULL = [
   { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 6 }, { wch: 40 }, { wch: 18 },
   { wch: 10 }, { wch: 9 }, { wch: 9 }, { wch: 9 }, { wch: 11 }, { wch: 14 },
@@ -382,6 +398,120 @@ export function exportBomWorkbook(rows: BomReportRow[], accessories: AccessoryEx
   if (projectSetup.length) addSheet(workbook, projectSetup, "Project Setup", [{ wch: 20 }, { wch: 100 }]);
 
   XLSX.writeFile(workbook, `BOM_Report_${new Date().toISOString().slice(0, 10)}.xlsx`);
+}
+
+/** Export the same calculated rows shown in Costing, with a separate item roll-up. */
+export function exportCostingWorkbook(
+  lines: CostingExportLine[],
+  cabinetAreas: CostingExportArea[],
+  pricing: CostingExportPricing,
+  unpriced: string[],
+) {
+  if (!lines.length) return;
+  const workbook = XLSX.utils.book_new();
+  const summary: Array<{
+    "Cabinet / item": string; "Cabinet code": string; Qty: number | string;
+    "Sqft / cabinet": number | string; "Total cabinet sqft": number | string;
+    "Cost / cabinet (Rs)": number | string; "Total cost (Rs)": number;
+    "Cost / cabinet sqft (Rs)": number | string;
+  }> = lines.map((line, index) => {
+    const area = cabinetAreas[index];
+    return {
+      "Cabinet / item": line.label,
+      "Cabinet code": line.code ?? "",
+      Qty: line.qty,
+      "Sqft / cabinet": area?.eachSqft ?? "",
+      "Total cabinet sqft": area?.sqft ?? "",
+      "Cost / cabinet (Rs)": line.unitCost,
+      "Total cost (Rs)": line.cost,
+      "Cost / cabinet sqft (Rs)": area?.sqft ? line.cost / area.sqft : "",
+    };
+  });
+  summary.push({
+    "Cabinet / item": "Project item costing total", "Cabinet code": "", Qty: "",
+    "Sqft / cabinet": "", "Total cabinet sqft": pricing.cabinetSqft,
+    "Cost / cabinet (Rs)": "", "Total cost (Rs)": pricing.baseCost,
+    "Cost / cabinet sqft (Rs)": pricing.cabinetSqft ? pricing.baseCost / pricing.cabinetSqft : "",
+  });
+  addSheet(workbook, summary, "Cabinet Summary", [
+    { wch: 54 }, { wch: 64 }, { wch: 9 }, { wch: 17 }, { wch: 20 },
+    { wch: 21 }, { wch: 21 }, { wch: 25 },
+  ]);
+
+  const detailRows = lines.flatMap((line, index) => line.details.map((detail) => ({
+    "Cabinet / item": line.label,
+    "Cabinet code": line.code ?? "",
+    "Cabinet qty": line.qty,
+    "Cabinet sqft": cabinetAreas[index]?.sqft ?? "",
+    Category: detail.category,
+    "Item code": detail.itemCode,
+    "Actual item": detail.item,
+    Specification: detail.specification,
+    "Net qty": detail.netQty,
+    "Waste %": detail.wastePct,
+    "Billable qty": detail.billableQty,
+    Basis: detail.uom,
+    "Rate (Rs / basis)": detail.rate,
+    "Amount (Rs)": detail.amount,
+    "Cost / cabinet sqft (Rs)": cabinetAreas[index]?.sqft ? detail.amount / cabinetAreas[index].sqft : "",
+  })));
+  addSheet(workbook, detailRows, "Cabinet Items", [
+    { wch: 54 }, { wch: 64 }, { wch: 13 }, { wch: 16 }, { wch: 22 },
+    { wch: 18 }, { wch: 65 }, { wch: 46 }, { wch: 13 }, { wch: 12 },
+    { wch: 15 }, { wch: 11 }, { wch: 20 }, { wch: 18 }, { wch: 27 },
+  ]);
+
+  const consolidated = new Map<string, {
+    Category: string; "Item code": string; "Actual item": string;
+    "Net qty": number; "Waste %": number; "Billable qty": number;
+    Basis: string; "Rate (Rs / basis)": number; "Amount (Rs)": number;
+    "Cost lines": number;
+  }>();
+  lines.forEach((line) => line.details.forEach((detail) => {
+    const key = JSON.stringify([detail.itemCode, detail.item, detail.uom, detail.rate, detail.wastePct]);
+    const row = consolidated.get(key);
+    if (row) {
+      row["Net qty"] += detail.netQty;
+      row["Billable qty"] += detail.billableQty;
+      row["Amount (Rs)"] += detail.amount;
+      row["Cost lines"] += 1;
+      if (!row.Category.split(", ").includes(detail.category)) row.Category += `, ${detail.category}`;
+    } else consolidated.set(key, {
+      Category: detail.category,
+      "Item code": detail.itemCode,
+      "Actual item": detail.item,
+      "Net qty": detail.netQty,
+      "Waste %": detail.wastePct,
+      "Billable qty": detail.billableQty,
+      Basis: detail.uom,
+      "Rate (Rs / basis)": detail.rate,
+      "Amount (Rs)": detail.amount,
+      "Cost lines": 1,
+    });
+  }));
+  addSheet(workbook, [...consolidated.values()], "Consolidated Items", [
+    { wch: 30 }, { wch: 18 }, { wch: 65 }, { wch: 15 }, { wch: 12 },
+    { wch: 17 }, { wch: 11 }, { wch: 20 }, { wch: 18 }, { wch: 22 },
+  ]);
+
+  addSheet(workbook, [
+    { Factor: "Cabinet front area (sqft)", Value: pricing.cabinetSqft },
+    { Factor: "Base item cost (Rs)", Value: pricing.baseCost },
+    { Factor: "Conversion (Rs)", Value: pricing.conversion },
+    { Factor: "Profit (Rs)", Value: pricing.profit },
+    { Factor: "Transportation (Rs)", Value: pricing.transportation },
+    { Factor: "Installation (Rs)", Value: pricing.installation },
+    { Factor: "Loading / Unloading (Rs)", Value: pricing.loading },
+    { Factor: "Subtotal (Rs)", Value: pricing.subtotal },
+    { Factor: "GST (Rs)", Value: pricing.tax },
+    { Factor: "Project total (Rs)", Value: pricing.grandTotal },
+  ], "Project Pricing", [{ wch: 36 }, { wch: 20 }]);
+
+  if (unpriced.length) addSheet(workbook, unpriced.map((item) => ({
+    "Unpriced item": item, Status: "Rate not set; excluded from costing",
+  })), "Unpriced Items", [{ wch: 75 }, { wch: 42 }]);
+
+  XLSX.writeFile(workbook, `Costing_Report_${new Date().toISOString().slice(0, 10)}.xlsx`);
 }
 
 export function exportBomCsv(rows: BomReportRow[]) {

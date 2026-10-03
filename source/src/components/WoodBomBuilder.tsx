@@ -22,7 +22,7 @@ import laminateFinishesData from "@/data/laminate_finishes.json";
 import edgebandFinishesData from "@/data/edgeband_finishes.json";
 import hardwarePacksData from "@/data/hardware_packs.json";
 import { getPartBaseName, getPanelBaseName, normalizePartOrPanelName } from "@/lib/naming";
-import { exportBomWorkbook, exportBomCsv, type AccessoryExportRow, type ProjectSetupRow } from "@/lib/export";
+import { exportBomWorkbook, exportBomCsv, exportCostingWorkbook, type AccessoryExportRow, type ProjectSetupRow } from "@/lib/export";
 import { COSTING_ITEMS, DEFAULT_RATES, findCostingItem, type CostingMasterItem, type CostingRates } from "@/lib/costing";
 import type { BomReportRow } from "@/lib/types";
 
@@ -2626,6 +2626,8 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
               {/* ---- Downloads ---- */}
               <SecHead title="Downloads" />
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <button className="add" style={{ width: "auto", padding: "8px 16px" }} disabled={costing.lines.length === 0}
+                  onClick={() => exportCostingWorkbook(costing.lines, projectPricing.allocatedCharges, projectPricing, costing.unpriced)}>Costing (.xlsx)</button>
                 <button className="add" style={{ width: "auto", padding: "8px 16px" }} disabled={fullBom.length === 0}
                   onClick={() => exportBomWorkbook(toReportRows(fullBom), accessoryRows, projectSetupRows({ project, fillers, visiblePanels, countertops, accessories, masterAccessories, waste, pricing: projectPricingInputs, rawSelections, current: W > 0 && H > 0 && D > 0 ? { config: cabinetConfig(m), elevation, qty } : undefined }))}>Excel BOM (.xlsx)</button>
                 <button className="add" style={{ width: "auto", padding: "8px 16px" }} disabled={fullBom.length === 0}
