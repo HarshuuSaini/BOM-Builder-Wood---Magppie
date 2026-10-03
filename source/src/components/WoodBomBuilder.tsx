@@ -1921,14 +1921,14 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
 
           <Fld label="Dimensions (W · H · D)">
             <div className="g3">
-              <select value={W} onChange={(e) => setW(+e.target.value)}>
-                {sizes.w.map((x) => <option key={x} value={x}>{x}</option>)}
-              </select>
-              <select value={H} onChange={(e) => setH(+e.target.value)}>
-                {sizes.h.map((x) => <option key={x} value={x}>{x}</option>)}
-              </select>
-              <input type="number" value={D} onChange={(e) => setD(+e.target.value)} />
+              <input type="number" min={1} step={1} list="cabinet-width-presets" aria-label="Width in millimetres" title="Width (mm)" placeholder="Width" value={W || ""} onChange={(e) => setW(e.target.value === "" ? 0 : +e.target.value)} />
+              <datalist id="cabinet-width-presets">{sizes.w.map((x) => <option key={x} value={x} />)}</datalist>
+              <input type="number" min={1} step={1} list="cabinet-height-presets" aria-label="Height in millimetres" title="Height (mm)" placeholder="Height" value={H || ""} onChange={(e) => setH(e.target.value === "" ? 0 : +e.target.value)} />
+              <datalist id="cabinet-height-presets">{sizes.h.map((x) => <option key={x} value={x} />)}</datalist>
+              <input type="number" min={1} step={1} list="cabinet-depth-presets" aria-label="Depth in millimetres" title="Depth (mm)" placeholder="Depth" value={D || ""} onChange={(e) => setD(e.target.value === "" ? 0 : +e.target.value)} />
+              <datalist id="cabinet-depth-presets"><option value={sizes.d} /></datalist>
             </div>
+            <Hint>Enter any custom width, height, or depth in millimetres. Standard sizes appear as suggestions.</Hint>
           </Fld>
 
           <Fld label="Elevation & quantity">
@@ -1940,7 +1940,7 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
             </div>
           </Fld>
 
-          <button className="add" onClick={addLine}>Add to project</button>
+          <button className="add" disabled={W <= 0 || H <= 0 || D <= 0} onClick={addLine}>Add to project</button>
           <div className="code">{m.code}</div>
         </aside>
 
