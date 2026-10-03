@@ -1258,6 +1258,13 @@ interface AccessoryRow {
   lconn: number;
   driver: string;   // elenor driver
 }
+interface MasterAccessoryRow {
+  id: number;
+  itemId: string;
+  qty: number;
+  elevation: string;
+}
+const MASTER_ACCESSORY_ITEMS = COSTING_ITEMS.filter((item) => item.group === "Accessory" && item.id.startsWith("KITCHEN-"));
 const ACC_LABEL: Record<AccessoryKind, string> = {
   skirting: "PVC Skirting Profile",
   elenor: "Elenor with Light",
@@ -1319,6 +1326,18 @@ function buildAccessoryRows(accs: AccessoryRow[], project: ProjectLine[], so: st
     }
   });
   return out;
+}
+
+function buildMasterAccessoryRows(accs: MasterAccessoryRow[], so: string): AccessoryExportRow[] {
+  return accs.flatMap((row) => {
+    const item = MASTER_ACCESSORY_ITEMS.find((candidate) => candidate.id === row.itemId);
+    if (!item) return [];
+    return [{
+      SO: so, "Carcass Items": "", Accessory: item.subgroup, Selected: "yes",
+      "Item Name": item.materialDescription, Size: item.type, Elevation: row.elevation,
+      Total: row.qty, "Actual Qty": row.qty, "Zoho Item ID": item.id,
+    }];
+  });
 }
 
 /* --- Costing — rupee totals for the user; factors stay on /admin --- */
@@ -1404,6 +1423,7 @@ function computeCosting(
   project: ProjectLine[],
   fillers: FillerRow[], visiblePanels: VisiblePanelRow[],
   extrasPanels: Panel[],
+  masterAccessories: MasterAccessoryRow[],
   globalShType: string, rates: CostingRates, wst: WastePct,
 ): CostingResult {
   const lines: LineCost[] = [];
@@ -1497,6 +1517,19 @@ function computeCosting(
     lines.push({ label: `${p.name}`, qty: p.qty, unitCost: p.qty ? cost / p.qty : cost, cost, details });
   });
 
+  masterAccessories.forEach((row) => {
+    const item = MASTER_ACCESSORY_ITEMS.find((candidate) => candidate.id === row.itemId);
+    if (!item) return;
+    const qty = Math.max(1, row.qty || 1);
+    const uom: CostDetail["uom"] = item.rateBasis === "SET" ? "set" : "nos";
+    const amount = qty * item.currentRate;
+    lines.push({
+      label: `${row.elevation ? `${row.elevation} · ` : ""}${item.subgroup}`,
+      qty, unitCost: item.currentRate, cost: amount,
+      details: [{ category: "Accessory", itemCode: item.id, item: item.materialDescription, specification: `${item.subgroup}${item.brand ? ` · ${item.brand}` : ""}`, netQty: qty, wastePct: 0, billableQty: qty, uom, rate: item.currentRate, amount }],
+    });
+  });
+
   return { lines, total: lines.reduce((a, x) => a + x.cost, 0), unpriced: [...unpriced] };
 }
 
@@ -1549,6 +1582,7 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
   const [visiblePanels, setVisiblePanels] = useState<VisiblePanelRow[]>([]);
   const [countertops, setCountertops] = useState<CountertopRow[]>([]);
   const [accessories, setAccessories] = useState<AccessoryRow[]>([]);
+  const [masterAccessories, setMasterAccessories] = useState<MasterAccessoryRow[]>([]);
   const [waste, setWaste] = useState({ ...WASTE });
   const [projectPricingInputs, setProjectPricingInputs] = useState<ProjectPricingInputs>(DEFAULT_PROJECT_PRICING);
 
@@ -1565,6 +1599,9 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
   const addAcc = () => setAccessories((c) => [...c, { id: nextIdOf(c), kind: "skirting", size: "", qty: 1, elevation: "", straight: 0, lconn: 0, driver: "" }]);
   const updAcc = (id: number, p: Partial<AccessoryRow>) => setAccessories((c) => c.map((r) => r.id === id ? { ...r, ...p } : r));
   const rmAcc = (id: number) => setAccessories((c) => c.filter((r) => r.id !== id));
+  const addMasterAcc = () => setMasterAccessories((c) => [...c, { id: nextIdOf(c), itemId: MASTER_ACCESSORY_ITEMS[0]?.id ?? "", qty: 1, elevation: "" }]);
+  const updMasterAcc = (id: number, p: Partial<MasterAccessoryRow>) => setMasterAccessories((c) => c.map((r) => r.id === id ? { ...r, ...p } : r));
+  const rmMasterAcc = (id: number) => setMasterAccessories((c) => c.filter((r) => r.id !== id));
 
   /* --- raw material selection + stock check (Zoho) --- */
   type RawState = { loading: boolean; error: string; items: Array<{ item_id: string; name?: string; sku?: string; stock_on_hand?: number }>; sel: string };
@@ -1620,10 +1657,13 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
     () => [...buildFullBomData(project, soMode ? "SO" : "", finish, waste), ...extras.rows],
     [project, soMode, finish, waste, extras],
   );
-  const accessoryRows = useMemo(() => buildAccessoryRows(accessories, project, soMode ? "SO" : ""), [accessories, project, soMode]);
+  const accessoryRows = useMemo(() => [
+    ...buildAccessoryRows(accessories, project, soMode ? "SO" : ""),
+    ...buildMasterAccessoryRows(masterAccessories, soMode ? "SO" : ""),
+  ], [accessories, masterAccessories, project, soMode]);
   const costing = useMemo(
-    () => computeCosting(project, fillers, visiblePanels, extras.panels, shType, rates, waste),
-    [project, fillers, visiblePanels, extras, shType, rates, waste],
+    () => computeCosting(project, fillers, visiblePanels, extras.panels, masterAccessories, shType, rates, waste),
+    [project, fillers, visiblePanels, extras, masterAccessories, shType, rates, waste],
   );
   const projectPricing = useMemo(() => {
     const cabinetAreas = costing.lines.map((line) => ({
@@ -1952,8 +1992,8 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
                     <button key="x" className="x" onClick={() => rmCt(c.id)}>×</button>,
                   ])} />}
 
-              {/* ---- Accessories ---- */}
-              <SecHead title="Accessories" onAdd={addAcc} />
+              {/* ---- Other Accessories ---- */}
+              <SecHead title="Other Accessories" onAdd={addAcc} />
               {accessories.length === 0 ? <div className="empty">Everything is opt-in: PVC skirting (sum of leg-mounted widths, +10% waste) and the Elenor light (2 sets per unit, cut = H).</div> : <>
                 <Tbl head={["Accessory", "Size", "Qty", "Elevation", "Straight", "L-conn", "Driver", ""]} num={[2]}
                   rows={accessories.map((a) => [
@@ -1970,11 +2010,30 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
                       {DRIVER_OPTIONS.map((d) => <option key={d} value={d}>{d || "— none —"}</option>)}</select> : "—",
                     <button key="x" className="x" onClick={() => rmAcc(a.id)}>×</button>,
                   ])} />
-                {accessoryRows.length > 0 && <>
-                  <h4>Accessory lines (export preview)</h4>
-                  <Tbl head={["Accessory", "Item", "Size", "Total", "Actual Qty"]} num={[3, 4]}
-                    rows={accessoryRows.map((r) => [r.Accessory, r["Item Name"], r.Size, r.Total, r["Actual Qty"]])} />
-                </>}
+              </>}
+
+              {/* ---- Accessories from the KITCHEN costing master ---- */}
+              <SecHead title="Accessories" onAdd={addMasterAcc} />
+              {masterAccessories.length === 0 ? <div className="empty">No accessories selected. Add any item maintained under the Kitchen master group “Accessory”.</div> :
+                <Tbl head={["Accessory item", "Brand", "Rate (Rs)", "Qty", "Elevation", ""]} num={[2, 3]}
+                  rows={masterAccessories.map((row) => {
+                    const selected = MASTER_ACCESSORY_ITEMS.find((item) => item.id === row.itemId);
+                    return [
+                      <select key="i" value={row.itemId} onChange={(e) => updMasterAcc(row.id, { itemId: e.target.value })}>
+                        {MASTER_ACCESSORY_ITEMS.map((item) => <option key={item.id} value={item.id}>{item.subgroup} — {item.materialDescription}</option>)}
+                      </select>,
+                      selected?.brand || "—",
+                      selected?.currentRate.toFixed(2) ?? "0.00",
+                      <input key="q" type="number" min={1} value={row.qty} onChange={(e) => updMasterAcc(row.id, { qty: Math.max(1, +e.target.value) })} style={{ width: 58 }} />,
+                      <input key="e" list="elev-list" value={row.elevation} onChange={(e) => updMasterAcc(row.id, { elevation: e.target.value })} style={{ width: 64 }} />,
+                      <button key="x" className="x" onClick={() => rmMasterAcc(row.id)}>×</button>,
+                    ];
+                  })} />}
+
+              {accessoryRows.length > 0 && <>
+                <h4>Accessory lines (export preview)</h4>
+                <Tbl head={["Accessory", "Item", "Size", "Total", "Actual Qty"]} num={[3, 4]}
+                  rows={accessoryRows.map((r) => [r.Accessory, r["Item Name"], r.Size, r.Total, r["Actual Qty"]])} />
               </>}
 
               {/* ---- Costing with an auditable per-cabinet breakdown ---- */}
