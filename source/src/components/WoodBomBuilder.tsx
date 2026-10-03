@@ -937,10 +937,14 @@ function buildCarcassInnerRaw(cfg: {
 
   const baseProfilePack = `HARDWARE PACK BASE CABINET ${W}MM TOP PROFILE`;
   if (!z.tall && !z.kind) {
+    const topProfileCut = W - 2 * T - 10;
+    profiles.push({
+      name: "ALU PROF FOR SINK 3000X20X20 ANODISED 2412 OML",
+      len: topProfileCut, qty: 2, type: "TOP", orientation: "horizontal", pack: baseProfilePack,
+    });
     hardware.push({
       name: baseProfilePack, qty: 1, uom: "set", pack: baseProfilePack,
       components: [
-        { component: "ALU PROF FOR SINK 3000X20X20 ANODISED 2412 OML", qty: r3(2 * W / 1000), uom: "Mtr" },
         { component: "END CONNECTOR FOR SINK PROF XX BLACK UTA", qty: 4, uom: "PCS" },
         { component: "PVC INSERT 13XX5 ID 5 UTA", qty: 4, uom: "PCS" },
         { component: "SCREW FOR CHIP BOARD 16XX4 SS 304 CINE", qty: 8, uom: "PCS" },
@@ -1567,7 +1571,7 @@ function computeCosting(
     });
     m.profiles.forEach((profile) => {
       const masterProfile = profileMasterItem(profile, m.neon);
-      if (!masterProfile) {
+      if (!masterProfile && profile.type !== "TOP") {
         unpriced.add(`${profile.name} (${profile.type})`);
         return;
       }
@@ -1575,15 +1579,15 @@ function computeCosting(
       const billedM = netM * (1 + wst.profile / 100);
       addDetail({
         category: "Profile",
-        itemCode: masterProfile.id,
-        item: masterProfile.materialDescription,
-        specification: `${masterProfile.type} · ${profile.orientation ?? (profile.type === "V" ? "vertical" : "horizontal")} · ${profile.len}mm × ${profile.qty} per cabinet`,
+        itemCode: masterProfile?.id ?? "FALLBACK-1",
+        item: masterProfile?.materialDescription ?? profile.name,
+        specification: `${masterProfile?.type ?? "Base top profile"} · ${profile.orientation ?? (profile.type === "V" ? "vertical" : "horizontal")} · ${profile.len}mm × ${profile.qty} per cabinet`,
         netQty: netM,
         wastePct: wst.profile,
         billableQty: billedM,
         uom: "RMT",
-        rate: masterProfile.currentRate,
-        amount: billedM * masterProfile.currentRate,
+        rate: masterProfile?.currentRate ?? 1,
+        amount: billedM * (masterProfile?.currentRate ?? 1),
       });
     });
     m.hardware.flatMap(expandHardwarePack).forEach((h) => {
