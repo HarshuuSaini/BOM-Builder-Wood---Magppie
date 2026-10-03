@@ -58,6 +58,7 @@ interface Hardware {
   uom?: string;
   pack?: string;
   hingeItemName?: string;
+  components?: HardwarePackDefinition[];
 }
 
 interface Consumable {
@@ -218,7 +219,7 @@ const HARDWARE_PACK_DEFINITIONS = hardwarePacksData.definitions as Record<string
 function expandHardwarePack(h: Hardware): HardwareComponent[] {
   const pack = h.name;
   const wideCount = pack.match(/^HARDWARE PACK HINGE 165 DEGREE Set\/(\d+)$/i)?.[1];
-  const definition = HARDWARE_PACK_DEFINITIONS[pack]
+  const definition = h.components ?? HARDWARE_PACK_DEFINITIONS[pack]
     ?? (wideCount ? HARDWARE_PACK_DEFINITIONS[`HARDWARE PACK HINGE 0 CRANK Set/${wideCount}`] : undefined);
   if (definition) return definition.map((component) => ({
     name: h.hingeItemName && /^HINGE\b/i.test(component.component) ? h.hingeItemName : component.component,
@@ -890,7 +891,10 @@ function buildCarcassInnerRaw(cfg: {
   /* --- back: grooved, +9 allowance, never banded --- */
   const bw = W - 2 * T + GROOVE;
   const bh = H - 2 * T + GROOVE;
-  if (fam.special === "MD") {
+  if (fk === "SK") {
+    // The sink module has no full carcass back; its 100mm structural back is
+    // emitted below in the framed-unit construction.
+  } else if (fam.special === "MD") {
     stubs.push("MD back panel height — parked at the construction stage. With no bottom panel the back is grooved on three edges only, so the +9 allowance does not apply symmetrically.");
   } else if (fam.backStrips) {
     add(`Panels- CR Back Strip ${B.backCoreT}mm ${bw}x75`, bw, 75, 2, B.backCoreT, B.back, false);
@@ -906,7 +910,7 @@ function buildCarcassInnerRaw(cfg: {
       add(`Panels- CR Top Rail Front ${T}mm ${W - 2 * T}x100`, W - 2 * T, 100, 1, T, carc, true);
     }
     if (fk !== "HO") {
-      add(`Panels- CR Top Rail Back ${T}mm ${W - 2 * T}x100`, W - 2 * T, 100, 1, T, carc, true);
+      add(`Panels- CR Back ${T}mm ${W - 2 * T}x100`, W - 2 * T, 100, 1, T, carc, true);
     }
   }
 
@@ -932,8 +936,16 @@ function buildCarcassInnerRaw(cfg: {
   if (jointPack) hardware.push({ name: jointPack, qty: 1, uom: "set", pack: PK });
 
   const baseProfilePack = `HARDWARE PACK BASE CABINET ${W}MM TOP PROFILE`;
-  if (!z.tall && !z.kind && HARDWARE_PACK_DEFINITIONS[baseProfilePack]) {
-    hardware.push({ name: baseProfilePack, qty: 1, uom: "set", pack: baseProfilePack });
+  if (!z.tall && !z.kind) {
+    hardware.push({
+      name: baseProfilePack, qty: 1, uom: "set", pack: baseProfilePack,
+      components: [
+        { component: "ALU PROF FOR SINK 3000X20X20 ANODISED 2412 OML", qty: r3(2 * W / 1000), uom: "Mtr" },
+        { component: "END CONNECTOR FOR SINK PROF XX BLACK UTA", qty: 4, uom: "PCS" },
+        { component: "PVC INSERT 13XX5 ID 5 UTA", qty: 4, uom: "PCS" },
+        { component: "SCREW FOR CHIP BOARD 16XX4 SS 304 CINE", qty: 8, uom: "PCS" },
+      ],
+    });
     pkRows.push({ pack: baseProfilePack, type: "hardware", qty: 1 });
   }
   const dishRackProfilePack = `HARDWARE PACK WALL DISHRACK CABINET ${W}MM BOTTOM PROFILE`;
@@ -1447,7 +1459,7 @@ function carcassMasterItem(board: string, panel: Panel): CostingMasterItem | und
     return COSTING_ITEMS.find((item) => item.group === "Drawer Material" && /BWP Ply/i.test(item.subgroup));
   }
   const selected = carcassBoardOf(board);
-  return /Back/i.test(panel.name) ? selected.backItem : selected.item;
+  return panel.mat === selected.back && panel.t === selected.backCoreT ? selected.backItem : selected.item;
 }
 
 function shutterMasterItem(shutterType: string): CostingMasterItem | undefined {
@@ -1540,7 +1552,7 @@ function computeCosting(
         const masterItem = carcassMasterItem(m.board, p);
         if (!masterItem) { unpriced.add(`${p.mat ?? "Unknown"} ${p.t ?? ""}mm board`); return; }
         const billed = a * (1 + wst.carcass / 100);
-        const category = /glass/i.test(p.mat ?? "") ? "Glass shelf" : p.pack === "Drawer Pack" ? "Drawer board" : /Back/i.test(p.name) ? "Carcass back board" : "Carcass board";
+        const category = /glass/i.test(p.mat ?? "") ? "Glass shelf" : p.pack === "Drawer Pack" ? "Drawer board" : masterItem.group === "Carcass Back Material" ? "Carcass back board" : "Carcass board";
         addDetail({ category, itemCode: masterItem.id, item: masterItem.materialDescription, specification: `${masterItem.subgroup} · ${masterItem.thicknessMm ?? "—"}mm`, netQty: a, wastePct: wst.carcass, billableQty: billed, uom: "sqft", rate: masterItem.currentRate, amount: billed * masterItem.currentRate });
       }
     });
