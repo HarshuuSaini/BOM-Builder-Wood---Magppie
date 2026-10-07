@@ -1394,6 +1394,10 @@ interface MasterAccessoryRow {
   elevation: string;
   /** Blank uses the Kitchen master rate; a non-negative value overrides this row only. */
   manualRate?: string;
+  /** Project-specific item when it is not in the Kitchen master or reference catalog. */
+  customName?: string;
+  customUnit?: "PCS" | "SET" | "MTR";
+  customBrand?: string;
 }
 const validAccessoryManualRate = (value: unknown) => value === undefined || value === "" ||
   (typeof value === "string" && value.trim() !== "" && Number.isFinite(Number(value)) && Number(value) >= 0);
@@ -1414,6 +1418,17 @@ const MASTER_ACCESSORY_ITEMS = [
       currentRate: 0, priced: false,
     })),
 ];
+function selectedMasterAccessory(row: MasterAccessoryRow) {
+  const catalogItem = MASTER_ACCESSORY_ITEMS.find((item) => item.id === row.itemId);
+  if (catalogItem) return catalogItem;
+  if (row.itemId !== "CUSTOM" || !row.customName?.trim()) return undefined;
+  const unit = row.customUnit ?? "PCS";
+  return {
+    id: `CUSTOM-ACCESSORY-${row.id}`, subgroup: row.customName.trim(),
+    materialDescription: row.customName.trim(), type: unit, brand: row.customBrand?.trim() ?? "",
+    rateBasis: unit, currentRate: 0, priced: false,
+  };
+}
 const ACC_LABEL: Record<AccessoryKind, string> = {
   skirting: "PVC Skirting Profile",
   elenor: "LED Profile Light",
@@ -1491,7 +1506,7 @@ function buildAccessoryRows(accs: AccessoryRow[], project: ProjectLine[], so: st
 
 function buildMasterAccessoryRows(accs: MasterAccessoryRow[], so: string): AccessoryExportRow[] {
   return accs.flatMap((row) => {
-    const item = MASTER_ACCESSORY_ITEMS.find((candidate) => candidate.id === row.itemId);
+    const item = selectedMasterAccessory(row);
     if (!item) return [];
     return [{
       SO: so, "Carcass Items": "", Accessory: item.subgroup, Selected: "yes",
@@ -1632,7 +1647,18 @@ function restoreProjectSetup(rows: Record<string, unknown>[]): ProjectRestore {
     if (typeof record.data.id !== "number" || !Number.isFinite(record.data.id) || typeof record.data.qty !== "number" || !Number.isFinite(record.data.qty) || record.data.qty < 1) {
       throw new Error(`A ${kind} row has an invalid id or quantity.`);
     }
-    if (kind === "accessory" && !validAccessoryManualRate(record.data.manualRate)) throw new Error("An accessory has an invalid manual price.");
+    if (kind === "accessory") {
+      if (!validAccessoryManualRate(record.data.manualRate)) throw new Error("An accessory has an invalid manual price.");
+      if (record.data.itemId === "CUSTOM") {
+        if (typeof record.data.customName !== "string" || !record.data.customName.trim() ||
+            !["PCS", "SET", "MTR"].includes(String(record.data.customUnit ?? "PCS")) ||
+            (record.data.customBrand !== undefined && typeof record.data.customBrand !== "string")) {
+          throw new Error("A custom accessory has an invalid name, unit, or brand.");
+        }
+      } else if (!MASTER_ACCESSORY_ITEMS.some((item) => item.id === String((record.data as Record<string, unknown>).itemId))) {
+        throw new Error("A saved accessory is not available in the current catalog.");
+      }
+    }
     return record.data as T;
   });
   const rawSelections = records.filter((record) => record.kind === "raw-selection").map((record) => {
@@ -2070,7 +2096,7 @@ function computeCosting(
   });
 
   masterAccessories.forEach((row) => {
-    const item = MASTER_ACCESSORY_ITEMS.find((candidate) => candidate.id === row.itemId);
+    const item = selectedMasterAccessory(row);
     if (!item) return;
     const qty = Math.max(1, row.qty || 1);
     const manualRate = row.manualRate?.trim() ?? "";
@@ -2162,7 +2188,6 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
   const [countertops, setCountertops] = useState<CountertopRow[]>([]);
   const [accessories, setAccessories] = useState<AccessoryRow[]>([]);
   const [masterAccessories, setMasterAccessories] = useState<MasterAccessoryRow[]>([]);
-  const [accessorySearch, setAccessorySearch] = useState<Record<number, string>>({});
   const [waste, setWaste] = useState({ ...WASTE });
   const [projectPricingInputs, setProjectPricingInputs] = useState<ProjectPricingInputs>(DEFAULT_PROJECT_PRICING);
 
@@ -2745,18 +2770,23 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
               {/* ---- Accessories from the priced KITCHEN master and reference catalog ---- */}
               <SecHead title="Accessories" onAdd={addMasterAcc} />
               {masterAccessories.length === 0 ? <div className="empty">No accessories selected. Priced Kitchen-master items and the wider reference accessory catalog are available.</div> :
-                <Tbl head={["Search", "Accessory item", "Brand", "Manual rate (Rs/unit)", "Qty", "Elevation", ""]} num={[3, 4]}
+                <Tbl head={["Accessory item", "Brand", "Rate (Rs/unit)", "Qty", "Elevation", ""]} num={[2, 3]}
                   rows={masterAccessories.map((row) => {
-                    const selected = MASTER_ACCESSORY_ITEMS.find((item) => item.id === row.itemId);
-                    const query = (accessorySearch[row.id] ?? "").trim().toLowerCase();
-                    const matching = query ? MASTER_ACCESSORY_ITEMS.filter((item) => `${item.subgroup} ${item.materialDescription}`.toLowerCase().includes(query)) : MASTER_ACCESSORY_ITEMS;
-                    const options = selected && !matching.some((item) => item.id === selected.id) ? [selected, ...matching] : matching;
+                    const selected = selectedMasterAccessory(row);
                     return [
-                      <input key="search" type="search" aria-label="Search accessory catalog" placeholder="Search accessories" value={accessorySearch[row.id] ?? ""} onChange={(e) => setAccessorySearch((previous) => ({ ...previous, [row.id]: e.target.value }))} style={{ minWidth: 130 }} />,
-                      <select key="i" value={row.itemId} onChange={(e) => updMasterAcc(row.id, { itemId: e.target.value, manualRate: "" })}>
-                        {options.map((item) => <option key={item.id} value={item.id}>{item.subgroup} — {item.materialDescription}{item.priced ? "" : " (rate not in Kitchen master)"}</option>)}
-                      </select>,
-                      selected?.brand || "—",
+                      <div key="i" style={{ minWidth: 360 }}>
+                        <AccessoryPicker rowId={row.id} selectedLabel={selected ? `${selected.subgroup} — ${selected.materialDescription}` : ""}
+                          selectedId={row.itemId}
+                          onSelect={(itemId) => updMasterAcc(row.id, { itemId, customName: undefined, customUnit: undefined, customBrand: undefined, manualRate: "" })}
+                          onCustom={(customName) => updMasterAcc(row.id, { itemId: "CUSTOM", customName, customUnit: "PCS", customBrand: "", manualRate: "" })} />
+                        {row.itemId === "CUSTOM" && <div className="accessory-custom-fields">
+                          <input aria-label="Custom accessory name" placeholder="Accessory name" value={row.customName ?? ""} onChange={(e) => updMasterAcc(row.id, { customName: e.target.value })} />
+                          <select aria-label="Custom accessory unit" value={row.customUnit ?? "PCS"} onChange={(e) => updMasterAcc(row.id, { customUnit: e.target.value as "PCS" | "SET" | "MTR" })}>
+                            <option value="PCS">PCS</option><option value="SET">SET</option><option value="MTR">MTR</option>
+                          </select>
+                        </div>}
+                      </div>,
+                      row.itemId === "CUSTOM" ? <input key="brand" aria-label="Custom accessory brand" placeholder="Brand (optional)" value={row.customBrand ?? ""} onChange={(e) => updMasterAcc(row.id, { customBrand: e.target.value })} style={{ minWidth: 110 }} /> : selected?.brand || "—",
                       <div key="rate" style={{ display: "grid", gap: 2, minWidth: 130 }}>
                         <input type="number" min={0} step="0.01" aria-label={`Manual rate for ${selected?.subgroup ?? "accessory"}`} placeholder={selected?.priced ? selected.currentRate.toFixed(2) : "Enter price"} value={row.manualRate ?? ""} onChange={(e) => updMasterAcc(row.id, { manualRate: e.target.value })} style={{ width: 118 }} />
                         <small style={{ color: "var(--mut)" }}>{row.manualRate !== undefined && row.manualRate !== "" ? `Manual · ${selected?.rateBasis ?? "unit"}` : selected?.priced ? `Master ₹${selected.currentRate.toFixed(2)} / ${selected.rateBasis}` : "No master rate"}</small>
@@ -2977,6 +3007,49 @@ export default WoodBomBuilder;
 /*  Small presentational helpers                                       */
 /* ------------------------------------------------------------------ */
 
+function AccessoryPicker({ rowId, selectedLabel, selectedId, onSelect, onCustom }: {
+  rowId: number;
+  selectedLabel: string;
+  selectedId: string;
+  onSelect: (id: string) => void;
+  onCustom: (name: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const search = query.trim().toLowerCase();
+  const matches = search ? MASTER_ACCESSORY_ITEMS.filter((item) =>
+    `${item.subgroup} ${item.materialDescription} ${item.brand} ${item.id}`.toLowerCase().includes(search)) : MASTER_ACCESSORY_ITEMS;
+  const listId = `accessory-options-${rowId}`;
+  return <div className="accessory-picker" onBlur={(event) => {
+    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOpen(false);
+  }}>
+    <input type="search" role="combobox" aria-label="Search or add accessory" aria-expanded={open} aria-controls={listId}
+      aria-autocomplete="list" placeholder="Search or add accessory"
+      value={open ? query : selectedLabel}
+      onFocus={() => { setQuery(""); setOpen(true); }}
+      onChange={(event) => { setQuery(event.target.value); setOpen(true); }}
+      onKeyDown={(event) => {
+        if (event.key === "Escape") { setOpen(false); event.currentTarget.blur(); }
+        if (event.key === "Enter" && open) {
+          event.preventDefault();
+          if (matches.length) onSelect(matches[0].id);
+          else if (query.trim()) onCustom(query.trim());
+          setOpen(false);
+        }
+      }} />
+    {open && <div id={listId} role="listbox" className="accessory-options">
+      {matches.map((item) => <button key={item.id} type="button" role="option" aria-selected={item.id === selectedId}
+        onClick={() => { onSelect(item.id); setOpen(false); }}>
+        <strong>{item.subgroup}</strong><span>{item.materialDescription}</span>
+        <small>{item.priced ? `₹${item.currentRate.toFixed(2)} / ${item.rateBasis}` : "Enter rate manually"}</small>
+      </button>)}
+      {query.trim() && <button type="button" className="accessory-create" onClick={() => { onCustom(query.trim()); setOpen(false); }}>
+        + Add new accessory “{query.trim()}”
+      </button>}
+    </div>}
+  </div>;
+}
+
 const Fld = ({ label, children }: { label: string; children: ReactNode }) => (
   <div className="fld"><label>{label}</label>{children}</div>
 );
@@ -3033,6 +3106,16 @@ const CSS = `
 .fld label{display:block;font-size:11px;font-weight:600;color:var(--mut);margin-bottom:5px}
 .wbb select,.wbb input{width:100%;padding:7px 9px;border:1px solid var(--line);border-radius:3px;background:#fff;
  font:inherit;font-size:12.5px;color:var(--ink)}
+.accessory-picker{min-width:340px;max-width:560px}
+.accessory-picker input{width:100%;text-overflow:ellipsis}
+.accessory-options{max-height:240px;overflow-y:auto;margin-top:4px;border:1px solid var(--line);border-radius:4px;background:#fff}
+.accessory-options button{display:block;width:100%;padding:7px 9px;border:0;border-bottom:1px solid var(--line);background:#fff;text-align:left;color:var(--ink);font:inherit;cursor:pointer;white-space:normal;overflow-wrap:anywhere}
+.accessory-options button:hover,.accessory-options button:focus-visible,.accessory-options button[aria-selected="true"]{background:#E9F5F1}
+.accessory-options button strong{display:block;font-weight:650}
+.accessory-options button span,.accessory-options button small{display:block;color:var(--mut)}
+.accessory-options .accessory-create{color:var(--acc);font-weight:650}
+.accessory-custom-fields{display:flex;gap:6px;margin-top:5px}
+.accessory-custom-fields select{width:82px;flex:0 0 82px}
 .wbb select:focus,.wbb input:focus{outline:2px solid var(--acc);outline-offset:-1px}
 .hint{margin:5px 0 0;font-size:11px;color:var(--mut)}
 .seg{display:flex;border:1px solid var(--line);border-radius:3px;overflow:hidden}

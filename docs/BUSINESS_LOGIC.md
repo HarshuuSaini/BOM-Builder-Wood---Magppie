@@ -134,6 +134,11 @@ unpriced catalog item needs a manual rate before it contributes to costing.
 The override applies only to that project row, appears in its costing detail
 and costing workbook, and is restored from the project export. Selecting a
 different accessory clears the old row's override.
+The accessory picker is searchable and keeps its results in a scrollable list
+within the row. An accessory absent from both catalogs can be added to that
+project with a custom name, unit (PCS/SET/MTR), optional brand, and manual
+rate. Custom rows are saved in the project export and included in accessory
+exports and costing; they do not change the shared Kitchen master JSON.
 
 # Project pricing factors
 
