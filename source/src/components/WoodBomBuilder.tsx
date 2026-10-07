@@ -20,10 +20,12 @@ import { searchBoardItems, searchLaminateItems, searchHardwareItems } from "@/li
 import boardFinishesData from "@/data/board_finishes.json";
 import laminateFinishesData from "@/data/laminate_finishes.json";
 import edgebandFinishesData from "@/data/edgeband_finishes.json";
+import accessoryCatalogData from "@/data/accessory_catalog.json";
 import hardwarePacksData from "@/data/hardware_packs.json";
 import { getPartBaseName, getPanelBaseName, normalizePartOrPanelName } from "@/lib/naming";
 import { exportBomWorkbook, exportBomCsv, exportCostingWorkbook, type AccessoryExportRow, type ProjectSetupRow } from "@/lib/export";
 import { COSTING_ITEMS, DEFAULT_RATES, findCostingItem, type CostingMasterItem, type CostingRates } from "@/lib/costing";
+import { encodeProjectPrintData, readPrintedProjectPdf } from "@/lib/print-project";
 import type { BomReportRow } from "@/lib/types";
 
 /* ------------------------------------------------------------------ */
@@ -90,6 +92,7 @@ interface CountertopRow {
   depth: string;
   thickness: string;
   material: string;
+  ratePerSqft?: string;
   qty: number;
 }
 
@@ -1356,7 +1359,23 @@ interface MasterAccessoryRow {
   qty: number;
   elevation: string;
 }
-const MASTER_ACCESSORY_ITEMS = COSTING_ITEMS.filter((item) => item.group === "Accessory" && item.id.startsWith("KITCHEN-"));
+const KITCHEN_ACCESSORY_ITEMS = COSTING_ITEMS.filter((item) => item.group === "Accessory" && item.id.startsWith("KITCHEN-"));
+const accessoryNameKey = (name: string) => name.toUpperCase().replace(/[^A-Z0-9]/g, "");
+const pricedAccessoryNames = new Set(KITCHEN_ACCESSORY_ITEMS.map((item) => accessoryNameKey(item.materialDescription)));
+const MASTER_ACCESSORY_ITEMS = [
+  ...KITCHEN_ACCESSORY_ITEMS.map((item) => ({
+    id: item.id, subgroup: item.subgroup, materialDescription: item.materialDescription,
+    type: item.type, brand: item.brand, rateBasis: item.rateBasis,
+    currentRate: item.currentRate, priced: true,
+  })),
+  ...(accessoryCatalogData as Array<{ id: string; name: string; subgroup: string; unit: string }>)
+    .filter((item) => !pricedAccessoryNames.has(accessoryNameKey(item.name)))
+    .map((item) => ({
+      id: item.id, subgroup: item.subgroup, materialDescription: item.name,
+      type: item.unit, brand: "", rateBasis: item.unit.toUpperCase() === "SET" ? "SET" : item.unit.toUpperCase() === "MTR" ? "MTR" : "PCS",
+      currentRate: 0, priced: false,
+    })),
+];
 const ACC_LABEL: Record<AccessoryKind, string> = {
   skirting: "PVC Skirting Profile",
   elenor: "Elenor with Light",
@@ -1427,7 +1446,7 @@ function buildMasterAccessoryRows(accs: MasterAccessoryRow[], so: string): Acces
     return [{
       SO: so, "Carcass Items": "", Accessory: item.subgroup, Selected: "yes",
       "Item Name": item.materialDescription, Size: item.type, Elevation: row.elevation,
-      Total: row.qty, "Actual Qty": row.qty, "Zoho Item ID": item.id,
+      Total: row.qty, "Actual Qty": row.qty, "Zoho Item ID": item.priced ? item.id : "",
     }];
   });
 }
@@ -1606,6 +1625,11 @@ function restoreLegacyBom(rows: Record<string, unknown>[]): ProjectRestore {
 
 async function readProjectFile(file: File): Promise<ProjectRestore> {
   if (file.size > 10_000_000) throw new Error("The selected file is too large (maximum 10 MB).");
+  if (file.name.toLowerCase().endsWith(".pdf")) {
+    const data = await readPrintedProjectPdf(file);
+    if (!Array.isArray(data)) throw new Error("This PDF does not contain valid project rows.");
+    return restoreProjectSetup(data as Record<string, unknown>[]);
+  }
   if (file.name.toLowerCase().endsWith(".json")) {
     const data: unknown = JSON.parse(await file.text());
     if (Array.isArray(data)) return restoreLegacyBom(data as Record<string, unknown>[]);
@@ -1691,6 +1715,7 @@ function otherAccessoryMasterItem(name: string): CostingMasterItem | undefined {
 function computeCosting(
   project: ProjectLine[],
   fillers: FillerRow[], visiblePanels: VisiblePanelRow[],
+  countertops: CountertopRow[],
   extrasPanels: Panel[],
   otherAccessories: AccessoryRow[],
   masterAccessories: MasterAccessoryRow[],
@@ -1809,6 +1834,29 @@ function computeCosting(
     lines.push({ label: `${p.name}`, qty: p.qty, unitCost: p.qty ? cost / p.qty : cost, cost, details });
   });
 
+  countertops.forEach((countertop) => {
+    const length = Number(countertop.length);
+    const depth = Number(countertop.depth || 600);
+    const thickness = Number(countertop.thickness || 30);
+    if (!(length > 0 && depth > 0 && thickness > 0)) return;
+    const qty = Math.max(1, countertop.qty || 1);
+    const netQty = sqft(length, depth) * qty;
+    const rate = Number(countertop.ratePerSqft);
+    const material = countertop.material.trim() || "Unspecified material";
+    const label = `Countertop ${material} ${thickness}mm ${length}x${depth}`;
+    if (!countertop.ratePerSqft || !Number.isFinite(rate) || rate < 0) {
+      unpriced.add(`${label} (countertop rate per sqft)`);
+      lines.push({ label, qty, unitCost: 0, cost: 0, details: [] });
+      return;
+    }
+    const amount = netQty * rate;
+    lines.push({ label, qty, unitCost: amount / qty, cost: amount, details: [{
+      category: "Countertop", itemCode: `CT-${length}x${depth}x${thickness}`,
+      item: material, specification: `${length}×${depth}×${thickness}mm · bought-in`,
+      netQty, wastePct: 0, billableQty: netQty, uom: "sqft", rate, amount,
+    }] });
+  });
+
   otherAccessories.forEach((accessory) => {
     const details: CostDetail[] = [];
     const addAccessoryDetail = (name: string, specification: string, netQty: number, billableQty: number, uom: CostDetail["uom"], wastePct = 0) => {
@@ -1853,7 +1901,12 @@ function computeCosting(
     const item = MASTER_ACCESSORY_ITEMS.find((candidate) => candidate.id === row.itemId);
     if (!item) return;
     const qty = Math.max(1, row.qty || 1);
-    const uom: CostDetail["uom"] = item.rateBasis === "SET" ? "set" : "nos";
+    if (!item.priced || !Number.isFinite(item.currentRate) || item.currentRate <= 0) {
+      unpriced.add(`${item.materialDescription} (reference accessory)`);
+      lines.push({ label: `${row.elevation ? `${row.elevation} · ` : ""}${item.materialDescription}`, qty, unitCost: 0, cost: 0, details: [] });
+      return;
+    }
+    const uom: CostDetail["uom"] = item.rateBasis === "SET" ? "set" : item.rateBasis === "MTR" ? "RMT" : "nos";
     const amount = qty * item.currentRate;
     lines.push({
       label: `${row.elevation ? `${row.elevation} · ` : ""}${item.subgroup}`,
@@ -1891,6 +1944,7 @@ function toReportRows(rows: FullBomRow[]): BomReportRow[] {
 
 export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMode?: boolean; planningMode?: boolean } = {}) {
   const railRef = useRef<HTMLElement>(null);
+  const pdfImportRef = useRef<HTMLInputElement>(null);
   const [zk, setZk] = useState("BC");
   const [fk, setFk] = useState("SH");
   const [vid, setVid] = useState("single");
@@ -1929,6 +1983,7 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
   const [countertops, setCountertops] = useState<CountertopRow[]>([]);
   const [accessories, setAccessories] = useState<AccessoryRow[]>([]);
   const [masterAccessories, setMasterAccessories] = useState<MasterAccessoryRow[]>([]);
+  const [accessorySearch, setAccessorySearch] = useState<Record<number, string>>({});
   const [waste, setWaste] = useState({ ...WASTE });
   const [projectPricingInputs, setProjectPricingInputs] = useState<ProjectPricingInputs>(DEFAULT_PROJECT_PRICING);
 
@@ -1939,7 +1994,7 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
   const addVp = () => setVisiblePanels((c) => [...c, { id: nextIdOf(c), zone: "base", customShade: "", qty: 1, customHeight: "", customWidth: "", elevation: "", shutterType: "" }]);
   const updVp = (id: number, p: Partial<VisiblePanelRow>) => setVisiblePanels((c) => c.map((r) => r.id === id ? { ...r, ...p } : r));
   const rmVp = (id: number) => setVisiblePanels((c) => c.filter((r) => r.id !== id));
-  const addCt = () => setCountertops((c) => [...c, { id: nextIdOf(c), length: "", depth: "600", thickness: "30", material: "", qty: 1 }]);
+  const addCt = () => setCountertops((c) => [...c, { id: nextIdOf(c), length: "", depth: "600", thickness: "30", material: "", ratePerSqft: "", qty: 1 }]);
   const updCt = (id: number, p: Partial<CountertopRow>) => setCountertops((c) => c.map((r) => r.id === id ? { ...r, ...p } : r));
   const rmCt = (id: number) => setCountertops((c) => c.filter((r) => r.id !== id));
   const addAcc = () => setAccessories((c) => [...c, { id: nextIdOf(c), kind: "skirting", size: "", qty: 1, elevation: "", straight: 0, lconn: 0, driver: "" }]);
@@ -2065,9 +2120,14 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
     const item = state.items.find((candidate) => candidate.item_id === state.sel);
     return [{ key, id: state.sel, name: item?.name ?? "", sku: item?.sku ?? "", stock_on_hand: item?.stock_on_hand }];
   }), [rawMap]);
+  const printRestoreLines = useMemo(() => encodeProjectPrintData(projectSetupRows({
+    project, fillers, visiblePanels, countertops, accessories, masterAccessories,
+    waste, pricing: projectPricingInputs, rawSelections,
+    current: W > 0 && H > 0 && D > 0 ? { config: cabinetConfig(m), elevation, qty } : undefined,
+  })), [project, fillers, visiblePanels, countertops, accessories, masterAccessories, waste, projectPricingInputs, rawSelections, W, H, D, m, elevation, qty]);
   const costing = useMemo(
-    () => computeCosting(project, fillers, visiblePanels, extras.panels, accessories, masterAccessories, shType, rates, waste),
-    [project, fillers, visiblePanels, extras, accessories, masterAccessories, shType, rates, waste],
+    () => computeCosting(project, fillers, visiblePanels, countertops, extras.panels, accessories, masterAccessories, shType, rates, waste),
+    [project, fillers, visiblePanels, countertops, extras, accessories, masterAccessories, shType, rates, waste],
   );
   const projectPricing = useMemo(() => {
     const cabinetAreas = project.map((line) => ({
@@ -2165,11 +2225,25 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
             {planningMode ? " · planning mode" : ""}
           </p>
         </div>
+        <div className="hd-actions">
+          <input ref={pdfImportRef} type="file" accept=".pdf,application/pdf" aria-label="Import printed project PDF" style={{ display: "none" }} onChange={(event) => {
+            const file = event.target.files?.[0];
+            if (file) void importFile(file);
+            event.target.value = "";
+          }} />
+          <button type="button" className="add" onClick={() => pdfImportRef.current?.click()}>Import printed PDF</button>
+          <button type="button" className="add" disabled={project.length === 0} onClick={() => {
+            setTab("totals");
+            requestAnimationFrame(() => requestAnimationFrame(() => window.print()));
+          }}>Print project PDF</button>
+        </div>
         <div className="hd-n">
           <span>cabinets<b>{project.reduce((a, l) => a + l.qty, 0)}</b></span>
           <span>sheets<b>{boardTotals.reduce((a, b) => a + (b.sheets ?? 0), 0).toFixed(1)}</b></span>
         </div>
       </header>
+      {importError && <p className="header-import-error" role="alert">{importError}</p>}
+      {importMessage && <p className="header-import-success" role="status">{importMessage}</p>}
 
       <div className="body">
         {/* ---------------- Configure Unit ---------------- */}
@@ -2412,12 +2486,13 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
               {/* ---- Countertop ---- */}
               <SecHead title="Countertop" onAdd={addCt} />
               {countertops.length === 0 ? <div className="empty">No countertop. One bought-in line: L × D × T × material × qty.</div> :
-                <Tbl head={["Length (mm)", "Depth (mm)", "Thk (mm)", "Material", "Qty", ""]} num={[4]}
+                <Tbl head={["Length (mm)", "Depth (mm)", "Thk (mm)", "Material", "Rate (Rs/sqft)", "Qty", ""]} num={[4, 5]}
                   rows={countertops.map((c) => [
                     <input key="l" type="number" value={c.length} onChange={(e) => updCt(c.id, { length: e.target.value })} style={{ width: 90 }} />,
                     <input key="d" type="number" placeholder="600" value={c.depth} onChange={(e) => updCt(c.id, { depth: e.target.value })} style={{ width: 80 }} />,
                     <input key="t" type="number" placeholder="30" value={c.thickness} onChange={(e) => updCt(c.id, { thickness: e.target.value })} style={{ width: 64 }} />,
                     <input key="m" value={c.material} placeholder="e.g. Quartz White" onChange={(e) => updCt(c.id, { material: e.target.value })} style={{ minWidth: 140 }} />,
+                    <input key="r" type="number" min={0} step="0.01" value={c.ratePerSqft ?? ""} placeholder="Enter rate" onChange={(e) => updCt(c.id, { ratePerSqft: e.target.value })} style={{ width: 90 }} />,
                     <input key="q" type="number" min={1} value={c.qty} onChange={(e) => updCt(c.id, { qty: Math.max(1, +e.target.value) })} style={{ width: 58 }} />,
                     <button key="x" className="x" onClick={() => rmCt(c.id)}>×</button>,
                   ])} />}
@@ -2442,18 +2517,22 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
                   ])} />
               </>}
 
-              {/* ---- Accessories from the KITCHEN costing master ---- */}
+              {/* ---- Accessories from the priced KITCHEN master and reference catalog ---- */}
               <SecHead title="Accessories" onAdd={addMasterAcc} />
-              {masterAccessories.length === 0 ? <div className="empty">No accessories selected. Add any item maintained under the Kitchen master group “Accessory”.</div> :
-                <Tbl head={["Accessory item", "Brand", "Rate (Rs)", "Qty", "Elevation", ""]} num={[2, 3]}
+              {masterAccessories.length === 0 ? <div className="empty">No accessories selected. Priced Kitchen-master items and the wider reference accessory catalog are available.</div> :
+                <Tbl head={["Search", "Accessory item", "Brand", "Rate (Rs)", "Qty", "Elevation", ""]} num={[3, 4]}
                   rows={masterAccessories.map((row) => {
                     const selected = MASTER_ACCESSORY_ITEMS.find((item) => item.id === row.itemId);
+                    const query = (accessorySearch[row.id] ?? "").trim().toLowerCase();
+                    const matching = query ? MASTER_ACCESSORY_ITEMS.filter((item) => `${item.subgroup} ${item.materialDescription}`.toLowerCase().includes(query)) : MASTER_ACCESSORY_ITEMS;
+                    const options = selected && !matching.some((item) => item.id === selected.id) ? [selected, ...matching] : matching;
                     return [
+                      <input key="search" type="search" aria-label="Search accessory catalog" placeholder="Search accessories" value={accessorySearch[row.id] ?? ""} onChange={(e) => setAccessorySearch((previous) => ({ ...previous, [row.id]: e.target.value }))} style={{ minWidth: 130 }} />,
                       <select key="i" value={row.itemId} onChange={(e) => updMasterAcc(row.id, { itemId: e.target.value })}>
-                        {MASTER_ACCESSORY_ITEMS.map((item) => <option key={item.id} value={item.id}>{item.subgroup} — {item.materialDescription}</option>)}
+                        {options.map((item) => <option key={item.id} value={item.id}>{item.subgroup} — {item.materialDescription}{item.priced ? "" : " (rate not in Kitchen master)"}</option>)}
                       </select>,
                       selected?.brand || "—",
-                      selected?.currentRate.toFixed(2) ?? "0.00",
+                      selected?.priced ? selected.currentRate.toFixed(2) : "Unpriced",
                       <input key="q" type="number" min={1} value={row.qty} onChange={(e) => updMasterAcc(row.id, { qty: Math.max(1, +e.target.value) })} style={{ width: 58 }} />,
                       <input key="e" list="elev-list" value={row.elevation} onChange={(e) => updMasterAcc(row.id, { elevation: e.target.value })} style={{ width: 64 }} />,
                       <button key="x" className="x" onClick={() => rmMasterAcc(row.id)}>×</button>,
@@ -2636,13 +2715,13 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
                   onClick={() => dl("wood-bom.csv", buildCSV(project), "text/csv")}>Raw CSV</button>
               </div>
               <div style={{ marginTop: 12 }}>
-                <label htmlFor="project-import" style={{ display: "block", fontWeight: 650, marginBottom: 6 }}>Import project from an exported Excel BOM</label>
-                <input id="project-import" type="file" accept=".xlsx,.xls,.csv,.json" onChange={(event) => {
+                <label htmlFor="project-import" style={{ display: "block", fontWeight: 650, marginBottom: 6 }}>Import project from an exported Excel BOM or printed PDF</label>
+                <input id="project-import" type="file" accept=".xlsx,.xls,.csv,.json,.pdf" onChange={(event) => {
                   const file = event.target.files?.[0];
                   if (file) void importFile(file);
                   event.target.value = "";
                 }} />
-                <Hint>Import replaces the current project. Excel BOM files with a Project Setup sheet restore cabinet choices, accessories, wastage, and pricing.</Hint>
+                <Hint>Import replaces the current project. Excel BOM files with Project Setup and PDFs made with Print project PDF restore cabinet choices, accessories, wastage, and pricing. Older printed PDFs may not contain enough data.</Hint>
                 {importMessage && <p role="status" style={{ color: "var(--acc)" }}>{importMessage}</p>}
                 {importError && <p role="alert" style={{ color: "var(--flag)" }}>{importError}</p>}
               </div>
@@ -2653,6 +2732,11 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
           )}
         </main>
       </div>
+      <section className="print-data" aria-label="Project restore data">
+        <h2>Project restore data</h2>
+        <p>Keep this final page when saving or printing to PDF. It lets the builder restore the exact cabinet and project selections.</p>
+        {printRestoreLines.map((line) => <div className="print-data-line" key={line.slice(0, 11)}>{line}</div>)}
+      </section>
     </div>
   );
 }
@@ -2706,6 +2790,12 @@ const CSS = `
 .hd-n{display:flex;gap:22px}
 .hd-n span{color:var(--mut);font-size:11px}
 .hd-n b{display:block;font-size:20px;color:var(--acc);font-weight:650}
+.hd-actions{display:flex;gap:8px;flex-wrap:wrap;margin-left:auto}
+.hd-actions .add{width:auto;padding:8px 12px}
+.header-import-error,.header-import-success{margin:8px 24px;padding:9px 12px;border-radius:3px;font-size:12px}
+.header-import-error{color:#9C5510;background:#FBF2E6}
+.header-import-success{color:#15645A;background:#E9F5F1}
+.print-data{display:none}
 .body{display:flex;align-items:flex-start;flex-wrap:wrap}
 .rail{width:318px;flex:0 0 318px;padding:18px;background:var(--pnl);border-right:1px solid var(--line)}
 .rail h2{margin:0 0 14px;font-size:12px;font-weight:650;color:var(--mut)}
@@ -2751,6 +2841,21 @@ const CSS = `
 .stub ul{margin:0;padding-left:17px}
 .stub li{margin-bottom:4px;font-size:12px}
 @media(max-width:820px){.rail{width:100%;flex:1 1 100%;border-right:0;border-bottom:1px solid var(--line)}}
+@media print{
+ @page{size:A4;margin:12mm}
+ body,.app-shell,.widget-frame,.wbb{margin:0!important;padding:0!important;max-width:none!important;overflow:visible!important;background:#fff!important;box-shadow:none!important;border:0!important}
+ .hd{padding:0 0 9mm;border-bottom:1px solid #333}
+ .hd-actions,.hd-n,.rail,.tabs,.header-import-error,.header-import-success{display:none!important}
+ .body,.out{display:block!important;width:100%!important;min-width:0!important;overflow:visible!important}
+ .pane{padding:0!important}
+ .tw{overflow:visible!important}
+ .wbb table{font-size:8pt}
+ .wbb th,.wbb td{padding:3px 4px}
+ .print-data{display:block!important;break-before:page;page-break-before:always}
+ .print-data h2{font-size:14pt;margin:0 0 5mm}
+ .print-data p{font-size:9pt;margin:0 0 5mm}
+ .print-data-line{font-family:monospace;font-size:6pt;line-height:1.35;white-space:nowrap}
+}
 `;
 
 /* Laminate/hardware search helpers stay reachable for later wiring. */
