@@ -65,7 +65,8 @@ export default function AdminPage() {
     <header style={{ display: "flex", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}><div>
       <h1 style={{ margin: "0 0 4px", fontSize: 19 }}>Costing Master</h1>
       <p style={{ margin: 0, color: "#66757F", fontSize: 12 }}>Source: {source} · {items.length} items{generatedAt ? ` · generated ${new Date(generatedAt).toLocaleString("en-IN")}` : ""}</p>
-    </div><div style={{ display: "flex", gap: 8 }}>
+    </div><div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+      <a href="/admin/materials">Material master →</a>
       <input aria-label="Search costing master" style={{ ...input, width: 280 }} value={query} placeholder="Search item, type, brand, remark…" onChange={(e) => setQuery(e.target.value)} />
       <select aria-label="Filter by group" style={input} value={group} onChange={(e) => setGroup(e.target.value)}>{groups.map((value) => <option key={value}>{value}</option>)}</select>
     </div></header>

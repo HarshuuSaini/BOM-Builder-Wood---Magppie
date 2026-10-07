@@ -25,6 +25,7 @@ import hardwarePacksData from "@/data/hardware_packs.json";
 import { getPartBaseName, getPanelBaseName, normalizePartOrPanelName } from "@/lib/naming";
 import { exportBomWorkbook, exportBomCsv, exportCostingWorkbook, type AccessoryExportRow, type ProjectSetupRow } from "@/lib/export";
 import { COSTING_ITEMS, DEFAULT_RATES, findCostingItem, type CostingMasterItem, type CostingRates } from "@/lib/costing";
+import { MATERIAL_MASTER, laminatePrice } from "@/lib/material-master";
 import { encodeProjectPrintData, readPrintedProjectPdf } from "@/lib/print-project";
 import type { BomReportRow } from "@/lib/types";
 
@@ -44,6 +45,9 @@ interface Panel {
   mat?: string;
   /** wood addition: 0.8mm band on all four edges? backs are false */
   band?: boolean;
+  /** A structural cabinet side made from the admin-selected visible shutter board. */
+  visibleSide?: boolean;
+  materialId?: string;
 }
 
 interface Profile {
@@ -107,6 +111,8 @@ type CarcassModel = {
   handle: string;
   board: string;
   shType: string;
+  visibleSides: VisibleSides;
+  visibleSideMaterialId: string;
   carcassLamFrontSheetPrice: string;
   carcassLamBackSheetPrice: string;
   shutterLamFrontSheetPrice: string;
@@ -129,7 +135,8 @@ type CarcassModel = {
 
 type PkRow = { pack: string; type: string; qty: number };
 type ProjectLine = { id: number; m: CarcassModel; qty: number; elevation: string };
-type CabinetConfig = Pick<CarcassModel, "zk" | "fk" | "vid" | "hand" | "handle" | "board" | "shType" | "carcassLamFrontSheetPrice" | "carcassLamBackSheetPrice" | "shutterLamFrontSheetPrice" | "shutterLamBackSheetPrice" | "glassType" | "hingeChoice" | "neon" | "W" | "H" | "D" | "drawerModel" | "finish">;
+type VisibleSides = "" | "LH" | "RH" | "BOTH";
+type CabinetConfig = Pick<CarcassModel, "zk" | "fk" | "vid" | "hand" | "handle" | "board" | "shType" | "visibleSides" | "visibleSideMaterialId" | "carcassLamFrontSheetPrice" | "carcassLamBackSheetPrice" | "shutterLamFrontSheetPrice" | "shutterLamBackSheetPrice" | "glassType" | "hingeChoice" | "neon" | "W" | "H" | "D" | "drawerModel" | "finish">;
 
 type FullBomRow = {
   SO: string;
@@ -171,7 +178,7 @@ const SHEET_H = 1220;
 const SHEET_SQFT = (SHEET_W * SHEET_H) / SQDIV; // 32.03
 /** Kitchen Postlam master rates are finished-board rates with the default laminate already included. */
 const LAMINATE_PRICE_SHEET_SQFT = 32;
-const DEFAULT_LAMINATE_SHEET_PRICE = "550";
+const DEFAULT_LAMINATE_SHEET_PRICE = String(MATERIAL_MASTER.includedLaminateSheetPrice);
 const laminateSqftAdjustment = (sheetPrice: string) => (Number(sheetPrice) - Number(DEFAULT_LAMINATE_SHEET_PRICE)) / LAMINATE_PRICE_SHEET_SQFT;
 const isValidLaminatePrice = (value: string) => value.trim() !== "" && Number.isFinite(Number(value)) && Number(value) >= 0;
 const isPostlamItem = (item?: CostingMasterItem) => item?.type.toUpperCase() === "POSTLAM";
@@ -264,10 +271,10 @@ const DEFAULT_SHTYPE = SHUTTER_BOARD_ITEMS.find((item) => item.elevation === "SH
 const DEFAULT_GLASS_TYPE = GLASS_SHUTTER_ITEMS.find((item) => item.id === "KITCHEN-GLASS-5-TINTED")?.id
   ?? GLASS_SHUTTER_ITEMS[0]?.id ?? "";
 const DEFAULT_LAMINATE_PRICES = {
-  carcassLamFrontSheetPrice: DEFAULT_LAMINATE_SHEET_PRICE,
-  carcassLamBackSheetPrice: DEFAULT_LAMINATE_SHEET_PRICE,
-  shutterLamFrontSheetPrice: DEFAULT_LAMINATE_SHEET_PRICE,
-  shutterLamBackSheetPrice: DEFAULT_LAMINATE_SHEET_PRICE,
+  carcassLamFrontSheetPrice: String(laminatePrice(MATERIAL_MASTER.postlam.carcassFrontId)),
+  carcassLamBackSheetPrice: String(laminatePrice(MATERIAL_MASTER.postlam.carcassBackId)),
+  shutterLamFrontSheetPrice: String(laminatePrice(MATERIAL_MASTER.postlam.shutterFrontId)),
+  shutterLamBackSheetPrice: String(laminatePrice(MATERIAL_MASTER.postlam.shutterBackId)),
 };
 
 function glassShutterItemOf(id: string): CostingMasterItem {
@@ -851,7 +858,7 @@ function buildShutters(
 
 function mergeCarcassPanels(panels: Panel[]): Panel[] {
   const out: Panel[] = [];
-  const key = (p: Panel) => [p.pack, p.name.replace(/\b(LH|RH)\b/g, "").trim(), p.w, p.h, p.t, p.mat, p.band].join("|");
+  const key = (p: Panel) => [p.pack, /\bCR Side (LH|RH)\b/.test(p.name) ? p.name : p.name.replace(/\b(LH|RH)\b/g, "").trim(), p.w, p.h, p.t, p.mat, p.band, p.visibleSide, p.materialId].join("|");
   const map = new Map<string, Panel>();
   panels.forEach((p) => {
     const k = key(p);
@@ -893,10 +900,11 @@ function explodePanelForTree(p: Panel, finish: string): TreeItem[] {
 
 function buildCarcassInnerRaw(cfg: {
   zk: string; fk: string; v: any; hand: string; handle: string;
-  board: string; shType: string; glassType: string; hingeChoice: HingeChoice; neon: string;
+  board: string; shType: string; visibleSides: VisibleSides; visibleSideMaterialId: string;
+  glassType: string; hingeChoice: HingeChoice; neon: string;
   W: number; H: number; D: number; drawerModel: string;
 }) {
-  const { zk, fk, v, hand, handle, board, shType, glassType, hingeChoice, neon, W, H, D, drawerModel } = cfg;
+  const { zk, fk, v, hand, handle, board, shType, visibleSides, visibleSideMaterialId, glassType, hingeChoice, neon, W, H, D, drawerModel } = cfg;
   const z = ZONES[zk];
   const isBase = !z.tall && !z.kind;
   const fam = famSetOf(zk)[fk];
@@ -915,7 +923,21 @@ function buildCarcassInnerRaw(cfg: {
     panels.push({ name, w: Math.round(w), h: Math.round(h), qty, drill, pack: PK, t, mat, band });
 
   /* --- sides run full height; base cabinets have no top panel --- */
-  add(`Panels- CR Side ${T}mm ${D}x${H}`, D, H, 2, T, carc, true, hand === "LHS" ? "LH" : "RH");
+  if (!visibleSides) {
+    add(`Panels- CR Side ${T}mm ${D}x${H}`, D, H, 2, T, carc, true, hand === "LHS" ? "LH" : "RH");
+  } else {
+    const visibleBoard = SHUTTER_BOARD_ITEMS.find((item) => item.id === visibleSideMaterialId && item.thicknessMm === T);
+    for (const side of ["LH", "RH"] as const) {
+      const visible = (visibleSides === "BOTH" || visibleSides === side) && !!visibleBoard;
+      panels.push({
+        name: `Panels- CR Side ${side} ${T}mm ${D}x${H}`,
+        w: D, h: H, qty: 1, drill: side, pack: PK, t: T,
+        mat: visible ? visibleBoard.materialDescription : carc, band: true,
+        visibleSide: visible, materialId: visible ? visibleBoard.id : undefined,
+      });
+    }
+    if (!visibleBoard) stubs.push("Visible-side shutter material is not an 18mm Kitchen-master board; selected side replacement withheld.");
+  }
 
   if (!isBase) {
     const topD = handle === "XCJ" ? D - CJ_CUT : D;
@@ -1012,13 +1034,19 @@ function buildCarcassInnerRaw(cfg: {
 
   /* --- consumables --- */
   const merged = mergeCarcassPanels(panels);
-  const bandM = merged.reduce((a, p) => a + (p.band ? perim(p.w, p.h) * p.qty : 0), 0);
+  const carcBandM = merged.reduce((a, p) => a + (p.band && p.pack === PK && !p.visibleSide ? perim(p.w, p.h) * p.qty : 0), 0);
+  const shutterBandM = merged.reduce((a, p) => a + (p.band && (p.pack === "Shutter Pack" || p.visibleSide) ? perim(p.w, p.h) * p.qty : 0), 0);
   const carcSqft = merged.filter((p) => p.pack === PK).reduce((a, p) => a + sqft(p.w, p.h) * p.qty, 0);
   const shSqft = merged.filter((p) => p.pack === "Shutter Pack").reduce((a, p) => a + sqft(p.w, p.h) * p.qty, 0);
+  const visibleSqft = merged.filter((p) => p.visibleSide).reduce((a, p) => a + sqft(p.w, p.h) * p.qty, 0);
 
-  if (bandM > 0) {
-    cons.push({ name: `EDGE BAND ${BAND_T}MM`, qty: r3(bandM), uom: "RMT", pack: PK });
-    cons.push({ name: "EDGEBAND ADHESIVE", qty: r3(bandM), uom: "RMT", pack: PK });
+  if (carcBandM > 0) {
+    cons.push({ name: `EDGE BAND ${BAND_T}MM`, qty: r3(carcBandM), uom: "RMT", pack: PK });
+    cons.push({ name: "EDGEBAND ADHESIVE", qty: r3(carcBandM), uom: "RMT", pack: PK });
+  }
+  if (shutterBandM > 0) {
+    cons.push({ name: `EDGE BAND ${BAND_T}MM`, qty: r3(shutterBandM), uom: "RMT", pack: "Shutter Pack" });
+    cons.push({ name: "EDGEBAND ADHESIVE", qty: r3(shutterBandM), uom: "RMT", pack: "Shutter Pack" });
   }
   if (B.lam) {
     cons.push({ name: "CARCASS LAMINATE 0.8MM", qty: r3(carcSqft * 2), uom: "sqft", pack: PK });
@@ -1049,6 +1077,21 @@ function buildCarcassInnerRaw(cfg: {
       cons.push({ name: "PU TOP COAT", qty: r3(shSqft * PU_RATE.top * sides), uom: "gm", pack: "Shutter Pack" });
     }
   }
+  if (visibleSqft > 0) {
+    const visibleFamily = shFamOf(visibleSideMaterialId);
+    if (visibleFamily === "POSTLAM") {
+      cons.push({ name: "VISIBLE SIDE LAMINATE 0.8MM OUTER", qty: r3(visibleSqft), uom: "sqft", pack: PK });
+      cons.push({ name: "VISIBLE SIDE LAMINATE 0.8MM LINER", qty: r3(visibleSqft), uom: "sqft", pack: PK });
+      cons.push({ name: "LAMINATE ADHESIVE", qty: r3(visibleSqft * LAM_ADH * 2), uom: "gm", pack: PK });
+    } else if (visibleFamily === "MEMBRANE") {
+      stubs.push("Visible-side membrane wrapping allowance has not been specified; foil and adhesive quantities withheld.");
+    } else if (visibleFamily === "PU1" || visibleFamily === "PU2") {
+      const faces = visibleFamily === "PU2" ? 2 : 1;
+      cons.push({ name: "PU EPOXY", qty: r3(visibleSqft * PU_RATE.epoxy * faces), uom: "gm", pack: PK });
+      cons.push({ name: "PU BASE PRIMER", qty: r3(visibleSqft * PU_RATE.primer * faces), uom: "gm", pack: PK });
+      cons.push({ name: "PU TOP COAT", qty: r3(visibleSqft * PU_RATE.top * faces), uom: "gm", pack: PK });
+    }
+  }
 
   return { panels: merged, profiles, hardware, cons, pkRows, stubs };
 }
@@ -1059,7 +1102,8 @@ function buildCarcassInnerRaw(cfg: {
 
 function buildModel(cfg: {
   zk: string; fk: string; vid: string; hand: string; handle: string;
-  board: string; shType: string; glassType: string; hingeChoice: HingeChoice; neon: string;
+  board: string; shType: string; visibleSides: VisibleSides; visibleSideMaterialId: string;
+  glassType: string; hingeChoice: HingeChoice; neon: string;
   carcassLamFrontSheetPrice: string; carcassLamBackSheetPrice: string;
   shutterLamFrontSheetPrice: string; shutterLamBackSheetPrice: string;
   W: number; H: number; D: number; drawerModel: string; finish?: string;
@@ -1240,9 +1284,10 @@ function buildBoardTotals(project: ProjectLine[], wst: WastePct = WASTE, extraPa
   const map = new Map<string, BoardTotal>();
   const fold = (p: Panel, mult: number) => {
     const mat = p.mat ?? "Board";
-    const k = `${mat}|${p.t}|${p.pack}`;
+    const pack = p.visibleSide ? "Shutter Pack" : p.pack;
+    const k = `${mat}|${p.t}|${pack}`;
     if (!map.has(k)) {
-      map.set(k, { mat, t: p.t ?? T, pack: p.pack, sqft: 0, waste: wasteFor(p.pack, "sqft", wst), sheets: 0 });
+      map.set(k, { mat, t: p.t ?? T, pack, sqft: 0, waste: wasteFor(pack, "sqft", wst), sheets: 0 });
     }
     map.get(k)!.sqft += sqft(p.w, p.h) * p.qty * mult;
   };
@@ -1571,8 +1616,8 @@ const PROJECT_FILE_FORMAT = "wood-bom-project";
 const isRecord = (value: unknown): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value);
 
 function cabinetConfig(model: CarcassModel): CabinetConfig {
-  const { zk, fk, vid, hand, handle, board, shType, carcassLamFrontSheetPrice, carcassLamBackSheetPrice, shutterLamFrontSheetPrice, shutterLamBackSheetPrice, glassType, hingeChoice, neon, W, H, D, drawerModel, finish } = model;
-  return { zk, fk, vid, hand, handle, board, shType, carcassLamFrontSheetPrice, carcassLamBackSheetPrice, shutterLamFrontSheetPrice, shutterLamBackSheetPrice, glassType, hingeChoice, neon, W, H, D, drawerModel, finish };
+  const { zk, fk, vid, hand, handle, board, shType, visibleSides, visibleSideMaterialId, carcassLamFrontSheetPrice, carcassLamBackSheetPrice, shutterLamFrontSheetPrice, shutterLamBackSheetPrice, glassType, hingeChoice, neon, W, H, D, drawerModel, finish } = model;
+  return { zk, fk, vid, hand, handle, board, shType, visibleSides, visibleSideMaterialId, carcassLamFrontSheetPrice, carcassLamBackSheetPrice, shutterLamFrontSheetPrice, shutterLamBackSheetPrice, glassType, hingeChoice, neon, W, H, D, drawerModel, finish };
 }
 
 function projectSetupRows(data: Omit<ProjectRestore, "notice">): ProjectSetupRow[] {
@@ -1603,6 +1648,12 @@ function validatedCabinetConfig(value: unknown): CabinetConfig {
   if (!CARCASS_BOARD_ITEMS.some((item) => item.id === config.board) || !SHUTTER_BOARD_ITEMS.some((item) => item.id === config.shType)) {
     throw new Error("A saved cabinet material is not available in the current master.");
   }
+  config.visibleSides = config.visibleSides ?? "";
+  config.visibleSideMaterialId = config.visibleSideMaterialId ?? MATERIAL_MASTER.visibleSideShutterMaterialId;
+  if (!["", "LH", "RH", "BOTH"].includes(config.visibleSides) ||
+      (config.visibleSides && !SHUTTER_BOARD_ITEMS.some((item) => item.id === config.visibleSideMaterialId && item.thicknessMm === T))) {
+    throw new Error("A saved visible-side setting is invalid.");
+  }
   if (!GLASS_SHUTTER_ITEMS.some((item) => item.id === config.glassType) || !HINGE_CHOICES.includes(config.hingeChoice) || !DRAWER_MODELS.includes(config.drawerModel)) {
     throw new Error("A saved glass, hinge, or drawer option is not available.");
   }
@@ -1611,7 +1662,7 @@ function validatedCabinetConfig(value: unknown): CabinetConfig {
   }
   const laminateFields = ["carcassLamFrontSheetPrice", "carcassLamBackSheetPrice", "shutterLamFrontSheetPrice", "shutterLamBackSheetPrice"] as const;
   for (const field of laminateFields) {
-    const value = config[field] ?? DEFAULT_LAMINATE_SHEET_PRICE; // older project files did not save laminate prices
+    const value = config[field] ?? DEFAULT_LAMINATE_PRICES[field]; // older project files did not save laminate prices
     if (typeof value !== "string" || !isValidLaminatePrice(value)) throw new Error(`Invalid ${field} in a saved cabinet.`);
     config[field] = value;
   }
@@ -1693,11 +1744,11 @@ function restoreLegacyBom(rows: Record<string, unknown>[]): ProjectRestore {
       if (family.p2 !== familyCode || (isGlassShutterFam(fk) ? "GL" : "WD") !== matToken) return [];
       return family.variants.map((variant: { id: string }) => ({ fk, vid: variant.id }));
     }).filter(({ fk, vid }) => {
-      const config: CabinetConfig = { zk: zone, fk, vid, hand, handle: handleToken === "CJ" ? "XCJ" : "STD", board: DEFAULT_BOARD_ID, shType: DEFAULT_SHTYPE, ...DEFAULT_LAMINATE_PRICES, glassType: DEFAULT_GLASS_TYPE, hingeChoice: HINGE_CHOICES[0], neon: "NEON50", W, H, D, drawerModel: DRAWER_MODELS[0], finish };
+      const config: CabinetConfig = { zk: zone, fk, vid, hand, handle: handleToken === "CJ" ? "XCJ" : "STD", board: DEFAULT_BOARD_ID, shType: DEFAULT_SHTYPE, visibleSides: "", visibleSideMaterialId: MATERIAL_MASTER.visibleSideShutterMaterialId, ...DEFAULT_LAMINATE_PRICES, glassType: DEFAULT_GLASS_TYPE, hingeChoice: HINGE_CHOICES[0], neon: "NEON50", W, H, D, drawerModel: DRAWER_MODELS[0], finish };
       return buildModel(config).code.split("-").slice(0, 7).join("-") === parts.slice(0, 7).join("-");
     });
     if (candidates.length !== 1) throw new Error(`Cannot uniquely identify cabinet ${code} from this older export. Please use a new Excel BOM with Project Setup.`);
-    const config: CabinetConfig = { zk: zone, ...candidates[0], hand, handle: handleToken === "CJ" ? "XCJ" : "STD", board: DEFAULT_BOARD_ID, shType: DEFAULT_SHTYPE, ...DEFAULT_LAMINATE_PRICES, glassType: DEFAULT_GLASS_TYPE, hingeChoice: HINGE_CHOICES[0], neon: "NEON50", W, H, D, drawerModel: DRAWER_MODELS[0], finish };
+    const config: CabinetConfig = { zk: zone, ...candidates[0], hand, handle: handleToken === "CJ" ? "XCJ" : "STD", board: DEFAULT_BOARD_ID, shType: DEFAULT_SHTYPE, visibleSides: "", visibleSideMaterialId: MATERIAL_MASTER.visibleSideShutterMaterialId, ...DEFAULT_LAMINATE_PRICES, glassType: DEFAULT_GLASS_TYPE, hingeChoice: HINGE_CHOICES[0], neon: "NEON50", W, H, D, drawerModel: DRAWER_MODELS[0], finish };
     const qty = Number(row["SO Qty"] ?? row.quantityNeeded ?? 1);
     if (!Number.isFinite(qty) || qty < 1) throw new Error(`Invalid cabinet quantity: ${code}`);
     return { id: index + 1, m: buildModel(config), qty, elevation: String(row.Elevation ?? "") };
@@ -1930,12 +1981,12 @@ function computeCosting(
     };
     m.panels.forEach((p) => {
       const a = sqft(p.w, p.h) * p.qty * l.qty;
-      if (p.pack === "Shutter Pack") {
-        const panelShutterType = /glass/i.test(p.mat ?? "") ? "GLASS" : m.shType;
+      if (p.pack === "Shutter Pack" || p.visibleSide) {
+        const panelShutterType = p.visibleSide ? (p.materialId ?? m.visibleSideMaterialId) : /glass/i.test(p.mat ?? "") ? "GLASS" : m.shType;
         const masterItem = panelShutterType === "GLASS" ? glassShutterItemOf(m.glassType) : shutterMasterItem(panelShutterType);
         if (!masterItem) { unpriced.add(`${shOf(panelShutterType).label} shutter board`); return; }
         const billed = a * (1 + wst.shutter / 100);
-        addDetail({ category: panelShutterType === "GLASS" ? "Shutter glass" : "Shutter board", itemCode: masterItem.id, item: masterItem.materialDescription, specification: `${masterItem.subgroup} · ${masterItem.thicknessMm ?? "—"}mm`, netQty: a, wastePct: wst.shutter, billableQty: billed, uom: "sqft", rate: masterItem.currentRate, amount: billed * masterItem.currentRate });
+        addDetail({ category: p.visibleSide ? "Visible side board" : panelShutterType === "GLASS" ? "Shutter glass" : "Shutter board", itemCode: masterItem.id, item: masterItem.materialDescription, specification: `${masterItem.subgroup} · ${masterItem.thicknessMm ?? "—"}mm${p.visibleSide ? ` · ${p.drill ?? "side"}` : ""}`, netQty: a, wastePct: wst.shutter, billableQty: billed, uom: "sqft", rate: masterItem.currentRate, amount: billed * masterItem.currentRate });
         if (isPostlamItem(masterItem)) {
           addLaminatePriceAdjustment("Front", m.shutterLamFrontSheetPrice, masterItem, a, wst.shutter);
           addLaminatePriceAdjustment("Back", m.shutterLamBackSheetPrice, masterItem, a, wst.shutter);
@@ -1956,7 +2007,7 @@ function computeCosting(
       { shutter: false, master: findCostingItem({ group: "Edge Band", subgroup: "Carcass", rateBasis: "MTR" }) },
       { shutter: true, master: findCostingItem({ group: "Edge Band", subgroup: "Shutter", rateBasis: "MTR" }) },
     ]).forEach(({ shutter, master }) => {
-      const bandM = m.panels.reduce((sum, p) => sum + (p.band && (p.pack === "Shutter Pack") === shutter ? perim(p.w, p.h) * p.qty * l.qty : 0), 0);
+      const bandM = m.panels.reduce((sum, p) => sum + (p.band && (p.pack === "Shutter Pack" || !!p.visibleSide) === shutter ? perim(p.w, p.h) * p.qty * l.qty : 0), 0);
       if (!bandM || !master) return;
       const billed = bandM * (1 + wst.carcass / 100);
       addDetail({ category: shutter ? "Shutter edge band" : "Carcass edge band", itemCode: master.id, item: master.materialDescription, specification: `${master.subgroup} · ${master.thicknessMm ?? "—"}mm`, netQty: bandM, wastePct: wst.carcass, billableQty: billed, uom: "RMT", rate: master.currentRate, amount: billed * master.currentRate });
@@ -2153,10 +2204,12 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
   const [handle, setHandle] = useState("STD");
   const [board, setBoard] = useState(DEFAULT_BOARD_ID);
   const [shType, setShType] = useState(DEFAULT_SHTYPE);
-  const [carcassLamFrontSheetPrice, setCarcassLamFrontSheetPrice] = useState(DEFAULT_LAMINATE_SHEET_PRICE);
-  const [carcassLamBackSheetPrice, setCarcassLamBackSheetPrice] = useState(DEFAULT_LAMINATE_SHEET_PRICE);
-  const [shutterLamFrontSheetPrice, setShutterLamFrontSheetPrice] = useState(DEFAULT_LAMINATE_SHEET_PRICE);
-  const [shutterLamBackSheetPrice, setShutterLamBackSheetPrice] = useState(DEFAULT_LAMINATE_SHEET_PRICE);
+  const [visibleSides, setVisibleSides] = useState<VisibleSides>("");
+  const [visibleSideMaterialId, setVisibleSideMaterialId] = useState(MATERIAL_MASTER.visibleSideShutterMaterialId);
+  const [carcassLamFrontSheetPrice, setCarcassLamFrontSheetPrice] = useState(DEFAULT_LAMINATE_PRICES.carcassLamFrontSheetPrice);
+  const [carcassLamBackSheetPrice, setCarcassLamBackSheetPrice] = useState(DEFAULT_LAMINATE_PRICES.carcassLamBackSheetPrice);
+  const [shutterLamFrontSheetPrice, setShutterLamFrontSheetPrice] = useState(DEFAULT_LAMINATE_PRICES.shutterLamFrontSheetPrice);
+  const [shutterLamBackSheetPrice, setShutterLamBackSheetPrice] = useState(DEFAULT_LAMINATE_PRICES.shutterLamBackSheetPrice);
   const [glassType, setGlassType] = useState(DEFAULT_GLASS_TYPE);
   const [hingeChoice, setHingeChoice] = useState<HingeChoice>("Hettich Soft Close");
   const [neon] = useState("NEON50");
@@ -2235,8 +2288,8 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
     && (!shutterPostlam || (isValidLaminatePrice(shutterLamFrontSheetPrice) && isValidLaminatePrice(shutterLamBackSheetPrice)));
 
   const m = useMemo(
-    () => buildModel({ zk, fk: fkSafe, vid: v.id, hand, handle, board, shType, carcassLamFrontSheetPrice, carcassLamBackSheetPrice, shutterLamFrontSheetPrice, shutterLamBackSheetPrice, glassType, hingeChoice, neon, W, H, D, drawerModel, finish }),
-    [zk, fkSafe, v.id, hand, handle, board, shType, carcassLamFrontSheetPrice, carcassLamBackSheetPrice, shutterLamFrontSheetPrice, shutterLamBackSheetPrice, glassType, hingeChoice, neon, W, H, D, drawerModel, finish],
+    () => buildModel({ zk, fk: fkSafe, vid: v.id, hand, handle, board, shType, visibleSides, visibleSideMaterialId, carcassLamFrontSheetPrice, carcassLamBackSheetPrice, shutterLamFrontSheetPrice, shutterLamBackSheetPrice, glassType, hingeChoice, neon, W, H, D, drawerModel, finish }),
+    [zk, fkSafe, v.id, hand, handle, board, shType, visibleSides, visibleSideMaterialId, carcassLamFrontSheetPrice, carcassLamBackSheetPrice, shutterLamFrontSheetPrice, shutterLamBackSheetPrice, glassType, hingeChoice, neon, W, H, D, drawerModel, finish],
   );
 
   const onZone = useCallback((z: string) => {
@@ -2269,6 +2322,7 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
   const loadConfig = (config: CabinetConfig) => {
     setZk(config.zk); setFk(config.fk); setVid(config.vid); setHand(config.hand);
     setHandle(config.handle); setBoard(config.board); setShType(config.shType);
+    setVisibleSides(config.visibleSides); setVisibleSideMaterialId(config.visibleSideMaterialId);
     setCarcassLamFrontSheetPrice(config.carcassLamFrontSheetPrice);
     setCarcassLamBackSheetPrice(config.carcassLamBackSheetPrice);
     setShutterLamFrontSheetPrice(config.shutterLamFrontSheetPrice);
@@ -2510,13 +2564,11 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
             </select>
             <Hint>{carcassBoardOf(board).core} · Back: {carcassBoardOf(board).backItem?.subgroup ?? "—"} · {carcassBoardOf(board).backCoreT}mm</Hint>
           </Fld>
-          {carcassPostlam && <Fld label="Carcass laminate prices (₹ per 32 sqft sheet)">
-            <div className="g2">
-              <label>Front side<input type="number" min="0" step="0.01" aria-label="Carcass front laminate price per sheet" value={carcassLamFrontSheetPrice} onChange={(e) => setCarcassLamFrontSheetPrice(e.target.value)} /></label>
-              <label>Back side<input type="number" min="0" step="0.01" aria-label="Carcass back laminate price per sheet" value={carcassLamBackSheetPrice} onChange={(e) => setCarcassLamBackSheetPrice(e.target.value)} /></label>
-            </div>
-            <Hint>Front: {isValidLaminatePrice(carcassLamFrontSheetPrice) ? `₹${(Number(carcassLamFrontSheetPrice) / LAMINATE_PRICE_SHEET_SQFT).toFixed(2)}/sqft` : "enter a price"} · Back: {isValidLaminatePrice(carcassLamBackSheetPrice) ? `₹${(Number(carcassLamBackSheetPrice) / LAMINATE_PRICE_SHEET_SQFT).toFixed(2)}/sqft` : "enter a price"}. ₹550 per side is already included in the finished-board master rate; costing applies only the difference.</Hint>
-          </Fld>}
+          <Fld label="Visible sides">
+            <Seg opts={[["LH", "LH"], ["RH", "RH"], ["BOTH", "Both sides"]]} val={visibleSides} set={(value) => setVisibleSides(value as VisibleSides)} />
+            {visibleSides && <button className="x" type="button" onClick={() => setVisibleSides("")}>Clear visible sides</button>}
+            <Hint>{visibleSides ? `Selected side${visibleSides === "BOTH" ? "s" : ""} use ${SHUTTER_BOARD_ITEMS.find((item) => item.id === visibleSideMaterialId)?.subgroup ?? "the admin-selected shutter material"}.` : "No visible side selected."}</Hint>
+          </Fld>
 
           {!fam.noShutter && (isGlass ? (
             <>
@@ -2539,13 +2591,6 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
               <Hint>{shOf(shType).mat} · cut at {shOf(shType).t}mm · {shOf(shType).band ? `${BAND_T}mm band, all edges` : "no edge band"}</Hint>
             </Fld>
           ))}
-          {shutterPostlam && <Fld label="Shutter laminate prices (₹ per 32 sqft sheet)">
-            <div className="g2">
-              <label>Front side<input type="number" min="0" step="0.01" aria-label="Shutter front laminate price per sheet" value={shutterLamFrontSheetPrice} onChange={(e) => setShutterLamFrontSheetPrice(e.target.value)} /></label>
-              <label>Back side<input type="number" min="0" step="0.01" aria-label="Shutter back laminate price per sheet" value={shutterLamBackSheetPrice} onChange={(e) => setShutterLamBackSheetPrice(e.target.value)} /></label>
-            </div>
-            <Hint>Front: {isValidLaminatePrice(shutterLamFrontSheetPrice) ? `₹${(Number(shutterLamFrontSheetPrice) / LAMINATE_PRICE_SHEET_SQFT).toFixed(2)}/sqft` : "enter a price"} · Back: {isValidLaminatePrice(shutterLamBackSheetPrice) ? `₹${(Number(shutterLamBackSheetPrice) / LAMINATE_PRICE_SHEET_SQFT).toFixed(2)}/sqft` : "enter a price"}. ₹550 per side is already included in the finished-board master rate; costing applies only the difference.</Hint>
-          </Fld>}
 
           {fam.drawers && (
             <Fld label="Drawer model">
@@ -3056,7 +3101,7 @@ const Fld = ({ label, children }: { label: string; children: ReactNode }) => (
 const Hint = ({ children }: { children: ReactNode }) => <p className="hint">{children}</p>;
 const Seg = ({ opts, val, set }: { opts: [string, string][]; val: string; set: (v: string) => void }) => (
   <div className="seg">{opts.map(([k, l]) => (
-    <button key={k} className={val === k ? "on" : ""} onClick={() => set(k)}>{l}</button>
+    <button key={k} type="button" aria-pressed={val === k} className={val === k ? "on" : ""} onClick={() => set(k)}>{l}</button>
   ))}</div>
 );
 const SecHead = ({ title, onAdd, children }: { title: string; onAdd?: () => void; children?: ReactNode }) => (

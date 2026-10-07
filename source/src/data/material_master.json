@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "sheetAreaSqft": 32,
+  "includedLaminateSheetPrice": 550,
+  "laminates": [
+    { "id": "LAM-DEFAULT", "name": "Standard 0.8mm laminate", "pricePerSheet": 550 }
+  ],
+  "postlam": {
+    "carcassFrontId": "LAM-DEFAULT",
+    "carcassBackId": "LAM-DEFAULT",
+    "shutterFrontId": "LAM-DEFAULT",
+    "shutterBackId": "LAM-DEFAULT"
+  },
+  "visibleSideShutterMaterialId": "KITCHEN-014"
+}

@@ -140,6 +140,26 @@ project with a custom name, unit (PCS/SET/MTR), optional brand, and manual
 rate. Custom rows are saved in the project export and included in accessory
 exports and costing; they do not change the shared Kitchen master JSON.
 
+## Admin material master and visible cabinet sides
+
+`source/src/data/material_master.json` is the versioned source for Postlam
+laminate choices (₹ per 32 sqft sheet), their carcass/shutter front/back
+defaults, and the 18mm shutter board used for cabinet visible sides. The
+`/admin/materials` page can edit this JSON. It commits a validated update to
+GitHub using a server-only `GITHUB_CONTENTS_TOKEN`; a Git-connected Vercel
+project then redeploys the new source. The token needs Contents read/write
+access to this repository only. Without it the page is read-only and offers
+a JSON download. The production Vercel project must be connected to the Git
+repository with `source` as its Root Directory for automatic redeployment.
+
+User-facing configuration does not expose laminate price inputs. New cabinets
+inherit the admin defaults; existing exported kitchens retain their recorded
+sheet prices. A cabinet's Visible sides setting is blank by default, or LH,
+RH, or Both. Only the selected structural side panels switch from the carcass
+board to the admin-selected 18mm shutter board. Their exact material is shown
+in the BOM, board roll-up, and costing; shutter wastage and edge-band rates
+apply to those sides. Older project exports import with no visible sides.
+
 # Project pricing factors
 
 The bottom of the project Costing section applies commercial factors after the
