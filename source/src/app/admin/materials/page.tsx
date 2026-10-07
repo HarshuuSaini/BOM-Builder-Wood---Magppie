@@ -77,7 +77,7 @@ export default function MaterialMasterAdminPage() {
 
   return <main style={page}><section style={card}>
     <header style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
-      <div><h1 style={{ margin: 0 }}>Choose Materials · Admin Master</h1><p style={{ color: "#66757F" }}>Stored in source/src/data/material_master.json; changes take effect after redeployment.</p></div>
+      <div><h1 style={{ margin: 0 }}>Choose Materials · Admin Master</h1><p style={{ color: "#66757F" }}>Stored in source/src/data/material_master.json. A manual Vercel deployment is required after each update.</p></div>
       <a href="/admin">Costing master →</a>
     </header>
     {master && <>
@@ -111,7 +111,7 @@ export default function MaterialMasterAdminPage() {
 
       {message && <p role="status" style={{ marginTop: 20, padding: 10, background: "#FBF2E6", color: "#9C5510" }}>{message}</p>}
       <div style={{ display: "flex", gap: 8, marginTop: 20 }}>
-        <button style={buttonStyle} disabled={busy || !writable} onClick={() => void save()}>{busy ? "Saving…" : "Save JSON and redeploy"}</button>
+        <button style={buttonStyle} disabled={busy || !writable} onClick={() => void save()}>{busy ? "Saving…" : "Commit JSON to source"}</button>
         <button type="button" onClick={download}>Download JSON</button>
         <button type="button" onClick={() => void load()}>Reload source</button>
       </div>

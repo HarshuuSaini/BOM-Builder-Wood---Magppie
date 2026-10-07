@@ -145,12 +145,12 @@ exports and costing; they do not change the shared Kitchen master JSON.
 `source/src/data/material_master.json` is the versioned source for Postlam
 laminate choices (₹ per 32 sqft sheet), their carcass/shutter front/back
 defaults, and the 18mm shutter board used for cabinet visible sides. The
-`/admin/materials` page can edit this JSON. It commits a validated update to
-GitHub using a server-only `GITHUB_CONTENTS_TOKEN`; a Git-connected Vercel
-project then redeploys the new source. The token needs Contents read/write
-access to this repository only. Without it the page is read-only and offers
-a JSON download. The production Vercel project must be connected to the Git
-repository with `source` as its Root Directory for automatic redeployment.
+`/admin/materials` page can edit this JSON. With a server-only
+`GITHUB_CONTENTS_TOKEN`, it commits a validated update to GitHub. The token
+needs Contents read/write access to this repository only. Without it the page
+is read-only and offers a JSON download. This project keeps manual Vercel
+deployments, so a source update is not live until the updated `source`
+directory is deployed again.
 
 User-facing configuration does not expose laminate price inputs. New cabinets
 inherit the admin defaults; existing exported kitchens retain their recorded

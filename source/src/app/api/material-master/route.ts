@@ -78,7 +78,7 @@ export async function PUT(request: Request) {
     if (!result.ok) return response({ error: `GitHub rejected the update (HTTP ${result.status}). Check repository permissions and branch protection.` }, 502);
     const saved = await result.json() as { content?: { sha?: string }; commit?: { sha?: string } };
     return response({ ok: true, sha: saved.content?.sha, commit: saved.commit?.sha,
-      message: "JSON committed to GitHub. The connected Vercel project will redeploy this commit." });
+      message: "JSON committed to GitHub. Deploy the updated source to Vercel manually before it affects the live builder." });
   } catch (error) {
     return response({ error: error instanceof Error ? error.message : "Could not save the material master." }, 400);
   }
