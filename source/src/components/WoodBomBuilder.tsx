@@ -1356,17 +1356,18 @@ function buildExtrasBom(
 
 /* --- Accessories — everything opt-in (CHAT_SUMMARY §17) --- */
 
+// Keep the saved "elenor" key so older project exports still reopen as a light row.
 type AccessoryKind = "skirting" | "elenor";
 interface AccessoryRow {
   id: number;
   kind: AccessoryKind;
-  /** metres for skirting, cut height (mm) for elenor */
+  /** metres for skirting, cut height (mm) for the LED profile light */
   size: string;
   qty: number;
   elevation: string;
   straight: number; // skirting connectors
   lconn: number;
-  driver: string;   // elenor driver
+  driver: string;   // light driver master ID (legacy labels also accepted)
 }
 interface MasterAccessoryRow {
   id: number;
@@ -1374,7 +1375,7 @@ interface MasterAccessoryRow {
   qty: number;
   elevation: string;
 }
-const KITCHEN_ACCESSORY_ITEMS = COSTING_ITEMS.filter((item) => item.group === "Accessory" && item.id.startsWith("KITCHEN-"));
+const KITCHEN_ACCESSORY_ITEMS = COSTING_ITEMS.filter((item) => ["Accessory", "LIGHT"].includes(item.group) && item.id.startsWith("KITCHEN-"));
 const accessoryNameKey = (name: string) => name.toUpperCase().replace(/[^A-Z0-9]/g, "");
 const pricedAccessoryNames = new Set(KITCHEN_ACCESSORY_ITEMS.map((item) => accessoryNameKey(item.materialDescription)));
 const MASTER_ACCESSORY_ITEMS = [
@@ -1393,10 +1394,21 @@ const MASTER_ACCESSORY_ITEMS = [
 ];
 const ACC_LABEL: Record<AccessoryKind, string> = {
   skirting: "PVC Skirting Profile",
-  elenor: "Elenor with Light",
+  elenor: "LED Profile Light",
 };
-const DRIVER_OPTIONS = ["", "DRIVER 12V 2A 24W", "DRIVER 12V 5A 60W"];
-const ELENOR_WASTE = 0.10;
+const LIGHT_ITEMS = {
+  profile: COSTING_ITEMS.find((item) => item.id === "KITCHEN-084")!,
+  diffuser: COSTING_ITEMS.find((item) => item.id === "KITCHEN-085")!,
+  led: COSTING_ITEMS.find((item) => item.id === "KITCHEN-086")!,
+  wire: COSTING_ITEMS.find((item) => item.id === "KITCHEN-090")!,
+};
+const DRIVER_ITEMS = COSTING_ITEMS.filter((item) => ["KITCHEN-089", "KITCHEN-088"].includes(item.id));
+function selectedDriver(value: string): CostingMasterItem | undefined {
+  return DRIVER_ITEMS.find((item) => item.id === value || item.materialDescription === value)
+    ?? (value.includes("2A 24W") ? DRIVER_ITEMS.find((item) => item.id === "KITCHEN-089") : undefined)
+    ?? (value.includes("5A 60W") ? DRIVER_ITEMS.find((item) => item.id === "KITCHEN-088") : undefined);
+}
+const LIGHT_WASTE = 0.10;
 const SKIRT_WASTE = 0.10;
 
 /** Default skirting run: sum of leg-mounted project line widths, metres. */
@@ -1431,23 +1443,24 @@ function buildAccessoryRows(accs: AccessoryRow[], project: ProjectLine[], so: st
     } else {
       const H = parseFloat(a.size) || 720;
       const q = a.qty || 1;
-      const lenWaste = Math.ceil(H * (1 + ELENOR_WASTE));
-      const rowsDef: Array<[string, number, string]> = [
-        ["ALU PROF FOR ELENOR 3000X15X15 ANODISED CHAMPAGNE HM-519 MINA", 2 * q, `L=${H}`],
-        ["LIGHT FLEXIBLE LED LIGHT 3000K, 180 LED/MTR, 72W, W-5MM XX LED", 2 * lenWaste * q, "MM"],
-        ["PVC DIFFUSER FOR GRAND PROF 3000X6X WHITE 9099 VAI", 2 * lenWaste * q, "MM"],
-        ["TAPE FOR COVER CAP ADH 3M X20X 91031 3M", 2 * lenWaste * q, "MM"],
-        ["LIGHT EXTENSION WIRE TWP SP XX 14/38 SNO", 2 * q, "Mtr"],
+      const netM = r3(H / 1000 * 2 * q);
+      const billedM = r3(Math.ceil(H * (1 + LIGHT_WASTE)) / 1000 * 2 * q);
+      const rowsDef: Array<[CostingMasterItem, number, number, string]> = [
+        [LIGHT_ITEMS.profile, netM, billedM, `2 × L=${H}mm`],
+        [LIGHT_ITEMS.diffuser, netM, billedM, "Mtr"],
+        [LIGHT_ITEMS.led, netM, billedM, "Mtr"],
+        [LIGHT_ITEMS.wire, 2 * q, 2 * q, "Mtr"],
       ];
-      rowsDef.forEach(([name, qty, size]) => out.push({
+      rowsDef.forEach(([item, total, actualQty, size]) => out.push({
         SO: so, "Carcass Items": carcass, Accessory: ACC_LABEL.elenor, Selected: "yes",
-        "Item Name": name, Size: size, Elevation: a.elevation,
-        Total: qty, "Actual Qty": qty, "Zoho Item ID": "",
+        "Item Name": item.materialDescription, Size: size, Elevation: a.elevation,
+        Total: total, "Actual Qty": actualQty, "Zoho Item ID": "",
       }));
-      if (a.driver) out.push({
+      const driver = selectedDriver(a.driver);
+      if (driver) out.push({
         SO: so, "Carcass Items": carcass, Accessory: ACC_LABEL.elenor, Selected: "yes",
-        "Item Name": a.driver, Size: "", Elevation: a.elevation,
-        Total: 1 * q, "Actual Qty": 1 * q, "Zoho Item ID": "",
+        "Item Name": driver.materialDescription, Size: "Pcs", Elevation: a.elevation,
+        Total: q, "Actual Qty": q, "Zoho Item ID": "",
       });
     }
   });
@@ -1798,6 +1811,8 @@ function profileMasterItem(profile: Profile, neon: string): CostingMasterItem | 
 }
 
 function otherAccessoryMasterItem(name: string): CostingMasterItem | undefined {
+  const exact = COSTING_ITEMS.find((item) => item.id.startsWith("KITCHEN-") && hardwareNameKey(item.materialDescription) === hardwareNameKey(name));
+  if (exact) return exact;
   const upper = name.toUpperCase();
   if (upper.includes("SKIRTING") && !upper.includes("CONNECTOR")) return COSTING_ITEMS.find((item) => item.id === "KITCHEN-092");
   if (upper.includes("ELENOR") || upper.includes("ALU PROF FOR LIGHT")) return COSTING_ITEMS.find((item) => item.id === "KITCHEN-084");
@@ -1806,7 +1821,7 @@ function otherAccessoryMasterItem(name: string): CostingMasterItem | undefined {
   if (upper.includes("EXTENSION WIRE")) return COSTING_ITEMS.find((item) => item.id === "KITCHEN-090");
   if (upper.includes("12V 2A 24W")) return COSTING_ITEMS.find((item) => item.id === "KITCHEN-089");
   if (upper.includes("12V 5A 60W")) return COSTING_ITEMS.find((item) => item.id === "KITCHEN-088");
-  return COSTING_ITEMS.find((item) => item.id.startsWith("KITCHEN-") && hardwareNameKey(item.materialDescription) === hardwareNameKey(name));
+  return undefined;
 }
 
 /**
@@ -1989,13 +2004,13 @@ function computeCosting(
       const heightMm = parseFloat(accessory.size) || 720;
       const qty = accessory.qty || 1;
       const netM = heightMm / 1000 * 2 * qty;
-      const billedM = Math.ceil(heightMm * (1 + ELENOR_WASTE)) / 1000 * 2 * qty;
-      addAccessoryDetail("ALU PROF FOR ELENOR 3000X15X15 ANODISED CHAMPAGNE HM-519 MINA", `${heightMm}mm × 2 per set`, netM, billedM, "RMT", ELENOR_WASTE * 100);
-      addAccessoryDetail("LIGHT FLEXIBLE LED LIGHT 3000K, 180 LED/MTR, 72W, W-5MM XX LED", `${heightMm}mm × 2 per set`, netM, billedM, "RMT", ELENOR_WASTE * 100);
-      addAccessoryDetail("PVC DIFFUSER FOR GRAND PROF 3000X6X WHITE 9099 VAI", `${heightMm}mm × 2 per set`, netM, billedM, "RMT", ELENOR_WASTE * 100);
-      addAccessoryDetail("TAPE FOR COVER CAP ADH 3M X20X 91031 3M", `${heightMm}mm × 2 per set`, netM, billedM, "RMT", ELENOR_WASTE * 100);
-      addAccessoryDetail("LIGHT EXTENSION WIRE TWP SP XX 14/38 SNO", "2m per set", 2 * qty, 2 * qty, "RMT");
-      if (accessory.driver) addAccessoryDetail(accessory.driver, "Driver", qty, qty, "nos");
+      const billedM = Math.ceil(heightMm * (1 + LIGHT_WASTE)) / 1000 * 2 * qty;
+      for (const item of [LIGHT_ITEMS.profile, LIGHT_ITEMS.diffuser, LIGHT_ITEMS.led]) {
+        addAccessoryDetail(item.materialDescription, `${heightMm}mm × 2 per set`, netM, billedM, "RMT", LIGHT_WASTE * 100);
+      }
+      addAccessoryDetail(LIGHT_ITEMS.wire.materialDescription, "2m per set", 2 * qty, 2 * qty, "RMT");
+      const driver = selectedDriver(accessory.driver);
+      if (driver) addAccessoryDetail(driver.materialDescription, "Driver", qty, qty, "nos");
     }
     const cost = details.reduce((sum, detail) => sum + detail.amount, 0);
     const qty = accessory.qty || 1;
@@ -2626,7 +2641,7 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
 
               {/* ---- Other Accessories ---- */}
               <SecHead title="Other Accessories" onAdd={addAcc} />
-              {accessories.length === 0 ? <div className="empty">Everything is opt-in: PVC skirting (sum of leg-mounted widths, +10% waste) and the Elenor light (2 sets per unit, cut = H).</div> : <>
+              {accessories.length === 0 ? <div className="empty">Everything is opt-in: PVC skirting and the LED profile light (two height-length cuts per unit). Light profile, LED strip, diffuser, wire and drivers use the Kitchen master items.</div> : <>
                 <Tbl head={["Accessory", "Size", "Qty", "Elevation", "Straight", "L-conn", "Driver", ""]} num={[2]}
                   rows={accessories.map((a) => [
                     <select key="k" value={a.kind} onChange={(e) => updAcc(a.id, { kind: e.target.value as AccessoryKind })}>
@@ -2638,8 +2653,9 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
                     <input key="e" list="elev-list" value={a.elevation} onChange={(e) => updAcc(a.id, { elevation: e.target.value })} style={{ width: 64 }} />,
                     a.kind === "skirting" ? <input key="st" type="number" min={0} value={a.straight} onChange={(e) => updAcc(a.id, { straight: Math.max(0, +e.target.value) })} style={{ width: 58 }} /> : "—",
                     a.kind === "skirting" ? <input key="lc" type="number" min={0} value={a.lconn} onChange={(e) => updAcc(a.id, { lconn: Math.max(0, +e.target.value) })} style={{ width: 58 }} /> : "—",
-                    a.kind === "elenor" ? <select key="dr" value={a.driver} onChange={(e) => updAcc(a.id, { driver: e.target.value })}>
-                      {DRIVER_OPTIONS.map((d) => <option key={d} value={d}>{d || "— none —"}</option>)}</select> : "—",
+                    a.kind === "elenor" ? <select key="dr" value={selectedDriver(a.driver)?.id ?? ""} onChange={(e) => updAcc(a.id, { driver: e.target.value })}>
+                      <option value="">— no driver —</option>
+                      {DRIVER_ITEMS.map((item) => <option key={item.id} value={item.id}>{item.subgroup}</option>)}</select> : "—",
                     <button key="x" className="x" onClick={() => rmAcc(a.id)}>×</button>,
                   ])} />
               </>}
