@@ -1392,7 +1392,11 @@ interface MasterAccessoryRow {
   itemId: string;
   qty: number;
   elevation: string;
+  /** Blank uses the Kitchen master rate; a non-negative value overrides this row only. */
+  manualRate?: string;
 }
+const validAccessoryManualRate = (value: unknown) => value === undefined || value === "" ||
+  (typeof value === "string" && value.trim() !== "" && Number.isFinite(Number(value)) && Number(value) >= 0);
 const KITCHEN_ACCESSORY_ITEMS = COSTING_ITEMS.filter((item) => ["Accessory", "LIGHT"].includes(item.group) && item.id.startsWith("KITCHEN-"));
 const accessoryNameKey = (name: string) => name.toUpperCase().replace(/[^A-Z0-9]/g, "");
 const pricedAccessoryNames = new Set(KITCHEN_ACCESSORY_ITEMS.map((item) => accessoryNameKey(item.materialDescription)));
@@ -1628,6 +1632,7 @@ function restoreProjectSetup(rows: Record<string, unknown>[]): ProjectRestore {
     if (typeof record.data.id !== "number" || !Number.isFinite(record.data.id) || typeof record.data.qty !== "number" || !Number.isFinite(record.data.qty) || record.data.qty < 1) {
       throw new Error(`A ${kind} row has an invalid id or quantity.`);
     }
+    if (kind === "accessory" && !validAccessoryManualRate(record.data.manualRate)) throw new Error("An accessory has an invalid manual price.");
     return record.data as T;
   });
   const rawSelections = records.filter((record) => record.kind === "raw-selection").map((record) => {
@@ -2068,17 +2073,20 @@ function computeCosting(
     const item = MASTER_ACCESSORY_ITEMS.find((candidate) => candidate.id === row.itemId);
     if (!item) return;
     const qty = Math.max(1, row.qty || 1);
-    if (!item.priced || !Number.isFinite(item.currentRate) || item.currentRate <= 0) {
+    const manualRate = row.manualRate?.trim() ?? "";
+    const hasManualRate = manualRate !== "";
+    const rate = hasManualRate ? Number(manualRate) : item.currentRate;
+    if ((hasManualRate && (!Number.isFinite(rate) || rate < 0)) || (!hasManualRate && (!item.priced || !Number.isFinite(rate) || rate <= 0))) {
       unpriced.add(`${item.materialDescription} (reference accessory)`);
       lines.push({ label: `${row.elevation ? `${row.elevation} · ` : ""}${item.materialDescription}`, qty, unitCost: 0, cost: 0, details: [] });
       return;
     }
     const uom: CostDetail["uom"] = item.rateBasis === "SET" ? "set" : item.rateBasis === "MTR" ? "RMT" : "nos";
-    const amount = qty * item.currentRate;
+    const amount = qty * rate;
     lines.push({
       label: `${row.elevation ? `${row.elevation} · ` : ""}${item.subgroup}`,
-      qty, unitCost: item.currentRate, cost: amount,
-      details: [{ category: "Accessory", itemCode: item.id, item: item.materialDescription, specification: `${item.subgroup}${item.brand ? ` · ${item.brand}` : ""}`, netQty: qty, wastePct: 0, billableQty: qty, uom, rate: item.currentRate, amount }],
+      qty, unitCost: rate, cost: amount,
+      details: [{ category: "Accessory", itemCode: item.id, item: item.materialDescription, specification: `${item.subgroup}${item.brand ? ` · ${item.brand}` : ""}${hasManualRate ? " · manual rate" : " · Kitchen master rate"}`, netQty: qty, wastePct: 0, billableQty: qty, uom, rate, amount }],
     });
   });
 
@@ -2171,7 +2179,7 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
   const addAcc = () => setAccessories((c) => [...c, { id: nextIdOf(c), kind: "skirting", size: "", qty: 1, elevation: "", straight: 0, lconn: 0, driver: "" }]);
   const updAcc = (id: number, p: Partial<AccessoryRow>) => setAccessories((c) => c.map((r) => r.id === id ? { ...r, ...p } : r));
   const rmAcc = (id: number) => setAccessories((c) => c.filter((r) => r.id !== id));
-  const addMasterAcc = () => setMasterAccessories((c) => [...c, { id: nextIdOf(c), itemId: MASTER_ACCESSORY_ITEMS[0]?.id ?? "", qty: 1, elevation: "" }]);
+  const addMasterAcc = () => setMasterAccessories((c) => [...c, { id: nextIdOf(c), itemId: MASTER_ACCESSORY_ITEMS[0]?.id ?? "", qty: 1, elevation: "", manualRate: "" }]);
   const updMasterAcc = (id: number, p: Partial<MasterAccessoryRow>) => setMasterAccessories((c) => c.map((r) => r.id === id ? { ...r, ...p } : r));
   const rmMasterAcc = (id: number) => setMasterAccessories((c) => c.filter((r) => r.id !== id));
 
@@ -2737,7 +2745,7 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
               {/* ---- Accessories from the priced KITCHEN master and reference catalog ---- */}
               <SecHead title="Accessories" onAdd={addMasterAcc} />
               {masterAccessories.length === 0 ? <div className="empty">No accessories selected. Priced Kitchen-master items and the wider reference accessory catalog are available.</div> :
-                <Tbl head={["Search", "Accessory item", "Brand", "Rate (Rs)", "Qty", "Elevation", ""]} num={[3, 4]}
+                <Tbl head={["Search", "Accessory item", "Brand", "Manual rate (Rs/unit)", "Qty", "Elevation", ""]} num={[3, 4]}
                   rows={masterAccessories.map((row) => {
                     const selected = MASTER_ACCESSORY_ITEMS.find((item) => item.id === row.itemId);
                     const query = (accessorySearch[row.id] ?? "").trim().toLowerCase();
@@ -2745,11 +2753,14 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
                     const options = selected && !matching.some((item) => item.id === selected.id) ? [selected, ...matching] : matching;
                     return [
                       <input key="search" type="search" aria-label="Search accessory catalog" placeholder="Search accessories" value={accessorySearch[row.id] ?? ""} onChange={(e) => setAccessorySearch((previous) => ({ ...previous, [row.id]: e.target.value }))} style={{ minWidth: 130 }} />,
-                      <select key="i" value={row.itemId} onChange={(e) => updMasterAcc(row.id, { itemId: e.target.value })}>
+                      <select key="i" value={row.itemId} onChange={(e) => updMasterAcc(row.id, { itemId: e.target.value, manualRate: "" })}>
                         {options.map((item) => <option key={item.id} value={item.id}>{item.subgroup} — {item.materialDescription}{item.priced ? "" : " (rate not in Kitchen master)"}</option>)}
                       </select>,
                       selected?.brand || "—",
-                      selected?.priced ? selected.currentRate.toFixed(2) : "Unpriced",
+                      <div key="rate" style={{ display: "grid", gap: 2, minWidth: 130 }}>
+                        <input type="number" min={0} step="0.01" aria-label={`Manual rate for ${selected?.subgroup ?? "accessory"}`} placeholder={selected?.priced ? selected.currentRate.toFixed(2) : "Enter price"} value={row.manualRate ?? ""} onChange={(e) => updMasterAcc(row.id, { manualRate: e.target.value })} style={{ width: 118 }} />
+                        <small style={{ color: "var(--mut)" }}>{row.manualRate !== undefined && row.manualRate !== "" ? `Manual · ${selected?.rateBasis ?? "unit"}` : selected?.priced ? `Master ₹${selected.currentRate.toFixed(2)} / ${selected.rateBasis}` : "No master rate"}</small>
+                      </div>,
                       <input key="q" type="number" min={1} value={row.qty} onChange={(e) => updMasterAcc(row.id, { qty: Math.max(1, +e.target.value) })} style={{ width: 58 }} />,
                       <input key="e" list="elev-list" value={row.elevation} onChange={(e) => updMasterAcc(row.id, { elevation: e.target.value })} style={{ width: 64 }} />,
                       <button key="x" className="x" onClick={() => rmMasterAcc(row.id)}>×</button>,
@@ -2794,7 +2805,9 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
                     [<b key="t">Project costing total</b>, "", "", <b key="v">{costing.total.toFixed(2)}</b>],
                   ]} />
                 {costing.unpriced.length > 0 && (
-                  <Stub list={costing.unpriced.map((u) => `${u} — no rate set yet; not included in the total. An admin can set the rate on /admin.`)} />
+                  <Stub list={costing.unpriced.map((u) => u.includes("(reference accessory)")
+                    ? `${u} — enter a manual rate in Accessories to include it in the total.`
+                    : `${u} — no rate set yet; not included in the total. An admin can set the rate on /admin.`)} />
                 )}
                 <div style={{ marginTop: 18, padding: 16, border: "1px solid #D8DEDA", borderRadius: 8, background: "#FAFBFA" }}>
                   <h3 style={{ margin: "0 0 4px" }}>Project pricing factors</h3>

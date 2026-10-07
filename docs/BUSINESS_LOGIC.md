@@ -126,6 +126,15 @@ The two adjustments appear separately in cabinet costing and its Excel export.
 At ₹550 on both sides, existing cabinet totals remain unchanged. Saved project
 configurations retain the entered prices; older files default to ₹550 per side.
 
+## Accessory price overrides
+
+Each row in the Accessories catalog can have a manual rupee rate for its listed
+unit (piece, set, or metre). A blank input uses the Kitchen master rate; an
+unpriced catalog item needs a manual rate before it contributes to costing.
+The override applies only to that project row, appears in its costing detail
+and costing workbook, and is restored from the project export. Selecting a
+different accessory clears the old row's override.
+
 # Project pricing factors
 
 The bottom of the project Costing section applies commercial factors after the
