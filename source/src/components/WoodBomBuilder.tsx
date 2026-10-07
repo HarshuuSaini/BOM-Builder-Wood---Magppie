@@ -1623,10 +1623,99 @@ function restoreLegacyBom(rows: Record<string, unknown>[]): ProjectRestore {
     notice: `Imported ${project.length} cabinet line${project.length === 1 ? "" : "s"} from an older BOM. That file did not save material, hinge, drawer, accessory, or pricing selections; review those before continuing.` };
 }
 
+/** Browser-printed projects predating the restore appendix expose only their visible tables. */
+function restoreLegacyPrintedPdf(pages: string[]): ProjectRestore {
+  const linesPage = pages.find((page) => page.includes("Project lines\n"));
+  const boardsPage = pages.find((page) => page.includes("Boards\n") && page.includes("Countertop + add row"));
+  const accessoryPage = pages.find((page) => page.includes("Accessories + add row") && page.includes("Accessory lines (export preview)"));
+  if (!linesPage || !boardsPage) {
+    throw new Error("This PDF is not a recognized Wood Kitchen BOM project printout. Import its original Excel project file instead.");
+  }
+  const table = linesPage.split("Project lines\n")[1]?.split("Wastage %")[0]?.replace(/-\s*\n\s*/g, "-") ?? "";
+  const codePattern = /^([A-Z]{2})\s+([A-Z]{2,3}-[A-Z0-9]+-(?:CJ|STD)-(?:WD|GL)-[A-Z0-9]+-[A-Z0-9]+-[A-Z0-9]+-\d+-\d+-\d+-\d+-[A-Z0-9]+)\b/gm;
+  const matches = [...table.matchAll(codePattern)];
+  if (!matches.length) throw new Error("No cabinet rows could be read from this printed PDF.");
+  const cabinetRows = matches.map((match, index) => {
+    const rest = table.slice((match.index ?? 0) + match[0].length, matches[index + 1]?.index ?? table.length);
+    const qty = Number(rest.match(/\b(\d+)\s+remove\b/)?.[1]);
+    if (!Number.isInteger(qty) || qty < 1) throw new Error(`Could not read the quantity for ${match[2]}.`);
+    return { Level: 0, Item: match[2], "SO Qty": qty, Elevation: match[1] };
+  });
+  const restored = restoreLegacyBom(cabinetRows);
+
+  // The printed Boards table is an aggregate, not per-cabinet state. Apply the
+  // sole visible choice in each group, then explicitly require user review.
+  const boardTable = boardsPage.split("Boards\n")[1]?.split("Fillers + add row")[0]?.replace(/\s+/g, " ") ?? "";
+  const materialInTable = (name: string) => boardTable.includes(name.replace(/\s+/g, " "));
+  const boardChoices = CARCASS_BOARD_ITEMS.filter((item) => materialInTable(item.materialDescription));
+  const shutterMatches = SHUTTER_BOARD_ITEMS.filter((item) => materialInTable(item.materialDescription));
+  const shutterChoices = shutterMatches.filter((item) => !shutterMatches.some((other) =>
+    other.id !== item.id && other.materialDescription.includes(item.materialDescription)));
+  const glassChoices = GLASS_SHUTTER_ITEMS.filter((item) => materialInTable(item.materialDescription));
+  const allText = pages.join("\n");
+  const hingeChoice = HINGE_CHOICES.find((choice) => allText.includes(choice));
+  const drawerModel = DRAWER_MODELS.find((choice) => new RegExp(`DRAWER BOX SET ${choice}\\b`, "i").test(allText));
+  restored.project = restored.project.map((line) => {
+    const config = cabinetConfig(line.m);
+    if (boardChoices.length === 1) config.board = boardChoices[0].id;
+    if (shutterChoices.length === 1) config.shType = shutterChoices[0].id;
+    if (glassChoices.length === 1) config.glassType = glassChoices[0].id;
+    if (hingeChoice) config.hingeChoice = hingeChoice;
+    if (drawerModel) config.drawerModel = drawerModel;
+    return { ...line, m: buildModel(config) };
+  });
+
+  const wasteMatch = boardsPage.match(/^carcass\s+(\d+(?:\.\d+)?)\s+shutter\s+(\d+(?:\.\d+)?)\s+profile\s+(\d+(?:\.\d+)?)/m);
+  if (wasteMatch) restored.waste = { carcass: Number(wasteMatch[1]), shutter: Number(wasteMatch[2]), profile: Number(wasteMatch[3]) };
+  const pricingText = allText.split("Project pricing factors")[1]?.split("Cabinet / item Billable sqft")[0] ?? "";
+  const conversion = pricingText.match(/Conversion \(%\)\s*(\d+(?:\.\d+)?)/)?.[1];
+  const profit = pricingText.match(/Profit \(%\)\s*(\d+(?:\.\d+)?)/)?.[1];
+  if (conversion !== undefined) restored.pricing.conversionPct = Number(conversion);
+  if (profit !== undefined) restored.pricing.profitPct = Number(profit);
+  for (const [label, key] of [["Transportation", "transportation"], ["Installation", "installation"], ["Loading / Unloading", "loading"]] as const) {
+    const section = pricingText.split(`${label}\n`)[1]?.split("\n")[0] ?? "";
+    const value = section.match(/(Direct price|Per[- ]sqft|Per square foot)\s+(\d+(?:\.\d+)?)/i);
+    if (value) restored.pricing[key] = { mode: /^Direct/i.test(value[1]) ? "direct" : "sqft", value: Number(value[2]) };
+  }
+  restored.pricing.includeTax = /GST \(18%\)(?![^\n]*not included)/.test(allText.split("Subtotal before tax")[1]?.split("Final project price")[0] ?? "")
+    && !allText.includes("GST (18%) — not included");
+
+  const visibleSection = boardsPage.split("Visible Panels + add row")[1]?.split("Countertop + add row")[0] ?? "";
+  for (const match of visibleSection.matchAll(/(?:^|\n)(\d+)\s+Default\b[^\n]*?\s+(\d+)\s+(\d+)\s+([A-Z]{2})\s+×/g)) {
+    restored.visiblePanels.push({ id: restored.visiblePanels.length + 1, zone: "base", customShade: "", qty: Number(match[1]),
+      customHeight: match[2], customWidth: match[3], elevation: match[4], shutterType: shutterChoices[0]?.id ?? DEFAULT_SHTYPE });
+  }
+  const counterSection = boardsPage.split("Countertop + add row")[1]?.split("Other Accessories + add row")[0] ?? "";
+  for (const match of counterSection.matchAll(/(?:^|\n)(\d+)\s+(\d+)\s+(\d+)\s+(.+?)\s+(\d+)\s+×/g)) {
+    restored.countertops.push({ id: restored.countertops.length + 1, length: match[1], depth: match[2], thickness: match[3],
+      material: match[4].trim(), qty: Number(match[5]), ratePerSqft: "" });
+  }
+
+  const otherSection = accessoryPage?.split("Accessories + add row")[0] ?? "";
+  for (const match of otherSection.matchAll(/PVC Skirting Pr\s+(\d+(?:\.\d+)?)\s+(\d+)\s+([A-Z]{2})\s+(\d+)\s+(\d+)\s+—\s+×/g)) {
+    restored.accessories.push({ id: restored.accessories.length + 1, kind: "skirting", size: match[1], qty: Number(match[2]),
+      elevation: match[3], straight: Number(match[4]), lconn: Number(match[5]), driver: "" });
+  }
+  const masterSection = accessoryPage?.split("Accessories + add row")[1]?.split("Accessory lines (export preview)")[0] ?? "";
+  for (const line of masterSection.split("\n")) {
+    const item = MASTER_ACCESSORY_ITEMS.find((candidate) => line.startsWith(candidate.subgroup));
+    if (!item) continue;
+    const qty = Number(line.match(/\s(\d+)\s+(?:[A-Z]{2}\s+)?×$/)?.[1]);
+    if (Number.isInteger(qty) && qty > 0) restored.masterAccessories.push({ id: restored.masterAccessories.length + 1, itemId: item.id, qty,
+      elevation: line.match(/\s([A-Z]{2})\s+×$/)?.[1] ?? "" });
+  }
+  const displayedCode = linesPage.split("Project lines\n")[0].match(/[A-Z]{2,3}-[A-Z0-9]+-(?:CJ|STD)-(?:WD|GL)-[A-Z0-9-]+-\d+-\d+-\d+-\d+-[A-Z0-9]+/)?.[0];
+  const displayedLine = restored.project.find((line) => line.m.code === displayedCode);
+  if (displayedLine) restored.current = { config: cabinetConfig(displayedLine.m), elevation: displayedLine.elevation, qty: displayedLine.qty };
+  restored.notice = `Imported ${restored.project.length} cabinets, ${restored.visiblePanels.length} visible panel(s), ${restored.countertops.length} countertop(s), ${restored.accessories.length} skirting row(s), and ${restored.masterAccessories.length} accessory item(s) from this older print. Board, shutter, glass, hinge and drawer choices were inferred from project-wide tables; verify each cabinet. Visible-panel zone was not printed and is set to base. Countertop rates, raw-material selections, and any hidden settings were not in the PDF and need review.`;
+  return restored;
+}
+
 async function readProjectFile(file: File): Promise<ProjectRestore> {
   if (file.size > 10_000_000) throw new Error("The selected file is too large (maximum 10 MB).");
   if (file.name.toLowerCase().endsWith(".pdf")) {
     const data = await readPrintedProjectPdf(file);
+    if (isRecord(data) && Array.isArray(data.legacyPages)) return restoreLegacyPrintedPdf(data.legacyPages as string[]);
     if (!Array.isArray(data)) throw new Error("This PDF does not contain valid project rows.");
     return restoreProjectSetup(data as Record<string, unknown>[]);
   }

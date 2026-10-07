@@ -35,7 +35,9 @@ export function decodeProjectPrintData(text: string): unknown {
   }
 }
 
-export async function readPrintedProjectPdf(file: File): Promise<unknown> {
+export type LegacyPrintedProject = { legacyPages: string[] };
+
+export async function readPrintedProjectPdf(file: File): Promise<unknown | LegacyPrintedProject> {
   const pdfjs = await import("pdfjs-dist");
   pdfjs.GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/build/pdf.worker.min.mjs", import.meta.url).toString();
   const task = pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()) });
@@ -53,7 +55,9 @@ export async function readPrintedProjectPdf(file: File): Promise<unknown> {
       }
       textParts.push(pageText);
     }
-    return decodeProjectPrintData(textParts.join("\n"));
+    const text = textParts.join("\n");
+    if (!text.includes(`${PRINT_PREFIX}.`)) return { legacyPages: textParts };
+    return decodeProjectPrintData(text);
   } finally {
     await task.destroy();
   }
