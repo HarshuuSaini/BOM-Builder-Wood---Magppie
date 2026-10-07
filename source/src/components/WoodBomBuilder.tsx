@@ -92,6 +92,8 @@ interface CountertopRow {
   depth: string;
   thickness: string;
   material: string;
+  /** Empty follows the kitchen shutter board; CUSTOM preserves older free-text rows. */
+  materialId?: string;
   ratePerSqft?: string;
   qty: number;
 }
@@ -297,6 +299,18 @@ const shOf = (st: string): ShutterSpec => {
   return item ? { label: item.subgroup, band: fam === "PRELAM" || fam === "POSTLAM", mat: item.materialDescription, t: item.thicknessMm ?? 18, fam } : GLASS_SHUTTER_SPEC;
 };
 const shFamOf = (st: string): ShFamily => shOf(st).fam;
+
+function countertopMaterialId(row: CountertopRow): string {
+  if (row.materialId !== undefined) return row.materialId && !SHUTTER_BOARD_ITEMS.some((item) => item.id === row.materialId) ? "CUSTOM" : row.materialId;
+  if (!row.material.trim()) return "";
+  return SHUTTER_BOARD_ITEMS.find((item) =>
+    [item.id, item.materialDescription, item.subgroup].some((value) => value.toLowerCase() === row.material.trim().toLowerCase()))?.id ?? "CUSTOM";
+}
+
+function countertopMaterialItem(row: CountertopRow, defaultShutterType: string): CostingMasterItem | undefined {
+  const id = countertopMaterialId(row);
+  return id === "CUSTOM" ? undefined : shutterMasterItem(id || defaultShutterType);
+}
 
 /** Only the glass branch keeps the stone frame machinery. */
 const SH_INSET: Record<string, number> = { NEON20: 5, NEON50: 8 };
@@ -1267,7 +1281,7 @@ function extraPanelOf(kind: "Filler" | "Visible", zone: string, H: number, W: nu
 
 function buildExtrasBom(
   fillers: FillerRow[], visiblePanels: VisiblePanelRow[], countertops: CountertopRow[],
-  project: ProjectLine[], so: string, globalShType: string, globalFinish: string, wst: WastePct,
+  project: ProjectLine[], so: string, globalShType: string, countertopShType: string, globalFinish: string, wst: WastePct,
 ): { rows: FullBomRow[]; panels: Panel[] } {
   const rows: FullBomRow[] = [];
   const panels: Panel[] = [];
@@ -1318,10 +1332,11 @@ function buildExtrasBom(
   countertops.forEach((c) => {
     const L = parseFloat(c.length) || 0;
     const D = parseFloat(c.depth) || 600;
-    const Tt = parseFloat(c.thickness) || 30;
+    const selected = countertopMaterialItem(c, countertopShType);
+    const Tt = parseFloat(c.thickness) || selected?.thicknessMm || 30;
     if (!L) return;
     const q = c.qty || 1;
-    const matName = c.material || "Countertop";
+    const matName = selected?.subgroup ?? (c.material.trim() || "Countertop");
     rows.push(makeRow({
       SO: so, "Main Group": "Countertop", "Sub Group": `CT-${L}x${D}x${Tt}`,
       Level: 0, Item: `Countertop ${matName} ${Tt}mm ${L}x${D}`, SKU: `CT-${L}x${D}x${Tt}-${q}`,
@@ -1330,7 +1345,7 @@ function buildExtrasBom(
     }));
     rows.push(makeRow({
       SO: so, "Main Group": "Countertop", "Sub Group": `CT-${L}x${D}x${Tt}`,
-      Level: 1, Item: `CT ${matName} ${Tt}mm ${L}x${D} (bought-in)`, SKU: `CT-${L}x${D}x${Tt}`,
+      Level: 1, Item: selected?.materialDescription ?? `CT ${matName} ${Tt}mm ${L}x${D} (bought-in)`, SKU: selected?.id ?? `CT-${L}x${D}x${Tt}`,
       Type: "component", Height: String(D), Width: String(L), Thickness: String(Tt),
       Finish: matName, "SO Qty": q, "Actual Qty": q, Unit: "nos",
     }));
@@ -1808,7 +1823,7 @@ function computeCosting(
   extrasPanels: Panel[],
   otherAccessories: AccessoryRow[],
   masterAccessories: MasterAccessoryRow[],
-  globalShType: string, rates: CostingRates, wst: WastePct,
+  globalShType: string, countertopShType: string, rates: CostingRates, wst: WastePct,
 ): CostingResult {
   const lines: LineCost[] = [];
   const unpriced = new Set<string>();
@@ -1926,22 +1941,23 @@ function computeCosting(
   countertops.forEach((countertop) => {
     const length = Number(countertop.length);
     const depth = Number(countertop.depth || 600);
-    const thickness = Number(countertop.thickness || 30);
+    const selected = countertopMaterialItem(countertop, countertopShType);
+    const thickness = Number(countertop.thickness || selected?.thicknessMm || 30);
     if (!(length > 0 && depth > 0 && thickness > 0)) return;
     const qty = Math.max(1, countertop.qty || 1);
     const netQty = sqft(length, depth) * qty;
-    const rate = Number(countertop.ratePerSqft);
-    const material = countertop.material.trim() || "Unspecified material";
+    const rate = selected?.currentRate ?? Number(countertop.ratePerSqft);
+    const material = selected?.materialDescription ?? (countertop.material.trim() || "Unspecified material");
     const label = `Countertop ${material} ${thickness}mm ${length}x${depth}`;
-    if (!countertop.ratePerSqft || !Number.isFinite(rate) || rate < 0) {
+    if ((!selected && !countertop.ratePerSqft) || !Number.isFinite(rate) || rate <= 0) {
       unpriced.add(`${label} (countertop rate per sqft)`);
       lines.push({ label, qty, unitCost: 0, cost: 0, details: [] });
       return;
     }
     const amount = netQty * rate;
     lines.push({ label, qty, unitCost: amount / qty, cost: amount, details: [{
-      category: "Countertop", itemCode: `CT-${length}x${depth}x${thickness}`,
-      item: material, specification: `${length}×${depth}×${thickness}mm · bought-in`,
+      category: "Countertop", itemCode: selected?.id ?? `CT-${length}x${depth}x${thickness}`,
+      item: material, specification: `${selected?.subgroup ?? "Custom material"} · ${length}×${depth}×${thickness}mm · bought-in`,
       netQty, wastePct: 0, billableQty: netQty, uom: "sqft", rate, amount,
     }] });
   });
@@ -2083,7 +2099,7 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
   const addVp = () => setVisiblePanels((c) => [...c, { id: nextIdOf(c), zone: "base", customShade: "", qty: 1, customHeight: "", customWidth: "", elevation: "", shutterType: "" }]);
   const updVp = (id: number, p: Partial<VisiblePanelRow>) => setVisiblePanels((c) => c.map((r) => r.id === id ? { ...r, ...p } : r));
   const rmVp = (id: number) => setVisiblePanels((c) => c.filter((r) => r.id !== id));
-  const addCt = () => setCountertops((c) => [...c, { id: nextIdOf(c), length: "", depth: "600", thickness: "30", material: "", ratePerSqft: "", qty: 1 }]);
+  const addCt = () => setCountertops((c) => [...c, { id: nextIdOf(c), length: "", depth: "600", thickness: "", material: "", materialId: "", ratePerSqft: "", qty: 1 }]);
   const updCt = (id: number, p: Partial<CountertopRow>) => setCountertops((c) => c.map((r) => r.id === id ? { ...r, ...p } : r));
   const rmCt = (id: number) => setCountertops((c) => c.filter((r) => r.id !== id));
   const addAcc = () => setAccessories((c) => [...c, { id: nextIdOf(c), kind: "skirting", size: "", qty: 1, elevation: "", straight: 0, lconn: 0, driver: "" }]);
@@ -2191,9 +2207,14 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
     }
   };
 
+  const countertopShutterType = useMemo(() => {
+    const types = [...new Set(project.filter((line) => line.m.panels.some((panel) =>
+      panel.pack === "Shutter Pack" && !/glass/i.test(panel.mat ?? ""))).map((line) => line.m.shType))];
+    return types.length === 1 ? types[0] : shType;
+  }, [project, shType]);
   const extras = useMemo(
-    () => buildExtrasBom(fillers, visiblePanels, countertops, project, soMode ? "SO" : "", shType, finish, waste),
-    [fillers, visiblePanels, countertops, project, soMode, shType, finish, waste],
+    () => buildExtrasBom(fillers, visiblePanels, countertops, project, soMode ? "SO" : "", shType, countertopShutterType, finish, waste),
+    [fillers, visiblePanels, countertops, project, soMode, shType, countertopShutterType, finish, waste],
   );
   const boardTotals = useMemo(() => buildBoardTotals(project, waste, extras.panels), [project, waste, extras]);
   const fullBom = useMemo(
@@ -2215,8 +2236,8 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
     current: W > 0 && H > 0 && D > 0 ? { config: cabinetConfig(m), elevation, qty } : undefined,
   })), [project, fillers, visiblePanels, countertops, accessories, masterAccessories, waste, projectPricingInputs, rawSelections, W, H, D, m, elevation, qty]);
   const costing = useMemo(
-    () => computeCosting(project, fillers, visiblePanels, countertops, extras.panels, accessories, masterAccessories, shType, rates, waste),
-    [project, fillers, visiblePanels, countertops, extras, accessories, masterAccessories, shType, rates, waste],
+    () => computeCosting(project, fillers, visiblePanels, countertops, extras.panels, accessories, masterAccessories, shType, countertopShutterType, rates, waste),
+    [project, fillers, visiblePanels, countertops, extras, accessories, masterAccessories, shType, countertopShutterType, rates, waste],
   );
   const projectPricing = useMemo(() => {
     const cabinetAreas = project.map((line) => ({
@@ -2574,17 +2595,34 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
 
               {/* ---- Countertop ---- */}
               <SecHead title="Countertop" onAdd={addCt} />
-              {countertops.length === 0 ? <div className="empty">No countertop. One bought-in line: L × D × T × material × qty.</div> :
+              {countertops.length === 0 ? <div className="empty">No countertop. Add a single-sheet top; its board follows the shutter material by default, or select another shutter board.</div> : <>
+                <p className="hint">Same as shutter follows the sole solid-shutter board in the project; if several are used, it follows the current configuration. Catalog rates are per square foot.</p>
                 <Tbl head={["Length (mm)", "Depth (mm)", "Thk (mm)", "Material", "Rate (Rs/sqft)", "Qty", ""]} num={[4, 5]}
                   rows={countertops.map((c) => [
                     <input key="l" type="number" value={c.length} onChange={(e) => updCt(c.id, { length: e.target.value })} style={{ width: 90 }} />,
                     <input key="d" type="number" placeholder="600" value={c.depth} onChange={(e) => updCt(c.id, { depth: e.target.value })} style={{ width: 80 }} />,
-                    <input key="t" type="number" placeholder="30" value={c.thickness} onChange={(e) => updCt(c.id, { thickness: e.target.value })} style={{ width: 64 }} />,
-                    <input key="m" value={c.material} placeholder="e.g. Quartz White" onChange={(e) => updCt(c.id, { material: e.target.value })} style={{ minWidth: 140 }} />,
-                    <input key="r" type="number" min={0} step="0.01" value={c.ratePerSqft ?? ""} placeholder="Enter rate" onChange={(e) => updCt(c.id, { ratePerSqft: e.target.value })} style={{ width: 90 }} />,
+                    <input key="t" type="number" placeholder={String(countertopMaterialItem(c, countertopShutterType)?.thicknessMm ?? 30)} value={c.thickness} onChange={(e) => updCt(c.id, { thickness: e.target.value })} style={{ width: 64 }} />,
+                    <div key="m" style={{ display: "grid", gap: 4 }}>
+                      <select value={countertopMaterialId(c)} aria-label="Countertop material" onChange={(e) => {
+                        const id = e.target.value;
+                        const previousThickness = countertopMaterialItem(c, countertopShutterType)?.thicknessMm;
+                        const nextItem = id === "" ? shutterMasterItem(countertopShutterType) : SHUTTER_BOARD_ITEMS.find((item) => item.id === id);
+                        updCt(c.id, { materialId: id, material: id === "CUSTOM" ? c.material : id ? nextItem?.materialDescription ?? "" : "",
+                          thickness: !c.thickness || Number(c.thickness) === previousThickness ? String(nextItem?.thicknessMm ?? "") : c.thickness });
+                      }} style={{ minWidth: 180 }}>
+                        <option value="">Same as shutter ({shOf(countertopShutterType).label})</option>
+                        {SHUTTER_BOARD_ITEMS.map((item) => <option key={item.id} value={item.id}>{item.subgroup} · {item.thicknessMm ?? "—"}mm</option>)}
+                        <option value="CUSTOM">Custom / legacy material</option>
+                      </select>
+                      {countertopMaterialId(c) === "CUSTOM" && <input value={c.material} placeholder="Material name" onChange={(e) => updCt(c.id, { material: e.target.value })} />}
+                    </div>,
+                    countertopMaterialId(c) === "CUSTOM"
+                      ? <input key="r" type="number" min={0} step="0.01" value={c.ratePerSqft ?? ""} placeholder="Enter rate" onChange={(e) => updCt(c.id, { ratePerSqft: e.target.value })} style={{ width: 90 }} />
+                      : <span key="r">₹{(countertopMaterialItem(c, countertopShutterType)?.currentRate ?? 0).toFixed(2)}</span>,
                     <input key="q" type="number" min={1} value={c.qty} onChange={(e) => updCt(c.id, { qty: Math.max(1, +e.target.value) })} style={{ width: 58 }} />,
                     <button key="x" className="x" onClick={() => rmCt(c.id)}>×</button>,
-                  ])} />}
+                  ])} />
+              </>}
 
               {/* ---- Other Accessories ---- */}
               <SecHead title="Other Accessories" onAdd={addAcc} />
