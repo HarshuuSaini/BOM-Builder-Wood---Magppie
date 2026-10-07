@@ -107,6 +107,10 @@ type CarcassModel = {
   handle: string;
   board: string;
   shType: string;
+  carcassLamFrontSheetPrice: string;
+  carcassLamBackSheetPrice: string;
+  shutterLamFrontSheetPrice: string;
+  shutterLamBackSheetPrice: string;
   glassType: string;
   finish: string;
   hingeChoice: HingeChoice;
@@ -125,7 +129,7 @@ type CarcassModel = {
 
 type PkRow = { pack: string; type: string; qty: number };
 type ProjectLine = { id: number; m: CarcassModel; qty: number; elevation: string };
-type CabinetConfig = Pick<CarcassModel, "zk" | "fk" | "vid" | "hand" | "handle" | "board" | "shType" | "glassType" | "hingeChoice" | "neon" | "W" | "H" | "D" | "drawerModel" | "finish">;
+type CabinetConfig = Pick<CarcassModel, "zk" | "fk" | "vid" | "hand" | "handle" | "board" | "shType" | "carcassLamFrontSheetPrice" | "carcassLamBackSheetPrice" | "shutterLamFrontSheetPrice" | "shutterLamBackSheetPrice" | "glassType" | "hingeChoice" | "neon" | "W" | "H" | "D" | "drawerModel" | "finish">;
 
 type FullBomRow = {
   SO: string;
@@ -165,6 +169,12 @@ const SQDIV = 92903.04;
 const SHEET_W = 2440;
 const SHEET_H = 1220;
 const SHEET_SQFT = (SHEET_W * SHEET_H) / SQDIV; // 32.03
+/** Kitchen Postlam master rates are finished-board rates with the default laminate already included. */
+const LAMINATE_PRICE_SHEET_SQFT = 32;
+const DEFAULT_LAMINATE_SHEET_PRICE = "550";
+const laminateSqftAdjustment = (sheetPrice: string) => (Number(sheetPrice) - Number(DEFAULT_LAMINATE_SHEET_PRICE)) / LAMINATE_PRICE_SHEET_SQFT;
+const isValidLaminatePrice = (value: string) => value.trim() !== "" && Number.isFinite(Number(value)) && Number(value) >= 0;
+const isPostlamItem = (item?: CostingMasterItem) => item?.type.toUpperCase() === "POSTLAM";
 
 /** Carcass nominal thickness. Option A is a 16mm core + 0.8mm laminate x2. */
 const T = 18;
@@ -253,6 +263,12 @@ const DEFAULT_SHTYPE = SHUTTER_BOARD_ITEMS.find((item) => item.elevation === "SH
   ?? SHUTTER_BOARD_ITEMS[0]?.id ?? "";
 const DEFAULT_GLASS_TYPE = GLASS_SHUTTER_ITEMS.find((item) => item.id === "KITCHEN-GLASS-5-TINTED")?.id
   ?? GLASS_SHUTTER_ITEMS[0]?.id ?? "";
+const DEFAULT_LAMINATE_PRICES = {
+  carcassLamFrontSheetPrice: DEFAULT_LAMINATE_SHEET_PRICE,
+  carcassLamBackSheetPrice: DEFAULT_LAMINATE_SHEET_PRICE,
+  shutterLamFrontSheetPrice: DEFAULT_LAMINATE_SHEET_PRICE,
+  shutterLamBackSheetPrice: DEFAULT_LAMINATE_SHEET_PRICE,
+};
 
 function glassShutterItemOf(id: string): CostingMasterItem {
   return GLASS_SHUTTER_ITEMS.find((item) => item.id === id) ?? GLASS_SHUTTER_ITEMS[0];
@@ -1044,6 +1060,8 @@ function buildCarcassInnerRaw(cfg: {
 function buildModel(cfg: {
   zk: string; fk: string; vid: string; hand: string; handle: string;
   board: string; shType: string; glassType: string; hingeChoice: HingeChoice; neon: string;
+  carcassLamFrontSheetPrice: string; carcassLamBackSheetPrice: string;
+  shutterLamFrontSheetPrice: string; shutterLamBackSheetPrice: string;
   W: number; H: number; D: number; drawerModel: string; finish?: string;
 }): CarcassModel {
   const fam = famSetOf(cfg.zk)[cfg.fk];
@@ -1534,8 +1552,8 @@ const PROJECT_FILE_FORMAT = "wood-bom-project";
 const isRecord = (value: unknown): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value);
 
 function cabinetConfig(model: CarcassModel): CabinetConfig {
-  const { zk, fk, vid, hand, handle, board, shType, glassType, hingeChoice, neon, W, H, D, drawerModel, finish } = model;
-  return { zk, fk, vid, hand, handle, board, shType, glassType, hingeChoice, neon, W, H, D, drawerModel, finish };
+  const { zk, fk, vid, hand, handle, board, shType, carcassLamFrontSheetPrice, carcassLamBackSheetPrice, shutterLamFrontSheetPrice, shutterLamBackSheetPrice, glassType, hingeChoice, neon, W, H, D, drawerModel, finish } = model;
+  return { zk, fk, vid, hand, handle, board, shType, carcassLamFrontSheetPrice, carcassLamBackSheetPrice, shutterLamFrontSheetPrice, shutterLamBackSheetPrice, glassType, hingeChoice, neon, W, H, D, drawerModel, finish };
 }
 
 function projectSetupRows(data: Omit<ProjectRestore, "notice">): ProjectSetupRow[] {
@@ -1571,6 +1589,12 @@ function validatedCabinetConfig(value: unknown): CabinetConfig {
   }
   if (!["LHS", "RHS"].includes(config.hand) || !["STD", "XCJ"].includes(config.handle) || config.neon !== "NEON50" || typeof config.finish !== "string") {
     throw new Error("A saved cabinet setting is invalid.");
+  }
+  const laminateFields = ["carcassLamFrontSheetPrice", "carcassLamBackSheetPrice", "shutterLamFrontSheetPrice", "shutterLamBackSheetPrice"] as const;
+  for (const field of laminateFields) {
+    const value = config[field] ?? DEFAULT_LAMINATE_SHEET_PRICE; // older project files did not save laminate prices
+    if (typeof value !== "string" || !isValidLaminatePrice(value)) throw new Error(`Invalid ${field} in a saved cabinet.`);
+    config[field] = value;
   }
   return config;
 }
@@ -1638,11 +1662,11 @@ function restoreLegacyBom(rows: Record<string, unknown>[]): ProjectRestore {
       if (family.p2 !== familyCode || (isGlassShutterFam(fk) ? "GL" : "WD") !== matToken) return [];
       return family.variants.map((variant: { id: string }) => ({ fk, vid: variant.id }));
     }).filter(({ fk, vid }) => {
-      const config: CabinetConfig = { zk: zone, fk, vid, hand, handle: handleToken === "CJ" ? "XCJ" : "STD", board: DEFAULT_BOARD_ID, shType: DEFAULT_SHTYPE, glassType: DEFAULT_GLASS_TYPE, hingeChoice: HINGE_CHOICES[0], neon: "NEON50", W, H, D, drawerModel: DRAWER_MODELS[0], finish };
+      const config: CabinetConfig = { zk: zone, fk, vid, hand, handle: handleToken === "CJ" ? "XCJ" : "STD", board: DEFAULT_BOARD_ID, shType: DEFAULT_SHTYPE, ...DEFAULT_LAMINATE_PRICES, glassType: DEFAULT_GLASS_TYPE, hingeChoice: HINGE_CHOICES[0], neon: "NEON50", W, H, D, drawerModel: DRAWER_MODELS[0], finish };
       return buildModel(config).code.split("-").slice(0, 7).join("-") === parts.slice(0, 7).join("-");
     });
     if (candidates.length !== 1) throw new Error(`Cannot uniquely identify cabinet ${code} from this older export. Please use a new Excel BOM with Project Setup.`);
-    const config: CabinetConfig = { zk: zone, ...candidates[0], hand, handle: handleToken === "CJ" ? "XCJ" : "STD", board: DEFAULT_BOARD_ID, shType: DEFAULT_SHTYPE, glassType: DEFAULT_GLASS_TYPE, hingeChoice: HINGE_CHOICES[0], neon: "NEON50", W, H, D, drawerModel: DRAWER_MODELS[0], finish };
+    const config: CabinetConfig = { zk: zone, ...candidates[0], hand, handle: handleToken === "CJ" ? "XCJ" : "STD", board: DEFAULT_BOARD_ID, shType: DEFAULT_SHTYPE, ...DEFAULT_LAMINATE_PRICES, glassType: DEFAULT_GLASS_TYPE, hingeChoice: HINGE_CHOICES[0], neon: "NEON50", W, H, D, drawerModel: DRAWER_MODELS[0], finish };
     const qty = Number(row["SO Qty"] ?? row.quantityNeeded ?? 1);
     if (!Number.isFinite(qty) || qty < 1) throw new Error(`Invalid cabinet quantity: ${code}`);
     return { id: index + 1, m: buildModel(config), qty, elevation: String(row.Elevation ?? "") };
@@ -1858,6 +1882,21 @@ function computeCosting(
         existing.amount += detail.amount;
       } else details.push(detail);
     };
+    const addLaminatePriceAdjustment = (face: "Front" | "Back", sheetPrice: string, boardItem: CostingMasterItem, area: number, wastePct: number) => {
+      if (!isValidLaminatePrice(sheetPrice)) {
+        unpriced.add(`${boardItem.id} ${face.toLowerCase()} laminate sheet price for ${m.code}`);
+        return;
+      }
+      const billed = area * (1 + wastePct / 100);
+      const rate = laminateSqftAdjustment(sheetPrice);
+      addDetail({
+        category: `${face} laminate price adjustment`,
+        itemCode: `${boardItem.id}-${face.toUpperCase()}-LAM`,
+        item: `${boardItem.materialDescription} · ${face.toLowerCase()} laminate`,
+        specification: `₹${Number(sheetPrice).toFixed(2)} per 32 sqft sheet = ₹${(Number(sheetPrice) / LAMINATE_PRICE_SHEET_SQFT).toFixed(2)}/sqft; finished-board rate includes ₹${DEFAULT_LAMINATE_SHEET_PRICE}/sheet`,
+        netQty: area, wastePct, billableQty: billed, uom: "sqft", rate, amount: billed * rate,
+      });
+    };
     m.panels.forEach((p) => {
       const a = sqft(p.w, p.h) * p.qty * l.qty;
       if (p.pack === "Shutter Pack") {
@@ -1866,12 +1905,20 @@ function computeCosting(
         if (!masterItem) { unpriced.add(`${shOf(panelShutterType).label} shutter board`); return; }
         const billed = a * (1 + wst.shutter / 100);
         addDetail({ category: panelShutterType === "GLASS" ? "Shutter glass" : "Shutter board", itemCode: masterItem.id, item: masterItem.materialDescription, specification: `${masterItem.subgroup} · ${masterItem.thicknessMm ?? "—"}mm`, netQty: a, wastePct: wst.shutter, billableQty: billed, uom: "sqft", rate: masterItem.currentRate, amount: billed * masterItem.currentRate });
+        if (isPostlamItem(masterItem)) {
+          addLaminatePriceAdjustment("Front", m.shutterLamFrontSheetPrice, masterItem, a, wst.shutter);
+          addLaminatePriceAdjustment("Back", m.shutterLamBackSheetPrice, masterItem, a, wst.shutter);
+        }
       } else {
         const masterItem = carcassMasterItem(m.board, p);
         if (!masterItem) { unpriced.add(`${p.mat ?? "Unknown"} ${p.t ?? ""}mm board`); return; }
         const billed = a * (1 + wst.carcass / 100);
         const category = /glass/i.test(p.mat ?? "") ? "Glass shelf" : p.pack === "Drawer Pack" ? "Drawer board" : masterItem.group === "Carcass Back Material" ? "Carcass back board" : "Carcass board";
         addDetail({ category, itemCode: masterItem.id, item: masterItem.materialDescription, specification: `${masterItem.subgroup} · ${masterItem.thicknessMm ?? "—"}mm`, netQty: a, wastePct: wst.carcass, billableQty: billed, uom: "sqft", rate: masterItem.currentRate, amount: billed * masterItem.currentRate });
+        if (isPostlamItem(masterItem)) {
+          addLaminatePriceAdjustment("Front", m.carcassLamFrontSheetPrice, masterItem, a, wst.carcass);
+          addLaminatePriceAdjustment("Back", m.carcassLamBackSheetPrice, masterItem, a, wst.carcass);
+        }
       }
     });
     ([
@@ -2072,6 +2119,10 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
   const [handle, setHandle] = useState("STD");
   const [board, setBoard] = useState(DEFAULT_BOARD_ID);
   const [shType, setShType] = useState(DEFAULT_SHTYPE);
+  const [carcassLamFrontSheetPrice, setCarcassLamFrontSheetPrice] = useState(DEFAULT_LAMINATE_SHEET_PRICE);
+  const [carcassLamBackSheetPrice, setCarcassLamBackSheetPrice] = useState(DEFAULT_LAMINATE_SHEET_PRICE);
+  const [shutterLamFrontSheetPrice, setShutterLamFrontSheetPrice] = useState(DEFAULT_LAMINATE_SHEET_PRICE);
+  const [shutterLamBackSheetPrice, setShutterLamBackSheetPrice] = useState(DEFAULT_LAMINATE_SHEET_PRICE);
   const [glassType, setGlassType] = useState(DEFAULT_GLASS_TYPE);
   const [hingeChoice, setHingeChoice] = useState<HingeChoice>("Hettich Soft Close");
   const [neon] = useState("NEON50");
@@ -2145,10 +2196,14 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
   const sizes = useMemo(() => defSizes(zk, fkSafe), [zk, fkSafe]);
   const isGlass = isGlassShutterFam(fkSafe);
   const drawerOnly = !!fam.drawers && !fam.fixedDpn && !(ZONES[zk].tall && fkSafe === "APP");
+  const carcassPostlam = isPostlamItem(CARCASS_BOARD_ITEMS.find((item) => item.id === board));
+  const shutterPostlam = !fam.noShutter && !isGlass && isPostlamItem(SHUTTER_BOARD_ITEMS.find((item) => item.id === shType));
+  const laminatePricesValid = (!carcassPostlam || (isValidLaminatePrice(carcassLamFrontSheetPrice) && isValidLaminatePrice(carcassLamBackSheetPrice)))
+    && (!shutterPostlam || (isValidLaminatePrice(shutterLamFrontSheetPrice) && isValidLaminatePrice(shutterLamBackSheetPrice)));
 
   const m = useMemo(
-    () => buildModel({ zk, fk: fkSafe, vid: v.id, hand, handle, board, shType, glassType, hingeChoice, neon, W, H, D, drawerModel, finish }),
-    [zk, fkSafe, v.id, hand, handle, board, shType, glassType, hingeChoice, neon, W, H, D, drawerModel, finish],
+    () => buildModel({ zk, fk: fkSafe, vid: v.id, hand, handle, board, shType, carcassLamFrontSheetPrice, carcassLamBackSheetPrice, shutterLamFrontSheetPrice, shutterLamBackSheetPrice, glassType, hingeChoice, neon, W, H, D, drawerModel, finish }),
+    [zk, fkSafe, v.id, hand, handle, board, shType, carcassLamFrontSheetPrice, carcassLamBackSheetPrice, shutterLamFrontSheetPrice, shutterLamBackSheetPrice, glassType, hingeChoice, neon, W, H, D, drawerModel, finish],
   );
 
   const onZone = useCallback((z: string) => {
@@ -2168,6 +2223,7 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
   }, [zk, fams]);
 
   const addLine = () => {
+    if (!laminatePricesValid) return;
     if (editingLineId !== null) {
       setProject((p) => p.map((line) => line.id === editingLineId ? { ...line, m, qty, elevation } : line));
       setEditingLineId(null);
@@ -2180,6 +2236,10 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
   const loadConfig = (config: CabinetConfig) => {
     setZk(config.zk); setFk(config.fk); setVid(config.vid); setHand(config.hand);
     setHandle(config.handle); setBoard(config.board); setShType(config.shType);
+    setCarcassLamFrontSheetPrice(config.carcassLamFrontSheetPrice);
+    setCarcassLamBackSheetPrice(config.carcassLamBackSheetPrice);
+    setShutterLamFrontSheetPrice(config.shutterLamFrontSheetPrice);
+    setShutterLamBackSheetPrice(config.shutterLamBackSheetPrice);
     setGlassType(config.glassType); setHingeChoice(config.hingeChoice);
     setDrawerModel(config.drawerModel); setFinish(config.finish);
     setW(config.W); setH(config.H); setD(config.D);
@@ -2417,6 +2477,13 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
             </select>
             <Hint>{carcassBoardOf(board).core} · Back: {carcassBoardOf(board).backItem?.subgroup ?? "—"} · {carcassBoardOf(board).backCoreT}mm</Hint>
           </Fld>
+          {carcassPostlam && <Fld label="Carcass laminate prices (₹ per 32 sqft sheet)">
+            <div className="g2">
+              <label>Front side<input type="number" min="0" step="0.01" aria-label="Carcass front laminate price per sheet" value={carcassLamFrontSheetPrice} onChange={(e) => setCarcassLamFrontSheetPrice(e.target.value)} /></label>
+              <label>Back side<input type="number" min="0" step="0.01" aria-label="Carcass back laminate price per sheet" value={carcassLamBackSheetPrice} onChange={(e) => setCarcassLamBackSheetPrice(e.target.value)} /></label>
+            </div>
+            <Hint>Front: {isValidLaminatePrice(carcassLamFrontSheetPrice) ? `₹${(Number(carcassLamFrontSheetPrice) / LAMINATE_PRICE_SHEET_SQFT).toFixed(2)}/sqft` : "enter a price"} · Back: {isValidLaminatePrice(carcassLamBackSheetPrice) ? `₹${(Number(carcassLamBackSheetPrice) / LAMINATE_PRICE_SHEET_SQFT).toFixed(2)}/sqft` : "enter a price"}. ₹550 per side is already included in the finished-board master rate; costing applies only the difference.</Hint>
+          </Fld>}
 
           {!fam.noShutter && (isGlass ? (
             <>
@@ -2439,6 +2506,13 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
               <Hint>{shOf(shType).mat} · cut at {shOf(shType).t}mm · {shOf(shType).band ? `${BAND_T}mm band, all edges` : "no edge band"}</Hint>
             </Fld>
           ))}
+          {shutterPostlam && <Fld label="Shutter laminate prices (₹ per 32 sqft sheet)">
+            <div className="g2">
+              <label>Front side<input type="number" min="0" step="0.01" aria-label="Shutter front laminate price per sheet" value={shutterLamFrontSheetPrice} onChange={(e) => setShutterLamFrontSheetPrice(e.target.value)} /></label>
+              <label>Back side<input type="number" min="0" step="0.01" aria-label="Shutter back laminate price per sheet" value={shutterLamBackSheetPrice} onChange={(e) => setShutterLamBackSheetPrice(e.target.value)} /></label>
+            </div>
+            <Hint>Front: {isValidLaminatePrice(shutterLamFrontSheetPrice) ? `₹${(Number(shutterLamFrontSheetPrice) / LAMINATE_PRICE_SHEET_SQFT).toFixed(2)}/sqft` : "enter a price"} · Back: {isValidLaminatePrice(shutterLamBackSheetPrice) ? `₹${(Number(shutterLamBackSheetPrice) / LAMINATE_PRICE_SHEET_SQFT).toFixed(2)}/sqft` : "enter a price"}. ₹550 per side is already included in the finished-board master rate; costing applies only the difference.</Hint>
+          </Fld>}
 
           {fam.drawers && (
             <Fld label="Drawer model">
@@ -2476,7 +2550,7 @@ export function WoodBomBuilder({ soMode = false, planningMode = false }: { soMod
             </div>
           </Fld>
 
-          <button className="add" disabled={W <= 0 || H <= 0 || D <= 0} onClick={addLine}>{editingLineId === null ? "Add to project" : "Save cabinet changes"}</button>
+          <button className="add" disabled={W <= 0 || H <= 0 || D <= 0 || !laminatePricesValid} onClick={addLine}>{editingLineId === null ? "Add to project" : "Save cabinet changes"}</button>
           {editingLineId !== null && <button className="x" onClick={() => setEditingLineId(null)}>Cancel edit</button>}
           <div className="code">{m.code}</div>
         </aside>

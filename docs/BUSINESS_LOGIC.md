@@ -112,6 +112,20 @@ still produced; a stub names the gap.
 ## Reference figure
 
 `BC.SH` 600 × 720 × 560, board option A → **22.978 sqft**, **11.806 RMT**.
+
+## Postlam laminate price overrides
+
+When a cabinet uses a Postlam carcass or shutter board, its configuration stores
+separate front-side and back-side laminate prices in rupees per 32 sqft sheet.
+Each side's effective rate is `sheet price / 32` per sqft. The Kitchen master
+prices these as finished boards, so cabinet costing retains the master board
+rate and applies only the difference from the user-provided ₹550-per-sheet
+reference for each face: `panel sqft × (1 + board waste %) × (sheet price - 550) / 32`.
+This avoids adding the full laminate price on top of a finished-board rate.
+The two adjustments appear separately in cabinet costing and its Excel export.
+At ₹550 on both sides, existing cabinet totals remain unchanged. Saved project
+configurations retain the entered prices; older files default to ₹550 per side.
+
 # Project pricing factors
 
 The bottom of the project Costing section applies commercial factors after the
