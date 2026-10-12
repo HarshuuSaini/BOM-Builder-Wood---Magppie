@@ -10,7 +10,7 @@ Module._resolveFilename = function (name, ...args) {
 };
 for (const ext of ['.ts', '.tsx']) require.extensions[ext] = (mod, file) => {
   let source = fs.readFileSync(file, 'utf8').replace(/import\.meta\.url/g, '"file:///test"');
-  if (file.endsWith('WoodBomBuilder.tsx')) source += '\nexport {computeCosting, buildModel, buildAccessoryRows, countertopMaterialItem, countertopMaterialId, DEFAULT_RATES, DEFAULT_LAMINATE_PRICES};';
+  if (file.endsWith('WoodBomBuilder.tsx')) source += '\nexport {computeCosting, buildModel, buildAccessoryRows, restoreAccessoryRow, countertopMaterialItem, countertopMaterialId, DEFAULT_RATES, DEFAULT_LAMINATE_PRICES};';
   mod._compile(ts.transpileModule(source, { compilerOptions: {
     module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true, target: ts.ScriptTarget.ES2020,
   } }).outputText, file);
@@ -118,13 +118,14 @@ near(counterBaseCost.purchases[0].rate, 2612.3);
 near(counterBaseCost.total, counterBaseCost.purchases[0].quantity * 2612.3);
 assert(counterBaseCost.lines[0].details[0].specification.includes('16mm'));
 const otherRows = [
-  { id: 1, kind: 'elenor', lengthMeters: 5.25, size: '720', qty: 1, elevation: 'AA', straight: 0, lconn: 0, driver: '' },
-  { id: 2, kind: 'c-handle', lengthMeters: 0.75, size: '', qty: 1, elevation: 'AA', straight: 0, lconn: 0, driver: '' },
-  { id: 3, kind: 'j-handle', lengthMeters: 2.5, size: '', qty: 1, elevation: 'AA', straight: 0, lconn: 0, driver: '' },
+  { id: 1, kind: 'elenor', size: '1.75', qty: 3, elevation: 'AA', straight: 0, lconn: 0, driver: '' },
+  { id: 2, kind: 'c-handle', size: '0.375', qty: 2, elevation: 'AA', straight: 0, lconn: 0, driver: '' },
+  { id: 3, kind: 'j-handle', size: '1.25', qty: 2, elevation: 'AA', straight: 0, lconn: 0, driver: '' },
+  { id: 4, kind: 'skirting', size: '3.2', qty: 2, elevation: 'AA', straight: 0, lconn: 0, driver: '' },
 ];
 const otherCost = b.computeCosting([], [], [], [], [], otherRows, [], config.shType, config.shType,
   b.DEFAULT_RATES, {carcass: 10, shutter: 20, profile: 20}, {});
-for (const [id, qty] of [['KITCHEN-084', 5.25], ['KITCHEN-085', 5.25], ['KITCHEN-086', 5.25], ['KITCHEN-050', 0.75], ['KITCHEN-049', 2.5]]) {
+for (const [id, qty] of [['KITCHEN-084', 5.25], ['KITCHEN-085', 5.25], ['KITCHEN-086', 5.25], ['KITCHEN-050', 0.75], ['KITCHEN-049', 2.5], ['KITCHEN-092', 7.04]]) {
   const purchase = otherCost.purchases.find(p => p.itemCode === id);
   assert(purchase, `Missing other accessory ${id}`);
   near(purchase.quantity, qty);
@@ -132,7 +133,10 @@ for (const [id, qty] of [['KITCHEN-084', 5.25], ['KITCHEN-085', 5.25], ['KITCHEN
 }
 const otherExport = b.buildAccessoryRows(otherRows, [], '');
 near(otherExport[0]['Actual Qty'], 5.25);
-assert.equal(otherExport[0].Size, 'Mtr');
+assert.equal(otherExport[0].Size, '1.75 m × 3');
+near(otherExport.find(r => r['Item Name'] === 'PVC SKIRTING PROFILE 100MM').Total, 6.4);
+assert.equal(otherExport.find(r => r['Item Name'] === 'PVC SKIRTING PROFILE 100MM').Size, '3.2 m × 2');
+near(otherExport.find(r => r['Item Name'].includes('LIGHT EXTENSION WIRE')).Total, 6);
 near(otherExport.find(r => r['Zoho Item ID'] === 'KITCHEN-050')['Actual Qty'], 0.75);
 const pendingHardware = otherExport.filter(r => r.Accessory.includes('quantity pending'));
 assert.equal(pendingHardware.length, 6);
@@ -140,8 +144,18 @@ assert(pendingHardware.every(r => r.Total === '' && r['Actual Qty'] === ''));
 assert.deepEqual(pendingHardware.map(r => r['Zoho Item ID']), ['HARDWARE-022', 'HARDWARE-023', 'HARDWARE-026', 'HARDWARE-024', 'HARDWARE-025', 'HARDWARE-026']);
 assert.equal(otherCost.unpriced.filter(r => r.includes('(quantity pending)')).length, 5);
 assert(!otherCost.purchases.some(r => pendingHardware.some(h => h['Zoho Item ID'] === r.itemCode)));
-const legacyLight = b.buildAccessoryRows([{...otherRows[0], lengthMeters: undefined, size: '1000', qty: 2}], [], '');
+const legacyLightRow = b.restoreAccessoryRow({...otherRows[0], lengthMeters: undefined, size: '1000', qty: 2}, 1, []);
+assert.equal(legacyLightRow.size, '1');
+assert.equal(legacyLightRow.qty, 2);
+const legacyLight = b.buildAccessoryRows([legacyLightRow], [], '');
 near(legacyLight[0]['Actual Qty'], 2);
+const legacyHandle = b.restoreAccessoryRow({...otherRows[1], lengthMeters: 0.75, size: '', qty: 1}, 1, []);
+assert.equal(legacyHandle.size, '0.75');
+assert.equal(legacyHandle.qty, 1);
+const legacySkirting = b.restoreAccessoryRow({...otherRows[3], qty: 2}, 1, []);
+assert.equal(legacySkirting.size, '3.2');
+assert.equal(legacySkirting.qty, 1);
+assert.throws(() => b.restoreAccessoryRow({...otherRows[1], qty: 1.5}, 2, []), /invalid size or quantity/);
 for (const [itemId, rate] of [['KITCHEN-049', 275], ['KITCHEN-050', 315]]) {
   const handles = b.computeCosting([], [], [], [], [], [], [{ id: 1, itemId, qty: 0.75, elevation: 'AA' }],
     config.shType, config.shType, b.DEFAULT_RATES, {carcass: 10, shutter: 20, profile: 20}, {});

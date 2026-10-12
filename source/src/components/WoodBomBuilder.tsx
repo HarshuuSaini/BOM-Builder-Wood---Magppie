@@ -1576,10 +1576,11 @@ type AccessoryKind = "skirting" | "elenor" | "c-handle" | "j-handle";
 interface AccessoryRow {
   id: number;
   kind: AccessoryKind;
-  /** metres for skirting, cut height (mm) for the LED profile light */
+  /** Cutting size of one accessory piece, in metres. */
   size: string;
-  /** Direct run length; legacy light size remains millimetres on import. */
+  /** Legacy saved total length; converted to size on import. */
   lengthMeters?: number;
+  /** Number of pieces or runs, always a whole number. */
   qty: number;
   elevation: string;
   straight: number; // skirting connectors
@@ -1648,8 +1649,7 @@ function requiredHandleHardware(kind: "c-handle" | "j-handle") {
   return HANDLE_HARDWARE[kind].map((id) => COSTING_ITEMS.find((item) => item.id === id)!);
 }
 function accessoryMeters(row: AccessoryRow): number {
-  return Math.max(0, row.lengthMeters ?? (row.kind === "elenor"
-    ? (Number(row.size) || 720) / 1000 * (row.qty || 1) : row.qty));
+  return Math.max(0, Number(row.size) || 0) * Math.max(0, row.qty);
 }
 const LIGHT_ITEMS = {
   profile: COSTING_ITEMS.find((item) => item.id === "KITCHEN-084")!,
@@ -1672,16 +1672,38 @@ function defSkirtMeters(project: ProjectLine[]): number {
   return r3(mm / 1000);
 }
 
+/** Convert version-one accessory rows, where size/qty had different meanings by type. */
+function restoreAccessoryRow(row: AccessoryRow, version: number, project: ProjectLine[]): AccessoryRow {
+  if (version === 2) {
+    if (!Number.isSafeInteger(row.qty) || row.qty < 1 || !Number.isFinite(Number(row.size)) || Number(row.size) < 0) {
+      throw new Error("A saved other accessory has an invalid size or quantity.");
+    }
+    return row;
+  }
+  if (row.kind === "skirting") {
+    return { ...row, size: String(Number(row.size) || defSkirtMeters(project)), qty: 1, lengthMeters: undefined };
+  }
+  if (row.lengthMeters !== undefined && Number.isFinite(row.lengthMeters)) {
+    const qty = Number.isSafeInteger(row.qty) && row.qty > 0 ? row.qty : 1;
+    return { ...row, size: String(row.lengthMeters / qty), qty, lengthMeters: undefined };
+  }
+  if (row.kind === "elenor") {
+    const qty = Number.isSafeInteger(row.qty) && row.qty > 0 ? row.qty : 1;
+    return { ...row, size: String((Number(row.size) || 720) / 1000), qty, lengthMeters: undefined };
+  }
+  return { ...row, size: String(row.qty), qty: 1, lengthMeters: undefined };
+}
+
 function buildAccessoryRows(accs: AccessoryRow[], project: ProjectLine[], so: string): AccessoryExportRow[] {
   const out: AccessoryExportRow[] = [];
   const carcass = project.map((l) => l.m.code.split("-").slice(0, 3).join("-")).join(", ");
   accs.forEach((a) => {
     if (a.kind === "skirting") {
-      const mtr = parseFloat(a.size) || defSkirtMeters(project);
+      const mtr = accessoryMeters(a);
       const withWaste = r3(mtr * (1 + SKIRT_WASTE));
       out.push({
         SO: so, "Carcass Items": carcass, Accessory: ACC_LABEL.skirting, Selected: "yes",
-        "Item Name": "PVC SKIRTING PROFILE 100MM", Size: `${mtr} m`,
+        "Item Name": "PVC SKIRTING PROFILE 100MM", Size: `${a.size} m × ${a.qty}`,
         Elevation: a.elevation, Total: mtr, "Actual Qty": withWaste, "Zoho Item ID": "",
       });
       if (a.straight > 0) out.push({
@@ -1698,7 +1720,7 @@ function buildAccessoryRows(accs: AccessoryRow[], project: ProjectLine[], so: st
       const item = HANDLE_ITEMS[a.kind];
       const meters = accessoryMeters(a);
       out.push({ SO: so, "Carcass Items": carcass, Accessory: ACC_LABEL[a.kind], Selected: "yes",
-        "Item Name": item.materialDescription, Size: "Mtr", Elevation: a.elevation,
+        "Item Name": item.materialDescription, Size: `${a.size} m × ${a.qty}`, Elevation: a.elevation,
         Total: meters, "Actual Qty": meters, "Zoho Item ID": item.id });
       requiredHandleHardware(a.kind).forEach((hardware) => out.push({
         SO: so, "Carcass Items": carcass, Accessory: `${ACC_LABEL[a.kind]} hardware — quantity pending`, Selected: "yes",
@@ -1706,14 +1728,14 @@ function buildAccessoryRows(accs: AccessoryRow[], project: ProjectLine[], so: st
         Total: "", "Actual Qty": "", "Zoho Item ID": hardware.id,
       }));
     } else {
-      const q = a.qty || 1;
+      const q = a.qty;
       const netM = accessoryMeters(a);
       const billedM = netM;
       const rowsDef: Array<[CostingMasterItem, number, number, string]> = [
-        [LIGHT_ITEMS.profile, netM, billedM, "Mtr"],
-        [LIGHT_ITEMS.diffuser, netM, billedM, "Mtr"],
-        [LIGHT_ITEMS.led, netM, billedM, "Mtr"],
-        [LIGHT_ITEMS.wire, 2 * q, 2 * q, "Mtr"],
+        [LIGHT_ITEMS.profile, netM, billedM, `${a.size} m × ${q}`],
+        [LIGHT_ITEMS.diffuser, netM, billedM, `${a.size} m × ${q}`],
+        [LIGHT_ITEMS.led, netM, billedM, `${a.size} m × ${q}`],
+        [LIGHT_ITEMS.wire, 2 * q, 2 * q, `2 m × ${q}`],
       ];
       rowsDef.forEach(([item, total, actualQty, size]) => out.push({
         SO: so, "Carcass Items": carcass, Accessory: ACC_LABEL.elenor, Selected: "yes",
@@ -1867,7 +1889,7 @@ function cabinetConfig(model: CarcassModel): CabinetConfig {
 function projectSetupRows(data: Omit<ProjectRestore, "notice">): ProjectSetupRow[] {
   const row = (kind: string, value: unknown): ProjectSetupRow => ({ "Record Type": kind, Data: JSON.stringify(value) });
   return [
-    row("format", { name: PROJECT_FILE_FORMAT, version: 1 }),
+    row("format", { name: PROJECT_FILE_FORMAT, version: 2 }),
     row("settings", { waste: data.waste, pricing: data.pricing, current: data.current }),
     ...data.project.map((line) => row("cabinet", { id: line.id, config: cabinetConfig(line.m), qty: line.qty, elevation: line.elevation })),
     ...data.fillers.map((item) => row("filler", item)),
@@ -1950,7 +1972,7 @@ function cabinetConfigWithSelectedMaterials(value: unknown, materials: KitchenMa
 function restoreProjectSetup(rows: Record<string, unknown>[], pdfMaterials?: KitchenMaterials): ProjectRestore {
   const records = rows.map((row) => ({ kind: String(row["Record Type"] ?? ""), data: JSON.parse(String(row.Data ?? "null")) as unknown }));
   const format = records.find((record) => record.kind === "format")?.data;
-  if (!isRecord(format) || format.name !== PROJECT_FILE_FORMAT || format.version !== 1) throw new Error("Unsupported Project Setup format.");
+  if (!isRecord(format) || format.name !== PROJECT_FILE_FORMAT || ![1, 2].includes(Number(format.version))) throw new Error("Unsupported Project Setup format.");
   const settings = records.find((record) => record.kind === "settings")?.data;
   if (!isRecord(settings) || !isRecord(settings.waste) || !isRecord(settings.pricing)) throw new Error("Project settings are missing.");
   const waste = settings.waste as WastePct;
@@ -1982,7 +2004,8 @@ function restoreProjectSetup(rows: Record<string, unknown>[], pdfMaterials?: Kit
   });
   const values = <T extends { id: number; qty: number },>(kind: string): T[] => records.filter((record) => record.kind === kind).map((record) => {
     if (!isRecord(record.data)) throw new Error(`A ${kind} row is invalid.`);
-    if (typeof record.data.id !== "number" || !Number.isFinite(record.data.id) || typeof record.data.qty !== "number" || !Number.isFinite(record.data.qty) || record.data.qty < 1) {
+    if (typeof record.data.id !== "number" || !Number.isFinite(record.data.id) || typeof record.data.qty !== "number" || !Number.isFinite(record.data.qty) ||
+        record.data.qty < (kind === "other-accessory" && Number(format.version) === 1 ? 0 : 1)) {
       throw new Error(`A ${kind} row has an invalid id or quantity.`);
     }
     if (kind === "filler") {
@@ -2016,7 +2039,8 @@ function restoreProjectSetup(rows: Record<string, unknown>[], pdfMaterials?: Kit
   });
   return {
     project, fillers: values<FillerRow>("filler"), visiblePanels: values<VisiblePanelRow>("visible-panel"),
-    countertops: values<CountertopRow>("countertop"), accessories: values<AccessoryRow>("other-accessory"),
+    countertops: values<CountertopRow>("countertop"),
+    accessories: values<AccessoryRow>("other-accessory").map((row) => restoreAccessoryRow(row, Number(format.version), project)),
     masterAccessories: values<MasterAccessoryRow>("accessory"), waste, pricing, rawSelections, current,
     notice: `Imported ${project.length} cabinet line${project.length === 1 ? "" : "s"} with ${pdfMaterials ? "the kitchen materials and laminate prices selected before entering the Builder" : "saved materials"}, hardware choices, accessories, raw selections, and pricing settings.`,
   };
@@ -2129,8 +2153,8 @@ function restoreLegacyPrintedPdf(pages: string[], pdfMaterials?: KitchenMaterial
 
   const otherSection = accessoryPage?.split("Accessories + add row")[0] ?? "";
   for (const match of otherSection.matchAll(/PVC Skirting Pr\s+(\d+(?:\.\d+)?)\s+(\d+)\s+([A-Z]{2})\s+(\d+)\s+(\d+)\s+—\s+×/g)) {
-    restored.accessories.push({ id: restored.accessories.length + 1, kind: "skirting", size: match[1], qty: Number(match[2]),
-      elevation: match[3], straight: Number(match[4]), lconn: Number(match[5]), driver: "" });
+    restored.accessories.push(restoreAccessoryRow({ id: restored.accessories.length + 1, kind: "skirting", size: match[1], qty: Number(match[2]),
+      elevation: match[3], straight: Number(match[4]), lconn: Number(match[5]), driver: "" }, 1, restored.project));
   }
   const masterSection = accessoryPage?.split("Accessories + add row")[1]?.split("Accessory lines (export preview)")[0] ?? "";
   for (const line of masterSection.split("\n")) {
@@ -2499,29 +2523,29 @@ function computeCosting(
       });
     };
     if (accessory.kind === "skirting") {
-      const netM = parseFloat(accessory.size) || defSkirtMeters(project);
-      addAccessoryDetail("PVC SKIRTING PROFILE 100MM", `${netM}m skirting run`, netM, netM * (1 + SKIRT_WASTE), "RMT", SKIRT_WASTE * 100);
+      const netM = accessoryMeters(accessory);
+      addAccessoryDetail("PVC SKIRTING PROFILE 100MM", `${accessory.size}m × ${accessory.qty} skirting pieces`, netM, netM * (1 + SKIRT_WASTE), "RMT", SKIRT_WASTE * 100);
       if (accessory.straight > 0) addAccessoryDetail("SKIRTING STRAIGHT CONNECTOR", "Straight connector", accessory.straight, accessory.straight, "nos");
       if (accessory.lconn > 0) addAccessoryDetail("SKIRTING L CONNECTOR", "L connector", accessory.lconn, accessory.lconn, "nos");
     } else if (accessory.kind === "c-handle" || accessory.kind === "j-handle") {
       const item = HANDLE_ITEMS[accessory.kind];
       const meters = accessoryMeters(accessory);
-      addAccessoryDetail(item.materialDescription, `${meters}m handle run`, meters, meters, "RMT");
+      addAccessoryDetail(item.materialDescription, `${accessory.size}m × ${accessory.qty} handle pieces`, meters, meters, "RMT");
       requiredHandleHardware(accessory.kind).forEach((hardware) =>
         unpriced.add(`${hardware.materialDescription} (quantity pending)`));
     } else {
-      const qty = accessory.qty || 1;
+      const qty = accessory.qty;
       const netM = accessoryMeters(accessory);
       const billedM = netM;
       for (const item of [LIGHT_ITEMS.profile, LIGHT_ITEMS.diffuser, LIGHT_ITEMS.led]) {
-        addAccessoryDetail(item.materialDescription, `${netM}m light run`, netM, billedM, "RMT");
+        addAccessoryDetail(item.materialDescription, `${accessory.size}m × ${qty} light pieces`, netM, billedM, "RMT");
       }
       addAccessoryDetail(LIGHT_ITEMS.wire.materialDescription, "2m per set", 2 * qty, 2 * qty, "RMT");
       const driver = selectedDriver(accessory.driver);
       if (driver) addAccessoryDetail(driver.materialDescription, "Driver", qty, qty, "nos");
     }
     const cost = details.reduce((sum, detail) => sum + detail.amount, 0);
-    const qty = accessory.qty || 1;
+    const qty = accessory.qty;
     lines.push({ label: `${accessory.elevation ? `${accessory.elevation} · ` : ""}${ACC_LABEL[accessory.kind]}`, qty, unitCost: qty ? cost / qty : cost, cost, details });
   });
 
@@ -3477,19 +3501,19 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
 
               {/* ---- Other Accessories ---- */}
               <SecHead title="Other Accessories" onAdd={addAcc} />
-              {accessories.length === 0 ? <div className="empty">PVC skirting, LED profile light, C and J handles. Enter the total light or handle length in metres. Light profile, diffuser and LED strip use that same length, without doubling. Wire and drivers are separate components.</div> : <>
-                <Tbl head={["Accessory", "Size (m)", "Qty / length (m)", "Elevation", "Straight", "L-conn", "Driver", ""]} num={[2]}
+              {accessories.length === 0 ? <div className="empty">PVC skirting, LED profile light, C and J handles. Enter each cutting size in metres and a whole-number quantity. Total length is size × quantity.</div> : <>
+                <Tbl head={["Accessory", "Cut size (m)", "Qty (pcs)", "Total (m)", "Elevation", "Straight", "L-conn", "Driver", ""]} num={[2, 3]}
                   rows={accessories.map((a) => [
-                    <select key="k" value={a.kind} onChange={(e) => updAcc(a.id, { kind: e.target.value as AccessoryKind, lengthMeters: 1, qty: 1 })}>
+                    <select key="k" value={a.kind} onChange={(e) => updAcc(a.id, { kind: e.target.value as AccessoryKind, size: "", lengthMeters: undefined, qty: 1 })}>
                       {(Object.keys(ACC_LABEL) as AccessoryKind[]).map((k) => <option key={k} value={k}>{ACC_LABEL[k]}</option>)}</select>,
-                    a.kind === "skirting" ? <input key="s" type="number" value={a.size}
-                      placeholder={a.kind === "skirting" ? `${defSkirtMeters(project)} m` : "H mm"}
-                      onChange={(e) => updAcc(a.id, { size: e.target.value })} style={{ width: 90 }} /> : "—",
-                    a.kind === "skirting" ? <input key="q" type="number" min={1} value={a.qty} onChange={(e) => updAcc(a.id, { qty: Math.max(1, +e.target.value) })} style={{ width: 58 }} /> :
-                      <input key="m" aria-label={`${ACC_LABEL[a.kind]} length (metres)`} type="number" min={0} step="0.01" value={accessoryMeters(a)} onChange={(e) => updAcc(a.id, { lengthMeters: Math.max(0, Number(e.target.value)) })} style={{ width: 90 }} />,
+                    <input key="s" aria-label={`${ACC_LABEL[a.kind]} cutting size (metres)`} type="number" min={0} step="0.001" value={a.size}
+                      placeholder="metres" onChange={(e) => updAcc(a.id, { size: e.target.value })} style={{ width: 90 }} />,
+                    <input key="q" aria-label={`${ACC_LABEL[a.kind]} quantity (pieces)`} type="number" min={1} step={1} value={a.qty}
+                      onChange={(e) => updAcc(a.id, { qty: Math.max(1, Math.trunc(Number(e.target.value) || 1)) })} style={{ width: 58 }} />,
+                    <span key="total">{accessoryMeters(a).toFixed(3)}</span>,
                     <input key="e" list="elev-list" value={a.elevation} onChange={(e) => updAcc(a.id, { elevation: e.target.value })} style={{ width: 64 }} />,
-                    a.kind === "skirting" ? <input key="st" type="number" min={0} value={a.straight} onChange={(e) => updAcc(a.id, { straight: Math.max(0, +e.target.value) })} style={{ width: 58 }} /> : "—",
-                    a.kind === "skirting" ? <input key="lc" type="number" min={0} value={a.lconn} onChange={(e) => updAcc(a.id, { lconn: Math.max(0, +e.target.value) })} style={{ width: 58 }} /> : "—",
+                    a.kind === "skirting" ? <input key="st" type="number" min={0} step={1} value={a.straight} onChange={(e) => updAcc(a.id, { straight: Math.max(0, Math.trunc(Number(e.target.value))) })} style={{ width: 58 }} /> : "—",
+                    a.kind === "skirting" ? <input key="lc" type="number" min={0} step={1} value={a.lconn} onChange={(e) => updAcc(a.id, { lconn: Math.max(0, Math.trunc(Number(e.target.value))) })} style={{ width: 58 }} /> : "—",
                     a.kind === "elenor" ? <select key="dr" value={selectedDriver(a.driver)?.id ?? ""} onChange={(e) => updAcc(a.id, { driver: e.target.value })}>
                       <option value="">— no driver —</option>
                       {DRIVER_ITEMS.map((item) => <option key={item.id} value={item.id}>{item.subgroup}</option>)}</select> : "—",
