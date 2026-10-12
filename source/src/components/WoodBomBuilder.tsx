@@ -31,7 +31,7 @@ import { boardPricesFromMaterials, selectedBoardRate, validBoardSheetPrice, MATE
 import { UserSignOut } from "@/components/UserSignOut";
 import { encodeProjectPrintData, readPrintedProjectPdf } from "@/lib/print-project";
 import type { BomReportRow } from "@/lib/types";
-import { allocatePurchaseCosts, type PurchaseTotal } from "@/lib/purchase-rounding";
+import { allocatePurchaseCosts, roundQuantity, sheetQuantityInput, type PurchaseTotal } from "@/lib/purchase-rounding";
 
 /* ------------------------------------------------------------------ */
 /*  Types & Interfaces  (identical shapes to stone)                    */
@@ -289,6 +289,8 @@ function expandHardwarePack(h: Hardware): HardwareComponent[] {
 const CARCASS_BOARD_ITEMS = COSTING_ITEMS.filter((item) => item.group === "Carcass/ Shelf Material");
 const CARCASS_BACK_ITEMS = COSTING_ITEMS.filter((item) => item.group === "Carcass Back Material");
 const SHUTTER_BOARD_ITEMS = COSTING_ITEMS.filter((item) => item.group === "Shutter Material");
+const COUNTER_PLY_GROUPS = ["Countertop Base PLY", "Carcass/ Shelf Material", "Shutter Material"];
+const COUNTER_PLY_ITEMS = COSTING_ITEMS.filter((item) => COUNTER_PLY_GROUPS.includes(item.group));
 const GLASS_SHUTTER_ITEMS = COSTING_ITEMS.filter((item) => item.group === "Glass Type" && item.type === "Shutter Glass" && item.thicknessMm === 5);
 const GLASS_SHELF_ITEM = COSTING_ITEMS.find((item) => item.id === "KITCHEN-GLASS-6-CLEAR");
 const DEFAULT_BOARD_ID = CARCASS_BOARD_ITEMS.find((item) => item.elevation === "CARCASS POSTLAM BWP PLY")?.id
@@ -355,15 +357,15 @@ const shOf = (st: string): ShutterSpec => {
 const shFamOf = (st: string): ShFamily => shOf(st).fam;
 
 function countertopMaterialId(row: CountertopRow): string {
-  if (row.materialId !== undefined) return row.materialId && !SHUTTER_BOARD_ITEMS.some((item) => item.id === row.materialId) ? "CUSTOM" : row.materialId;
+  if (row.materialId !== undefined) return row.materialId && !COUNTER_PLY_ITEMS.some((item) => item.id === row.materialId) ? "CUSTOM" : row.materialId;
   if (!row.material.trim()) return "";
-  return SHUTTER_BOARD_ITEMS.find((item) =>
+  return COUNTER_PLY_ITEMS.find((item) =>
     [item.id, ...costingItemNames(item), item.subgroup].some((value) => value.toLowerCase() === row.material.trim().toLowerCase()))?.id ?? "CUSTOM";
 }
 
 function countertopMaterialItem(row: CountertopRow, defaultShutterType: string): CostingMasterItem | undefined {
   const id = countertopMaterialId(row);
-  return id === "CUSTOM" ? undefined : shutterMasterItem(id || defaultShutterType);
+  return id === "CUSTOM" ? undefined : COUNTER_PLY_ITEMS.find((item) => item.id === (id || defaultShutterType));
 }
 
 /** Only the glass branch keeps the stone frame machinery. */
@@ -748,13 +750,13 @@ function addDrawerBoxes(
     panels.push({
       name: `Panels- DR Bottom ${d.botT}mm ${botW}x${botD}`,
       w: botW, h: botD, qty: n, drill: null, pack: "Drawer Pack",
-      t: d.botT, mat: drawerBoard?.materialDescription ?? DRAWER_PANEL_MAT(d.botT), band: false,
+      t: d.botT, mat: drawerBoard?.materialDescription ?? DRAWER_PANEL_MAT(d.botT), band: true,
       materialId: drawerBoard?.id,
     });
     panels.push({
       name: `Panels- DR Back ${d.backT}mm ${bakW}x${d.backH}`,
       w: bakW, h: d.backH, qty: n, drill: null, pack: "Drawer Pack",
-      t: d.backT, mat: drawerBoard?.materialDescription ?? DRAWER_PANEL_MAT(d.backT), band: false,
+      t: d.backT, mat: drawerBoard?.materialDescription ?? DRAWER_PANEL_MAT(d.backT), band: true,
       materialId: drawerBoard?.id,
     });
   });
@@ -1120,6 +1122,7 @@ function buildCarcassInnerRaw(cfg: {
   const merged = mergeCarcassPanels(panels);
   const carcBandM = merged.reduce((a, p) => a + (p.band && p.pack === PK && !p.visibleSide ? perim(p.w, p.h) * p.qty : 0), 0);
   const shutterBandM = merged.reduce((a, p) => a + (p.band && (p.pack === "Shutter Pack" || p.visibleSide) ? perim(p.w, p.h) * p.qty : 0), 0);
+  const drawerBandM = merged.reduce((a, p) => a + (p.band && p.pack === "Drawer Pack" ? perim(p.w, p.h) * p.qty : 0), 0);
   const carcSqft = merged.filter((p) => p.pack === PK).reduce((a, p) => a + sqft(p.w, p.h) * p.qty, 0);
   const shSqft = merged.filter((p) => p.pack === "Shutter Pack").reduce((a, p) => a + sqft(p.w, p.h) * p.qty, 0);
   const visibleSqft = merged.filter((p) => p.visibleSide).reduce((a, p) => a + sqft(p.w, p.h) * p.qty, 0);
@@ -1131,6 +1134,10 @@ function buildCarcassInnerRaw(cfg: {
   if (shutterBandM > 0) {
     cons.push({ name: `EDGE BAND ${BAND_T}MM`, qty: r3(shutterBandM), uom: "RMT", pack: "Shutter Pack" });
     cons.push({ name: "EDGEBAND ADHESIVE", qty: r3(shutterBandM * EDGE_ADH_G_PER_M), uom: "gm", pack: "Shutter Pack" });
+  }
+  if (drawerBandM > 0) {
+    cons.push({ name: `EDGE BAND ${BAND_T}MM`, qty: r3(drawerBandM), uom: "RMT", pack: "Drawer Pack" });
+    cons.push({ name: "EDGEBAND ADHESIVE", qty: r3(drawerBandM * EDGE_ADH_G_PER_M), uom: "gm", pack: "Drawer Pack" });
   }
   if (B.lam) {
     cons.push({ name: "CARCASS LAMINATE 0.8MM", qty: r3(carcSqft * 2), uom: "sqft", pack: PK });
@@ -1389,7 +1396,7 @@ function buildBoardTotals(project: ProjectLine[], wst: WastePct = WASTE, extraPa
   return [...map.values()].map((b) => ({
     ...b,
     waste: b.sqft ? r3((b.billableArea / b.sqft - 1) * 100) : 0,
-    sheets: /glass/i.test(b.mat) ? null : b.billableArea / 32,
+    sheets: /glass/i.test(b.mat) ? null : roundQuantity(b.billableArea / 32),
   }));
 }
 
@@ -2839,7 +2846,7 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
     const key = `${b.mat}|${b.t}`;
     const value = boardSheetInputs[key];
     return b.sheets !== null && value !== undefined && value.trim() !== "" && Number.isFinite(Number(value)) && Number(value) >= 0
-      ? [[key, { sheets: Number(value), netSqft: b.sqft }]] : [];
+      ? [[key, { sheets: roundQuantity(Number(value)), netSqft: b.sqft }]] : [];
   })), [boardTotals, boardSheetInputs]);
   const fullBom = useMemo(
     () => [...buildFullBomData(project, soMode ? "SO" : "", finish, waste), ...extras.rows],
@@ -3378,10 +3385,10 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
                     const override = boardQuantityOverrides[key];
                     const derivedWaste = override && b.sqft > 0 ? (override.sheets * 32 / b.sqft - 1) * 100 : b.waste;
                     return [b.mat, b.t, b.pack, b.sqft.toFixed(2), derivedWaste.toFixed(2),
-                      b.sheets === null ? "by area" : <input key={key} aria-label={`Sheets for ${b.mat} ${b.t}mm`} type="number" min={0} step="any"
-                        value={boardSheetInputs[key] ?? b.sheets.toFixed(2)} style={{ width: 140 }}
+                      b.sheets === null ? "by area" : <input key={key} aria-label={`Sheets for ${b.mat} ${b.t}mm`} type="number" min={0} step="0.01"
+                        value={boardSheetInputs[key] === undefined ? b.sheets.toFixed(2) : sheetQuantityInput(boardSheetInputs[key])} style={{ width: 140 }}
                         onBlur={() => setBoardSheetInputs((current) => current[key] ? { ...current, [key]: Number(current[key]).toFixed(2) } : current)}
-                        onChange={(e) => { const value = e.target.value; if (value === "" || Number.isFinite(Number(value)) && Number(value) >= 0) setBoardSheetInputs((current) => ({ ...current, [key]: value })); }} />];
+                        onChange={(e) => { const value = e.target.value; if (value === "" || Number.isFinite(Number(value)) && Number(value) >= 0) setBoardSheetInputs((current) => ({ ...current, [key]: sheetQuantityInput(value) })); }} />];
                   })} />
               </>}
 
@@ -3434,7 +3441,7 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
 
               {/* ---- Counter Ply ---- */}
               <SecHead title="Counter Ply" onAdd={addCt} />
-              {countertops.length === 0 ? <div className="empty">No Counter Ply. Add a single-sheet top; its board follows the shutter material by default, or select another shutter board.</div> : <>
+              {countertops.length === 0 ? <div className="empty">No Counter Ply. Add a single-sheet top; its board follows the shutter material by default, or choose from Countertop Base PLY, carcass and shutter materials.</div> : <>
                 <p className="hint">Same as shutter follows the sole solid-shutter board in the project; if several are used, it follows the current configuration. Catalog rates are per square foot.</p>
                 <Tbl head={["Length (mm)", "Depth (mm)", "Thk (mm)", "Material", "Rate (Rs/sqft)", "Qty", ""]} num={[4, 5]}
                   rows={countertops.map((c) => [
@@ -3445,12 +3452,15 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
                       <select value={countertopMaterialId(c)} aria-label="Counter Ply material" onChange={(e) => {
                         const id = e.target.value;
                         const previousThickness = countertopMaterialItem(c, countertopShutterType)?.thicknessMm;
-                        const nextItem = id === "" ? shutterMasterItem(countertopShutterType) : SHUTTER_BOARD_ITEMS.find((item) => item.id === id);
+                        const nextItem = id === "" ? shutterMasterItem(countertopShutterType) : COUNTER_PLY_ITEMS.find((item) => item.id === id);
                         updCt(c.id, { materialId: id, material: id === "CUSTOM" ? c.material : id ? nextItem?.materialDescription ?? "" : "",
                           thickness: !c.thickness || Number(c.thickness) === previousThickness ? String(nextItem?.thicknessMm ?? "") : c.thickness });
                       }} style={{ minWidth: 180 }}>
                         <option value="">Same as shutter ({shOf(countertopShutterType).label})</option>
-                        {SHUTTER_BOARD_ITEMS.map((item) => <option key={item.id} value={item.id}>{item.subgroup} · {item.thicknessMm ?? "—"}mm</option>)}
+                        {COUNTER_PLY_GROUPS.map((group) => <optgroup key={group} label={group}>
+                          {COUNTER_PLY_ITEMS.filter((item) => item.group === group).map((item) =>
+                            <option key={item.id} value={item.id}>{item.subgroup} · {item.thicknessMm ?? "—"}mm</option>)}
+                        </optgroup>)}
                         <option value="CUSTOM">Custom / legacy material</option>
                       </select>
                       {countertopMaterialId(c) === "CUSTOM" && <input value={c.material} placeholder="Material name" onChange={(e) => updCt(c.id, { material: e.target.value })} />}

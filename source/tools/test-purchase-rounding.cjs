@@ -10,12 +10,19 @@ Module._resolveFilename = function (name, ...args) {
 };
 for (const ext of ['.ts', '.tsx']) require.extensions[ext] = (mod, file) => {
   let source = fs.readFileSync(file, 'utf8').replace(/import\.meta\.url/g, '"file:///test"');
-  if (file.endsWith('WoodBomBuilder.tsx')) source += '\nexport {computeCosting, buildModel, buildAccessoryRows, DEFAULT_RATES, DEFAULT_LAMINATE_PRICES};';
+  if (file.endsWith('WoodBomBuilder.tsx')) source += '\nexport {computeCosting, buildModel, buildAccessoryRows, countertopMaterialItem, countertopMaterialId, DEFAULT_RATES, DEFAULT_LAMINATE_PRICES};';
   mod._compile(ts.transpileModule(source, { compilerOptions: {
     module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true, target: ts.ScriptTarget.ES2020,
   } }).outputText, file);
 };
-const { purchaseTotals, allocatePurchaseCosts, ceilQuantity } = require('../src/lib/purchase-rounding.ts');
+const { purchaseTotals, allocatePurchaseCosts, ceilQuantity, roundQuantity, sheetQuantityInput } = require('../src/lib/purchase-rounding.ts');
+for (const [input, expected] of [['4.287328756949', '4.29'], ['5.8506770203644', '5.85'], ['2.2896212545897', '2.29'], ['1.0908247727953', '1.09']]) {
+  assert.equal(sheetQuantityInput(input), expected);
+  assert.equal(roundQuantity(Number(input)), Number(expected));
+}
+assert.equal(sheetQuantityInput(''), '');
+assert.equal(sheetQuantityInput('4.'), '4.');
+assert.equal(sheetQuantityInput('0'), '0');
 const detail = (id, qty, uom, rate, category = 'Hardware') => ({
   itemCode: id, item: id, category, specification: '', netQty: qty, wastePct: 0,
   billableQty: qty, uom, rate, amount: qty * rate,
@@ -70,10 +77,38 @@ const config = { zk: 'BC', fk: 'SK', vid: 'double', hand: 'LHS', handle: 'STD', 
   glassType: 'KITCHEN-GLASS-5-TINTED', hingeChoice: 'Hettich Soft Close', neon: 'NEON50',
   W: 900, H: 720, D: 560, drawerModel: 'Hettich', finish: 'White' };
 const model = b.buildModel(config);
+const drawerModel = b.buildModel({...config, fk: 'DW', vid: '2dr-mixed'});
+const drawerPanels = drawerModel.panels.filter(p => p.pack === 'Drawer Pack');
+assert(drawerPanels.length > 0 && drawerPanels.every(p => p.band));
+const drawerBand = drawerPanels.reduce((sum, p) => sum + 2 * (p.w + p.h) / 1000 * p.qty, 0);
+near(drawerModel.cons.find(c => c.pack === 'Drawer Pack' && c.name.startsWith('EDGE BAND')).qty, Math.round(drawerBand * 1000) / 1000);
+near(drawerModel.cons.find(c => c.pack === 'Drawer Pack' && c.name === 'EDGEBAND ADHESIVE').qty, Math.round(drawerBand * 6 * 1000) / 1000);
+const drawerCost = b.computeCosting([{id: 1, m: drawerModel, qty: 1, elevation: 'AA'}], [], [], [], [], [], [], config.shType, config.shType,
+  b.DEFAULT_RATES, {carcass: 10, shutter: 20, profile: 20}, {});
+const nonShutterBand = drawerModel.panels.filter(p => p.band && p.pack !== 'Shutter Pack' && !p.visibleSide)
+  .reduce((sum, p) => sum + 2 * (p.w + p.h) / 1000 * p.qty, 0);
+near(drawerCost.lines[0].details.find(d => d.category === 'Carcass edge band').netQty, nonShutterBand);
 const calc = (project, totals) => b.computeCosting(project, [], [], [], [], [], [], config.shType, config.shType,
   b.DEFAULT_RATES, {carcass: 10, shutter: 20, profile: 20}, {}, totals);
 const project = [{ id: 1, m: model, qty: 1, elevation: 'AA' }, { id: 2, m: model, qty: 1, elevation: 'BB' }];
 const full = calc(project);
+const counter = b.computeCosting([], [], [], [{id: 1, materialId: 'KITCHEN-014', material: 'POSTlam BWP Ply BSL', ratePerSqft: '166.8125', length: '2050', depth: '600', thickness: '18', qty: 1}], [], [], [], config.shType, config.shType,
+  b.DEFAULT_RATES, {carcass: 10, shutter: 20, profile: 20}, {});
+near(counter.lines[0].details[0].rate, 2612.4 / 32);
+near(counter.purchases[0].rate, 2612.4);
+near(counter.total, counter.purchases[0].quantity * 2612.4);
+const counterBase = {id: 1, materialId: 'KITCHEN-030', material: 'RAW BWR Ply Counter Base-16mm', ratePerSqft: '166.81', length: '2050', depth: '600', thickness: '', qty: 1};
+assert.equal(b.countertopMaterialId(counterBase), 'KITCHEN-030');
+assert.equal(b.countertopMaterialItem(counterBase, config.shType).thicknessMm, 16);
+assert.equal(b.countertopMaterialId({...counterBase, materialId: undefined}), 'KITCHEN-030');
+assert.equal(b.countertopMaterialItem({...counterBase, materialId: 'KITCHEN-007'}, config.shType).id, 'KITCHEN-007');
+const counterBaseCost = b.computeCosting([], [], [], [counterBase], [], [], [], config.shType, config.shType,
+  b.DEFAULT_RATES, {carcass: 10, shutter: 20, profile: 20}, {});
+assert.equal(counterBaseCost.lines[0].details[0].itemCode, 'KITCHEN-030');
+near(counterBaseCost.lines[0].details[0].rate, 2612.3 / 32);
+near(counterBaseCost.purchases[0].rate, 2612.3);
+near(counterBaseCost.total, counterBaseCost.purchases[0].quantity * 2612.3);
+assert(counterBaseCost.lines[0].details[0].specification.includes('16mm'));
 const otherRows = [
   { id: 1, kind: 'elenor', lengthMeters: 5.25, size: '720', qty: 1, elevation: 'AA', straight: 0, lconn: 0, driver: '' },
   { id: 2, kind: 'c-handle', lengthMeters: 0.75, size: '', qty: 1, elevation: 'AA', straight: 0, lconn: 0, driver: '' },

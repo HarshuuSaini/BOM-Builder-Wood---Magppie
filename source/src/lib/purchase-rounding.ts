@@ -10,6 +10,15 @@ export type PurchaseTotal = {
   rounded: boolean;
 };
 
+export const roundQuantity = (value: number): number => Math.round((value + Number.EPSILON) * 100) / 100;
+
+/** Preserve partial input while typing, but never retain more than two decimals. */
+export function sheetQuantityInput(value: string): string {
+  if (value === "" || /^\d*\.?\d{0,2}$/.test(value)) return value;
+  const quantity = Number(value);
+  return Number.isFinite(quantity) ? roundQuantity(quantity).toFixed(2) : "";
+}
+
 // Suppress floating-point noise at whole-number boundaries, not genuine fractions.
 export function ceilQuantity(value: number): number {
   if (value <= 0) return 0;
@@ -49,7 +58,7 @@ export function purchaseTotals(details: PurchaseDetail[]): PurchaseTotal[] {
     });
   }
   return [...groups.values()].map(group => {
-    const quantity = Math.round((group.requiredQty + Number.EPSILON) * 100) / 100;
+    const quantity = roundQuantity(group.requiredQty);
     return { ...group, quantity, amount: quantity * group.rate };
   });
 }
