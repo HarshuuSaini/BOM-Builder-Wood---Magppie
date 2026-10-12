@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import { AiCopilot } from "@/components/AiCopilot";
-import { AuthGate } from "@/components/AuthGate";
 
 export const metadata: Metadata = {
   title: "BOM Backorder Report",
@@ -12,10 +11,8 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
   return (
     <html lang="en">
       <body>
-        <AuthGate>
-          {children}
-          <AiCopilot />
-        </AuthGate>
+        {children}
+        <AiCopilot />
       </body>
     </html>
   );

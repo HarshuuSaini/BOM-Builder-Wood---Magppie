@@ -9,6 +9,7 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "iron-session": "^9.0.1",
     "jsbarcode": "^3.12.3",
     "jspdf": "^4.2.1",
     "next": "16.2.6",

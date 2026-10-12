@@ -4,6 +4,10 @@ export type RateBasis = "SQFT" | "MTR" | "KG" | "SET" | "PCS";
 export type CostingMasterItem = {
   id: string; sNo: number; elevation: string;
   materialDescription: string; remark: string; unit: string;
+  itemName?: string;
+  /** Original description retained for matching previously exported projects. */
+  sourceMaterialDescription?: string;
+  legacyDescriptions?: string[];
   sqft: number | null; price: number | null; sqftPrice: number | null;
   group: string; subgroup: string; type: string; brand: string;
   thicknessMm: number | null; rateBasis: RateBasis; currentRate: number;
@@ -13,8 +17,21 @@ export type CostingMaster = {
   items: CostingMasterItem[];
 };
 
-export const COSTING_MASTER = masterJson as CostingMaster;
+const importedMaster = masterJson as CostingMaster;
+export const COSTING_MASTER: CostingMaster = {
+  ...importedMaster,
+  items: importedMaster.items.map((item) => ({
+    ...item,
+    sourceMaterialDescription: item.materialDescription,
+    // Existing BOM and costing consumers use this as the displayed item text.
+    materialDescription: item.itemName?.trim() || item.materialDescription,
+  })),
+};
 export const COSTING_ITEMS = COSTING_MASTER.items;
+
+export function costingItemNames(item: CostingMasterItem): string[] {
+  return [...new Set([item.materialDescription, item.sourceMaterialDescription, ...(item.legacyDescriptions ?? [])].filter((name): name is string => !!name))];
+}
 
 export function findCostingItem(match: Partial<Pick<CostingMasterItem,
   "elevation" | "group" | "subgroup" | "type" | "brand" | "thicknessMm" | "rateBasis"

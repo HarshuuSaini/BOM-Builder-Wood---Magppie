@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "source": "Cost (1).xlsx / KITCHEN + Hardware",
-  "generatedAt": "2026-10-03T08:48:45.846Z",
+  "source": "Cost (3).xlsx / KITCHEN; existing supplemental glass and Hardware retained",
+  "generatedAt": "2026-10-12T06:45:20.866649+00:00",
   "currency": "INR",
   "items": [
     {
@@ -13,14 +13,15 @@
       "unit": "Pcs",
       "sqft": 32,
       "price": 2306.88,
-      "sqftPrice": 72,
+      "sqftPrice": 72.09,
       "group": "Carcass/ Shelf Material",
       "subgroup": "Prelam HDHMR BSL",
       "type": "Prelam",
       "brand": "",
       "thicknessMm": 18,
       "rateBasis": "SQFT",
-      "currentRate": 72
+      "currentRate": 72.09,
+      "itemName": "Prelam HDHMR BSL-18mm"
     },
     {
       "id": "KITCHEN-002",
@@ -31,14 +32,15 @@
       "unit": "Pcs",
       "sqft": 32,
       "price": 1153.44,
-      "sqftPrice": 36,
+      "sqftPrice": 36.045,
       "group": "Carcass/ Shelf Material",
       "subgroup": "Prelam Particle BSL",
       "type": "Prelam",
       "brand": "",
       "thicknessMm": 18,
       "rateBasis": "SQFT",
-      "currentRate": 36
+      "currentRate": 36.045,
+      "itemName": "Prelam Particle BSL-18mm"
     },
     {
       "id": "KITCHEN-003",
@@ -49,288 +51,325 @@
       "unit": "Pcs",
       "sqft": 32,
       "price": 1784.628,
-      "sqftPrice": 55.7,
+      "sqftPrice": 55.769625,
       "group": "Carcass/ Shelf Material",
       "subgroup": "Prelam MDF BSL",
       "type": "Prelam",
       "brand": "",
       "thicknessMm": 18,
       "rateBasis": "SQFT",
-      "currentRate": 55.7
+      "currentRate": 55.769625,
+      "itemName": "Prelam MDF BSL-18mm"
     },
     {
       "id": "KITCHEN-004",
-      "sNo": 10,
+      "sNo": 1,
       "elevation": "CARCASS POSTLAM HDHMR",
       "materialDescription": "POSTLAM HDHMR BOARD BSL 2440X1220X18 WHITE 1002 AMU",
       "remark": "0.7MM",
       "unit": "Pcs",
       "sqft": 32,
       "price": 3063.91,
-      "sqftPrice": 95.63,
+      "sqftPrice": 95.7471875,
       "group": "Carcass/ Shelf Material",
       "subgroup": "POSTlam HDHMR BSL",
       "type": "POSTLAM",
       "brand": "",
       "thicknessMm": 18,
       "rateBasis": "SQFT",
-      "currentRate": 95.63
+      "currentRate": 95.7471875,
+      "itemName": "POSTlam HDHMR BSL-18mm"
     },
     {
       "id": "KITCHEN-005",
-      "sNo": 13,
+      "sNo": 2,
       "elevation": "CARCASS POSTLAM PARTICAL",
       "materialDescription": "POSTLAM PARTICLE BOARD BSL 2440X1220X18 WHITE 1002 AMU",
       "remark": "0.7MM",
       "unit": "Pcs",
       "sqft": 32,
       "price": 3188,
-      "sqftPrice": 99.5,
+      "sqftPrice": 99.625,
       "group": "Carcass/ Shelf Material",
       "subgroup": "POSTlam Particle BSL",
       "type": "POSTLAM",
       "brand": "",
       "thicknessMm": 18,
       "rateBasis": "SQFT",
-      "currentRate": 99.5
+      "currentRate": 99.625,
+      "itemName": "POSTlam Particle BSL-18mm"
     },
     {
       "id": "KITCHEN-006",
-      "sNo": 16,
+      "sNo": 3,
       "elevation": "CARCASS POSTLAM MDF",
       "materialDescription": "POSTLAM MDF BOARD BSL 2440X1220X18 WHITE 1002 AMU",
       "remark": "0.7MM",
       "unit": "Pcs",
       "sqft": 32,
       "price": 2279,
-      "sqftPrice": 71.13,
+      "sqftPrice": 71.21875,
       "group": "Carcass/ Shelf Material",
       "subgroup": "POSTlam MDF BSL",
       "type": "POSTLAM",
       "brand": "",
       "thicknessMm": 18,
       "rateBasis": "SQFT",
-      "currentRate": 71.13
+      "currentRate": 71.21875,
+      "itemName": "POSTlam MDF BSL-18mm"
     },
     {
       "id": "KITCHEN-007",
-      "sNo": 19,
+      "sNo": 4,
       "elevation": "CARCASS POSTLAM BWP PLY",
       "materialDescription": "POSTLAM BWP PLY BOARD BSL 2440X1220X18 WHITE 1002 AMU",
       "remark": "0.7MM",
       "unit": "Pcs",
       "sqft": 32,
-      "price": 3528,
-      "sqftPrice": 110.11,
+      "price": 2612.4,
+      "sqftPrice": 81.6375,
       "group": "Carcass/ Shelf Material",
       "subgroup": "POSTlam BWP Ply BSL",
       "type": "POSTLAM",
       "brand": "",
       "thicknessMm": 18,
       "rateBasis": "SQFT",
-      "currentRate": 110.11
+      "currentRate": 81.6375,
+      "itemName": "POSTlam BWP Ply BSL-18mm"
     },
     {
       "id": "KITCHEN-008",
-      "sNo": 32,
+      "sNo": 5,
       "elevation": "SHUTTER PRELAM HDHMR",
-      "materialDescription": "HDHMR OSL 2440X1220X18 WHITE_OUTER SHUTTER MATCHING LAM 1",
+      "materialDescription": "HDHMR BSL 2440X1220X18 WHITE_OUTER SHUTTER MATCHING LAM 1",
       "remark": "",
       "unit": "Pcs",
       "sqft": 32,
-      "price": 4204,
-      "sqftPrice": 131.21,
+      "price": 2306.88,
+      "sqftPrice": 72.09,
       "group": "Shutter Material",
       "subgroup": "Prelam HDHMR BSL",
       "type": "Prelam",
       "brand": "",
       "thicknessMm": 18,
       "rateBasis": "SQFT",
-      "currentRate": 131.21
+      "currentRate": 72.09,
+      "itemName": "Prelam HDHMR BSL-18mm",
+      "legacyDescriptions": [
+        "HDHMR OSL 2440X1220X18 WHITE_OUTER SHUTTER MATCHING LAM 1"
+      ]
     },
     {
       "id": "KITCHEN-009",
-      "sNo": 33,
+      "sNo": 6,
       "elevation": "SHUTTER PRELAM PARTICAL",
-      "materialDescription": "PARTICAL OSL 2440X1220X18 WHITE_OUTER SHUTTER MATCHING LAM 1",
+      "materialDescription": "PARTICAL BSL 2440X1220X18 WHITE_OUTER SHUTTER MATCHING LAM 1",
       "remark": "",
       "unit": "Pcs",
       "sqft": 32,
       "price": 2954,
-      "sqftPrice": 92.2,
+      "sqftPrice": 92.3125,
       "group": "Shutter Material",
       "subgroup": "Prelam Particle BSL",
       "type": "Prelam",
       "brand": "",
       "thicknessMm": 18,
       "rateBasis": "SQFT",
-      "currentRate": 92.2
+      "currentRate": 92.3125,
+      "itemName": "Prelam Particle BSL-18mm",
+      "legacyDescriptions": [
+        "PARTICAL OSL 2440X1220X18 WHITE_OUTER SHUTTER MATCHING LAM 1"
+      ]
     },
     {
       "id": "KITCHEN-010",
-      "sNo": 34,
+      "sNo": 7,
       "elevation": "SHUTTER PRELAM MDF",
-      "materialDescription": "MDF OSL 2440X1220X18 WHITE_OUTER SHUTTER MATCHING LAM 1",
+      "materialDescription": "MDF BSL 2440X1220X18 WHITE_OUTER SHUTTER MATCHING LAM 1",
       "remark": "",
       "unit": "Pcs",
       "sqft": 32,
       "price": 3584,
-      "sqftPrice": 111.86,
+      "sqftPrice": 112,
       "group": "Shutter Material",
       "subgroup": "Prelam MDF BSL",
       "type": "Prelam",
       "brand": "",
       "thicknessMm": 18,
       "rateBasis": "SQFT",
-      "currentRate": 111.86
+      "currentRate": 112,
+      "itemName": "Prelam MDF BSL-18mm",
+      "legacyDescriptions": [
+        "MDF OSL 2440X1220X18 WHITE_OUTER SHUTTER MATCHING LAM 1"
+      ]
     },
     {
       "id": "KITCHEN-011",
-      "sNo": 35,
+      "sNo": 8,
       "elevation": "SHUTTER POSTLAM HDHMR",
-      "materialDescription": "POSTLAM HDHMR OSL 2440X1220X18 WHITE_OUTER SHUTTER MATCHING LAM 1",
+      "materialDescription": "POSTLAM HDHMR BSL 2440X1220X18 WHITE_OUTER SHUTTER MATCHING LAM 1",
       "remark": "1MM",
       "unit": "Pcs",
       "sqft": 32,
       "price": 4874,
-      "sqftPrice": 152.12,
+      "sqftPrice": 152.3125,
       "group": "Shutter Material",
       "subgroup": "POSTlam HDHMR BSL",
       "type": "POSTLAM",
       "brand": "",
       "thicknessMm": 18,
       "rateBasis": "SQFT",
-      "currentRate": 152.12
+      "currentRate": 152.3125,
+      "itemName": "POSTlam HDHMR BSL-18mm",
+      "legacyDescriptions": [
+        "POSTLAM HDHMR OSL 2440X1220X18 WHITE_OUTER SHUTTER MATCHING LAM 1"
+      ]
     },
     {
       "id": "KITCHEN-012",
-      "sNo": 36,
+      "sNo": 9,
       "elevation": "SHUTTER POSTLAM PARTICAL",
-      "materialDescription": "POSTLAM PARTICAL OSL 2440X1220X18 WHITE_OUTER SHUTTER MATCHING LAM 1",
+      "materialDescription": "POSTLAM PARTICAL BSL 2440X1220X18 WHITE_OUTER SHUTTER MATCHING LAM 1",
       "remark": "1MM",
       "unit": "Pcs",
       "sqft": 32,
       "price": 3688,
-      "sqftPrice": 115.11,
+      "sqftPrice": 115.25,
       "group": "Shutter Material",
       "subgroup": "POSTlam Particle BSL",
       "type": "POSTLAM",
       "brand": "",
       "thicknessMm": 18,
       "rateBasis": "SQFT",
-      "currentRate": 115.11
+      "currentRate": 115.25,
+      "itemName": "POSTlam Particle BSL-18mm",
+      "legacyDescriptions": [
+        "POSTLAM PARTICAL OSL 2440X1220X18 WHITE_OUTER SHUTTER MATCHING LAM 1"
+      ]
     },
     {
       "id": "KITCHEN-013",
-      "sNo": 37,
+      "sNo": 10,
       "elevation": "SHUTTER POSTLAM MDF",
-      "materialDescription": "POSTLAM MDF OSL 2440X1220X18 WHITE_OUTER SHUTTER MATCHING LAM 1",
+      "materialDescription": "POSTLAM MDF BSL 2440X1220X18 WHITE_OUTER SHUTTER MATCHING LAM 1",
       "remark": "1MM",
       "unit": "Pcs",
       "sqft": 32,
-      "price": 4089,
-      "sqftPrice": 127.62,
+      "price": 1720,
+      "sqftPrice": 53.75,
       "group": "Shutter Material",
       "subgroup": "POSTlam MDF BSL",
       "type": "POSTLAM",
       "brand": "",
       "thicknessMm": 18,
       "rateBasis": "SQFT",
-      "currentRate": 127.62
+      "currentRate": 53.75,
+      "itemName": "POSTlam MDF BSL-18mm",
+      "legacyDescriptions": [
+        "POSTLAM MDF OSL 2440X1220X18 WHITE_OUTER SHUTTER MATCHING LAM 1"
+      ]
     },
     {
       "id": "KITCHEN-014",
-      "sNo": 38,
+      "sNo": 11,
       "elevation": "SHUTTER POSTLAM BWP PLY",
-      "materialDescription": "POSTLAM BWP PLY OSL 2440X1220X18 WHITE_OUTER SHUTTER MATCHING LAM 1",
+      "materialDescription": "POSTLAM BWP PLY BSL 2440X1220X18 WHITE_OUTER SHUTTER MATCHING LAM 1",
       "remark": "1MM",
       "unit": "Pcs",
       "sqft": 32,
       "price": 5338,
-      "sqftPrice": 166.6,
+      "sqftPrice": 166.8125,
       "group": "Shutter Material",
       "subgroup": "POSTlam BWP Ply BSL",
       "type": "POSTLAM",
       "brand": "",
       "thicknessMm": 18,
       "rateBasis": "SQFT",
-      "currentRate": 166.6
+      "currentRate": 166.8125,
+      "itemName": "POSTlam BWP Ply BSL-18mm",
+      "legacyDescriptions": [
+        "POSTLAM BWP PLY OSL 2440X1220X18 WHITE_OUTER SHUTTER MATCHING LAM 1"
+      ]
     },
     {
       "id": "KITCHEN-015",
-      "sNo": 15,
+      "sNo": 12,
       "elevation": "SHUTTER MEMBRANE",
       "materialDescription": "HDHMR 18MM OSR MEMBRANE SHUTTER ONE SIDE FOIL MATT FINISH",
       "remark": "",
       "unit": "Pcs",
       "sqft": 32,
       "price": 8056.88,
-      "sqftPrice": 200,
+      "sqftPrice": 251.7775,
       "group": "Shutter Material",
       "subgroup": "Membrane (Modern) HDHMR OSM",
       "type": "Prelam",
       "brand": "",
       "thicknessMm": 18,
       "rateBasis": "SQFT",
-      "currentRate": 200
+      "currentRate": 251.7775,
+      "itemName": "Membrane (Modern) HDHMR OSM-18mm"
     },
     {
       "id": "KITCHEN-016",
-      "sNo": 16,
+      "sNo": 13,
       "elevation": "SHUTTER MEMBRANE",
       "materialDescription": "HDHMR 18MM RAW MEMBRANE SHUTTER BOTH SIDE FOIL MATT FINISH",
       "remark": "",
       "unit": "Pcs",
       "sqft": 32,
       "price": 13839.84,
-      "sqftPrice": 300,
+      "sqftPrice": 432.495,
       "group": "Shutter Material",
       "subgroup": "Membrane (Modern) HDHMR BSM",
       "type": "RAW",
       "brand": "",
       "thicknessMm": 18,
       "rateBasis": "SQFT",
-      "currentRate": 300
+      "currentRate": 432.495,
+      "itemName": "Membrane (Modern) HDHMR BSM-18mm"
     },
     {
       "id": "KITCHEN-017",
-      "sNo": 17,
+      "sNo": 14,
       "elevation": "SHUTTER MEMBRANE",
       "materialDescription": "HDHMR 25MM OSR MEMBRANE SHUTTER ONE SIDE FOIL MATT FINISH",
       "remark": "",
       "unit": "Pcs",
       "sqft": 32,
       "price": 9100,
-      "sqftPrice": 250,
+      "sqftPrice": 284.375,
       "group": "Shutter Material",
       "subgroup": "Membrane (Classic) HDHMR OSM",
       "type": "Prelam",
       "brand": "",
       "thicknessMm": 25,
       "rateBasis": "SQFT",
-      "currentRate": 250
+      "currentRate": 284.375,
+      "itemName": "Membrane (Classic) HDHMR OSM-25mm"
     },
     {
       "id": "KITCHEN-018",
-      "sNo": 18,
+      "sNo": 15,
       "elevation": "SHUTTER MEMBRANE",
       "materialDescription": "HDHMR 25MM RAW MEMBRANE SHUTTER BOTH SIDE FOIL MATT FINISH",
       "remark": "",
       "unit": "Pcs",
       "sqft": 32,
       "price": 14808.5,
-      "sqftPrice": 350,
+      "sqftPrice": 462.765625,
       "group": "Shutter Material",
       "subgroup": "Membrane (Classic) HDHMR BSM",
       "type": "RAW",
       "brand": "",
       "thicknessMm": 25,
       "rateBasis": "SQFT",
-      "currentRate": 350
+      "currentRate": 462.765625,
+      "itemName": "Membrane (Classic) HDHMR BSM-25mm"
     },
     {
       "id": "KITCHEN-019",
-      "sNo": 19,
+      "sNo": 16,
       "elevation": "SHUTTER PU LQD",
       "materialDescription": "HDHMR 18MM OSR SHUTTER ONE SIDE PU MATT FINISH OUTER SIDE CNC DESIGN",
       "remark": "",
@@ -344,11 +383,12 @@
       "brand": "",
       "thicknessMm": 18,
       "rateBasis": "SQFT",
-      "currentRate": 500
+      "currentRate": 500,
+      "itemName": "PU HDHMR (Modern) OSP-18mm"
     },
     {
       "id": "KITCHEN-020",
-      "sNo": 20,
+      "sNo": 17,
       "elevation": "SHUTTER PU LQD",
       "materialDescription": "HDHMR 18MM RAW SHUTTER BOTH SIDE PU MATT FINISH OUTER SIDE CNC DESIGN",
       "remark": "",
@@ -362,11 +402,12 @@
       "brand": "",
       "thicknessMm": 18,
       "rateBasis": "SQFT",
-      "currentRate": 800
+      "currentRate": 800,
+      "itemName": "PU HDHMR (Modern) BSP-18mm"
     },
     {
       "id": "KITCHEN-021",
-      "sNo": 21,
+      "sNo": 18,
       "elevation": "SHUTTER PU LQD",
       "materialDescription": "HDHMR 25MM OSR SHUTTER ONE SIDE PU MATT FINISH OUTER SIDE CNC DESIGN",
       "remark": "",
@@ -380,11 +421,12 @@
       "brand": "",
       "thicknessMm": 25,
       "rateBasis": "SQFT",
-      "currentRate": 600
+      "currentRate": 600,
+      "itemName": "PU HDHMR (Classic) OSP-25mm"
     },
     {
       "id": "KITCHEN-022",
-      "sNo": 22,
+      "sNo": 19,
       "elevation": "SHUTTER PU LQD",
       "materialDescription": "HDHMR 25MM RAW SHUTTER BOTH SIDE PU MATT FINISH OUTER SIDE CNC DESIGN",
       "remark": "",
@@ -398,11 +440,12 @@
       "brand": "",
       "thicknessMm": 25,
       "rateBasis": "SQFT",
-      "currentRate": 900
+      "currentRate": 900,
+      "itemName": "PU HDHMR (Classic) BSP-25mm"
     },
     {
       "id": "KITCHEN-023",
-      "sNo": 2,
+      "sNo": 20,
       "elevation": "CARCASS PRELAM HDHMR",
       "materialDescription": "HDHMR SF BSL 2440X1220X16 WARM WHITE 31 TRE",
       "remark": "",
@@ -416,11 +459,12 @@
       "brand": "",
       "thicknessMm": 16,
       "rateBasis": "SQFT",
-      "currentRate": 66
+      "currentRate": 66,
+      "itemName": "Prelam HDHMR BSL-16mm"
     },
     {
       "id": "KITCHEN-024",
-      "sNo": 5,
+      "sNo": 21,
       "elevation": "CARCASS PRELAM PARTICAL",
       "materialDescription": "PARTICAL BOARD BSL 2440X1220X16 WARM WHITE 31 TRE",
       "remark": "",
@@ -434,11 +478,12 @@
       "brand": "",
       "thicknessMm": 16,
       "rateBasis": "SQFT",
-      "currentRate": 33.15
+      "currentRate": 33.15,
+      "itemName": "Prelam Particle BSL-16mm"
     },
     {
       "id": "KITCHEN-025",
-      "sNo": 8,
+      "sNo": 22,
       "elevation": "CARCASS PRELAM MDF",
       "materialDescription": "MDF SF BSL 2440X1220X16 WARM WHITE 31 TRE",
       "remark": "",
@@ -452,11 +497,12 @@
       "brand": "",
       "thicknessMm": 16,
       "rateBasis": "SQFT",
-      "currentRate": 52
+      "currentRate": 52,
+      "itemName": "Prelam MDF BSL-16mm"
     },
     {
       "id": "KITCHEN-026",
-      "sNo": 11,
+      "sNo": 23,
       "elevation": "CARCASS POSTLAM HDHMR",
       "materialDescription": "POSTLAM HDHMR BOARD BSL 2440X1220X16 WHITE 1002 AMU",
       "remark": "0.7MM",
@@ -470,11 +516,12 @@
       "brand": "",
       "thicknessMm": 16,
       "rateBasis": "SQFT",
-      "currentRate": 95.63
+      "currentRate": 95.63,
+      "itemName": "POSTlam HDHMR BSL-16mm"
     },
     {
       "id": "KITCHEN-027",
-      "sNo": 14,
+      "sNo": 24,
       "elevation": "CARCASS POSTLAM PARTICAL",
       "materialDescription": "POSTLAM PARTICLE BOARD BSL 2440X1220X16 WHITE 1002 AMU",
       "remark": "0.7MM",
@@ -488,11 +535,12 @@
       "brand": "",
       "thicknessMm": 16,
       "rateBasis": "SQFT",
-      "currentRate": 99.5
+      "currentRate": 99.5,
+      "itemName": "POSTlam Particle BSL-16mm"
     },
     {
       "id": "KITCHEN-028",
-      "sNo": 17,
+      "sNo": 25,
       "elevation": "CARCASS POSTLAM MDF",
       "materialDescription": "POSTLAM MDF BOARD BSL 2440X1220X16 WHITE 1002 AMU",
       "remark": "0.7MM",
@@ -506,11 +554,12 @@
       "brand": "",
       "thicknessMm": 16,
       "rateBasis": "SQFT",
-      "currentRate": 71.13
+      "currentRate": 71.13,
+      "itemName": "POSTlam MDF BSL-16mm"
     },
     {
       "id": "KITCHEN-029",
-      "sNo": 20,
+      "sNo": 26,
       "elevation": "CARCASS POSTLAM BWP PLY",
       "materialDescription": "POSTLAM BWP PLY BOARD BSL 2440X1220X15 WHITE 1002 AMU",
       "remark": "0.7MM",
@@ -524,11 +573,12 @@
       "brand": "",
       "thicknessMm": 15,
       "rateBasis": "SQFT",
-      "currentRate": 95.18
+      "currentRate": 95.18,
+      "itemName": "POSTlam BWP Ply BSL-15mm"
     },
     {
       "id": "KITCHEN-030",
-      "sNo": 31,
+      "sNo": 27,
       "elevation": "COUNTER MATERIAL",
       "materialDescription": "PLY RAW/PLAIN BWR CALIBRATED 2440X1220X16 FLO",
       "remark": "RAW",
@@ -542,11 +592,12 @@
       "brand": "",
       "thicknessMm": 16,
       "rateBasis": "SQFT",
-      "currentRate": 67.5
+      "currentRate": 67.5,
+      "itemName": "RAW BWR Ply Counter Base-16mm"
     },
     {
       "id": "KITCHEN-031",
-      "sNo": 3,
+      "sNo": 28,
       "elevation": "CARCASS PRELAM HDHMR",
       "materialDescription": "HDHMR SF BSL 2440X1220X8 WARM WHITE 31 TRE",
       "remark": "",
@@ -560,11 +611,12 @@
       "brand": "",
       "thicknessMm": 8,
       "rateBasis": "SQFT",
-      "currentRate": 35.04
+      "currentRate": 35.04,
+      "itemName": "Prelam HDHMR BSL-8mm"
     },
     {
       "id": "KITCHEN-032",
-      "sNo": 6,
+      "sNo": 29,
       "elevation": "CARCASS PRELAM PARTICAL",
       "materialDescription": "PARTICAL BOARD BSL 2440X1220X8 WARM WHITE 31 TRE",
       "remark": "",
@@ -578,11 +630,12 @@
       "brand": "",
       "thicknessMm": 8,
       "rateBasis": "SQFT",
-      "currentRate": 25.75
+      "currentRate": 25.75,
+      "itemName": "Prelam Particle BSL-8mm"
     },
     {
       "id": "KITCHEN-033",
-      "sNo": 9,
+      "sNo": 30,
       "elevation": "CARCASS PRELAM MDF",
       "materialDescription": "MDF SF BSL 2440X1220X8 WARM WHITE 31 TRE",
       "remark": "",
@@ -596,11 +649,12 @@
       "brand": "",
       "thicknessMm": 8,
       "rateBasis": "SQFT",
-      "currentRate": 30
+      "currentRate": 30,
+      "itemName": "Prelam MDF BSL-8mm"
     },
     {
       "id": "KITCHEN-034",
-      "sNo": 18,
+      "sNo": 31,
       "elevation": "CARCASS POSTLAM MDF",
       "materialDescription": "POSTLAM MDF BOARD BSL 2440X1220X8 WHITE 1002 AMU",
       "remark": "0.7MM",
@@ -614,11 +668,12 @@
       "brand": "",
       "thicknessMm": 8,
       "rateBasis": "SQFT",
-      "currentRate": 49.25
+      "currentRate": 49.25,
+      "itemName": "POSTlam MDF BSL-8mm"
     },
     {
       "id": "KITCHEN-035",
-      "sNo": 21,
+      "sNo": 32,
       "elevation": "CARCASS POSTLAM BWP PLY",
       "materialDescription": "POSTLAM PLY BOARD BSL 2440X1220X8 WHITE 1002 AMU",
       "remark": "0.7MM",
@@ -632,11 +687,12 @@
       "brand": "",
       "thicknessMm": 8,
       "rateBasis": "SQFT",
-      "currentRate": 72.72
+      "currentRate": 72.72,
+      "itemName": "POSTlam BWP Ply BSL-8mm"
     },
     {
       "id": "KITCHEN-036",
-      "sNo": 15,
+      "sNo": 33,
       "elevation": "CARCASS POSTLAM PARTICAL",
       "materialDescription": "POSTLAM PARTICLE BOARD BSL 2440X1220X10 WHITE 1002 AMU",
       "remark": "0.7MM",
@@ -650,11 +706,12 @@
       "brand": "",
       "thicknessMm": 10,
       "rateBasis": "SQFT",
-      "currentRate": 20.97
+      "currentRate": 20.97,
+      "itemName": "POSTlam Particle BSL-10mm"
     },
     {
       "id": "KITCHEN-037",
-      "sNo": 12,
+      "sNo": 34,
       "elevation": "CARCASS POSTLAM HDHMR",
       "materialDescription": "POSTLAM HDHMR BOARD BSL 2440X1220X9 WHITE 1002 AMU",
       "remark": "0.7MM",
@@ -668,11 +725,12 @@
       "brand": "",
       "thicknessMm": 9,
       "rateBasis": "SQFT",
-      "currentRate": 61.74
+      "currentRate": 61.74,
+      "itemName": "POSTlam HDHMR BSL-9mm"
     },
     {
       "id": "KITCHEN-038",
-      "sNo": 22,
+      "sNo": 35,
       "elevation": "CARCASS",
       "materialDescription": "EB MATT X0.8X22 FROSTY WHITE 6346 SID",
       "remark": "",
@@ -686,11 +744,12 @@
       "brand": "",
       "thicknessMm": 0.8,
       "rateBasis": "MTR",
-      "currentRate": 6
+      "currentRate": 6,
+      "itemName": ""
     },
     {
       "id": "KITCHEN-039",
-      "sNo": 39,
+      "sNo": 36,
       "elevation": "SHUTTER",
       "materialDescription": "EB 0.80 Mm X 22 Mm Shutter Matching",
       "remark": "",
@@ -704,11 +763,12 @@
       "brand": "",
       "thicknessMm": 0.8,
       "rateBasis": "MTR",
-      "currentRate": 10.3
+      "currentRate": 10.3,
+      "itemName": ""
     },
     {
       "id": "KITCHEN-040",
-      "sNo": 41,
+      "sNo": 37,
       "elevation": "GLASS SHUTTER",
       "materialDescription": "ALU PROF FOR HANDLE DAP101 3000X45X22 LITE BRONZE 2430 OML",
       "remark": "NEON 50",
@@ -722,11 +782,12 @@
       "brand": "",
       "thicknessMm": null,
       "rateBasis": "MTR",
-      "currentRate": 375
+      "currentRate": 375,
+      "itemName": ""
     },
     {
       "id": "KITCHEN-041",
-      "sNo": 42,
+      "sNo": 38,
       "elevation": "GLASS SHUTTER",
       "materialDescription": "ALU PROF FOR SHUTTER ASP-07 DAP107-45X22 LITE BRONZE 3 MTR W2.40KG OML",
       "remark": "NEON 50",
@@ -740,11 +801,12 @@
       "brand": "",
       "thicknessMm": null,
       "rateBasis": "MTR",
-      "currentRate": 415
+      "currentRate": 415,
+      "itemName": ""
     },
     {
       "id": "KITCHEN-042",
-      "sNo": 44,
+      "sNo": 39,
       "elevation": "GLASS SHUTTER",
       "materialDescription": "ALU PROF NEON 20 L21XH22.5MM 3MTR S2/405 SEC.2468 OMALCO LITE BRONZE",
       "remark": "NEON 20",
@@ -758,11 +820,12 @@
       "brand": "",
       "thicknessMm": null,
       "rateBasis": "MTR",
-      "currentRate": 225
+      "currentRate": 225,
+      "itemName": ""
     },
     {
       "id": "KITCHEN-043",
-      "sNo": 45,
+      "sNo": 40,
       "elevation": "GLASS SHUTTER",
       "materialDescription": "ALU PROF FOR HANDLE SHUTTER NEON 22 22X20 D-553/SEC. 2474 OML LITE BRONZE",
       "remark": "NEON 20",
@@ -776,7 +839,8 @@
       "brand": "",
       "thicknessMm": null,
       "rateBasis": "MTR",
-      "currentRate": 250
+      "currentRate": 250,
+      "itemName": ""
     },
     {
       "id": "KITCHEN-GLASS-5-TINTED",
@@ -870,43 +934,45 @@
     },
     {
       "id": "KITCHEN-044",
-      "sNo": 47,
+      "sNo": 41,
       "elevation": "GLASS SHUTTER",
       "materialDescription": "GLASS 05 MM BLACK TINTED TOUGH EP 809X349MM",
       "remark": "",
       "unit": "Nos",
-      "sqft": null,
+      "sqft": 3.1,
       "price": 512.1,
-      "sqftPrice": null,
+      "sqftPrice": 165.1935484,
       "group": "Glass Type",
       "subgroup": "Black Tinted Toughened",
       "type": "Shutter Panel",
       "brand": "",
       "thicknessMm": 5,
       "rateBasis": "PCS",
-      "currentRate": 512.1
+      "currentRate": 512.1,
+      "itemName": ""
     },
     {
       "id": "KITCHEN-045",
-      "sNo": 48,
+      "sNo": 42,
       "elevation": "GLASS SHUTTER",
       "materialDescription": "GLASS 05 MM BLACK TINTED TOUGH EP 589X349MM",
       "remark": "",
       "unit": "Pcs",
-      "sqft": null,
+      "sqft": 2.3,
       "price": 388.2,
-      "sqftPrice": null,
+      "sqftPrice": 168.7826087,
       "group": "Glass Type",
       "subgroup": "Black Tinted Toughened",
       "type": "Shutter Panel",
       "brand": "",
       "thicknessMm": 5,
       "rateBasis": "PCS",
-      "currentRate": 388.2
+      "currentRate": 388.2,
+      "itemName": ""
     },
     {
       "id": "KITCHEN-046",
-      "sNo": 49,
+      "sNo": 43,
       "elevation": "GLASS SHUTTER",
       "materialDescription": "GLASS 06 MM CLEAR TOUGH EP 782X280 MM",
       "remark": "",
@@ -920,11 +986,12 @@
       "brand": "",
       "thicknessMm": 6,
       "rateBasis": "PCS",
-      "currentRate": 358.83
+      "currentRate": 358.83,
+      "itemName": ""
     },
     {
       "id": "KITCHEN-047",
-      "sNo": 50,
+      "sNo": 44,
       "elevation": "GLASS SHUTTER",
       "materialDescription": "GLASS 06 MM CLEAR TOUGH EP 562X280 MM",
       "remark": "",
@@ -938,11 +1005,12 @@
       "brand": "",
       "thicknessMm": 6,
       "rateBasis": "PCS",
-      "currentRate": 269.325
+      "currentRate": 269.325,
+      "itemName": ""
     },
     {
       "id": "KITCHEN-048",
-      "sNo": 51,
+      "sNo": 45,
       "elevation": "GLASS SHUTTER",
       "materialDescription": "GLASS SHELF SUPPORT XX NIKEL PLATED GSS-1 EBC",
       "remark": "Ebco",
@@ -956,11 +1024,12 @@
       "brand": "",
       "thicknessMm": null,
       "rateBasis": "PCS",
-      "currentRate": 6.225
+      "currentRate": 6.225,
+      "itemName": ""
     },
     {
       "id": "KITCHEN-049",
-      "sNo": 73,
+      "sNo": 46,
       "elevation": "HANDLE",
       "materialDescription": "ALU PROF FOR HANDLE APHD-03 J TYPE 49X23 S2428-D513 4 MTR W1.140 KG OML BLACK",
       "remark": "",
@@ -974,11 +1043,12 @@
       "brand": "",
       "thicknessMm": null,
       "rateBasis": "MTR",
-      "currentRate": 275
+      "currentRate": 275,
+      "itemName": ""
     },
     {
       "id": "KITCHEN-050",
-      "sNo": 74,
+      "sNo": 47,
       "elevation": "HANDLE",
       "materialDescription": "ALU PROF FOR HANDLE C TYPE LEN. 4 MTR DR. SEW/S1/512-2426 /OML BLACK",
       "remark": "",
@@ -992,11 +1062,12 @@
       "brand": "",
       "thicknessMm": null,
       "rateBasis": "MTR",
-      "currentRate": 315
+      "currentRate": 315,
+      "itemName": ""
     },
     {
       "id": "KITCHEN-051",
-      "sNo": 75,
+      "sNo": 48,
       "elevation": "HANDLE",
       "materialDescription": "ALU PROF HANDLE APHD-05 LO 02 65X18MM S2440-D1068 3 MTR W2.27 KG OML BLACK",
       "remark": "",
@@ -1010,17 +1081,18 @@
       "brand": "",
       "thicknessMm": null,
       "rateBasis": "MTR",
-      "currentRate": 345
+      "currentRate": 345,
+      "itemName": ""
     },
     {
       "id": "KITCHEN-052",
-      "sNo": 81,
+      "sNo": 49,
       "elevation": "HINGE 0 CRANK",
       "materialDescription": "HINGE METALLA SLIDE ON SC 105 FO 4 HOLE MP 315.07.138 HAF",
       "remark": "Hafele",
       "unit": "Pcs",
       "sqft": null,
-      "price": 116,
+      "price": 99,
       "sqftPrice": null,
       "group": "Hinge",
       "subgroup": "0 CRANK",
@@ -1028,11 +1100,12 @@
       "brand": "Hafele",
       "thicknessMm": null,
       "rateBasis": "PCS",
-      "currentRate": 116
+      "currentRate": 99,
+      "itemName": ""
     },
     {
       "id": "KITCHEN-053",
-      "sNo": 82,
+      "sNo": 50,
       "elevation": "HINGE BLIND",
       "materialDescription": "HINGE M510 110°  BLIND CORNER HNG SET CRUCIFOR 329.19.038 HAF",
       "remark": "Hafele",
@@ -1046,11 +1119,12 @@
       "brand": "Hafele",
       "thicknessMm": null,
       "rateBasis": "PCS",
-      "currentRate": 580
+      "currentRate": 580,
+      "itemName": ""
     },
     {
       "id": "KITCHEN-054",
-      "sNo": 85,
+      "sNo": 51,
       "elevation": "HINGE 165 Degree",
       "materialDescription": "HAFELE WIDE ANGLE SOFT CLOSE HINGE 165DEG ST NP HAFELE Model: 315.07.012",
       "remark": "Hafele",
@@ -1064,11 +1138,12 @@
       "brand": "Hafele",
       "thicknessMm": null,
       "rateBasis": "PCS",
-      "currentRate": 417.01
+      "currentRate": 417.01,
+      "itemName": ""
     },
     {
       "id": "KITCHEN-055",
-      "sNo": 83,
+      "sNo": 52,
       "elevation": "HINGE 0 CRANK",
       "materialDescription": "HINGE C00 CRANK 100 DEG SOFT CLOSE WITH ARM CAPS XX 9281432 HET",
       "remark": "Hettich",
@@ -1082,11 +1157,12 @@
       "brand": "Hettich",
       "thicknessMm": null,
       "rateBasis": "PCS",
-      "currentRate": 85
+      "currentRate": 85,
+      "itemName": ""
     },
     {
       "id": "KITCHEN-056",
-      "sNo": 83,
+      "sNo": 53,
       "elevation": "HINGE 0 CRANK",
       "materialDescription": "HINGE C00 CRANK 100 DEG W/OUT SOFT CLOSE WITH ARM CAPS XX 9242867 HET",
       "remark": "Hettich",
@@ -1100,11 +1176,12 @@
       "brand": "Hettich",
       "thicknessMm": null,
       "rateBasis": "PCS",
-      "currentRate": 85
+      "currentRate": 85,
+      "itemName": ""
     },
     {
       "id": "KITCHEN-057",
-      "sNo": 84,
+      "sNo": 54,
       "elevation": "HINGE BLIND",
       "materialDescription": "HINGE 95°/90 CLICK ON SOFT CLOSE BLIND CORNER XX 9243043 HET",
       "remark": "Hettich",
@@ -1118,17 +1195,18 @@
       "brand": "Hettich",
       "thicknessMm": null,
       "rateBasis": "PCS",
-      "currentRate": 417.01
+      "currentRate": 417.01,
+      "itemName": ""
     },
     {
       "id": "KITCHEN-058",
-      "sNo": 85,
+      "sNo": 55,
       "elevation": "HINGE 165 Degree",
       "materialDescription": "HINGE 0 CRANK 160 DEG SOFT CLOSE XX 9243040 HET",
       "remark": "Hettich",
       "unit": "Pcs",
       "sqft": null,
-      "price": 417.01,
+      "price": 433,
       "sqftPrice": null,
       "group": "Hinge",
       "subgroup": "165/ 160 Degree",
@@ -1136,11 +1214,12 @@
       "brand": "Hettich",
       "thicknessMm": null,
       "rateBasis": "PCS",
-      "currentRate": 417.01
+      "currentRate": 433,
+      "itemName": ""
     },
     {
       "id": "KITCHEN-059",
-      "sNo": 86,
+      "sNo": 56,
       "elevation": "HINGE SLIM",
       "materialDescription": "HINGE SLIM FOR ALU PROFILE 0 CRANK SOFT CLOSE 95 DEG XX GUN BLACK DPOA-209 BLACK SQU",
       "remark": "LIAN",
@@ -1154,11 +1233,12 @@
       "brand": "Lian",
       "thicknessMm": null,
       "rateBasis": "PCS",
-      "currentRate": 45
+      "currentRate": 45,
+      "itemName": ""
     },
     {
       "id": "KITCHEN-060",
-      "sNo": 87,
+      "sNo": 57,
       "elevation": "DRAWER LOW BACK",
       "materialDescription": "DRAWER ANTARO LOW BACK 30 KG 500XX83 GREY 6352694 BLUM",
       "remark": "BLUM",
@@ -1172,11 +1252,12 @@
       "brand": "Blum",
       "thicknessMm": null,
       "rateBasis": "SET",
-      "currentRate": 2385.72
+      "currentRate": 2385.72,
+      "itemName": ""
     },
     {
       "id": "KITCHEN-061",
-      "sNo": 88,
+      "sNo": 58,
       "elevation": "DRAWER HIGH BACK",
       "materialDescription": "DRAWER ANTARO HIGH BACK 30 KG 500XX203 GREY 6781326 BLUM",
       "remark": "BLUM",
@@ -1190,11 +1271,12 @@
       "brand": "Blum",
       "thicknessMm": null,
       "rateBasis": "SET",
-      "currentRate": 2911.68
+      "currentRate": 2911.68,
+      "itemName": ""
     },
     {
       "id": "KITCHEN-062",
-      "sNo": 89,
+      "sNo": 59,
       "elevation": "DRAWER LOW BACK",
       "materialDescription": "DRAWER INNOTECH REGULAR H70 L470 LB HET",
       "remark": "HETTICH",
@@ -1208,11 +1290,12 @@
       "brand": "Hettich",
       "thicknessMm": null,
       "rateBasis": "SET",
-      "currentRate": 2100.32
+      "currentRate": 2100.32,
+      "itemName": ""
     },
     {
       "id": "KITCHEN-063",
-      "sNo": 90,
+      "sNo": 60,
       "elevation": "DRAWER HIGH BACK",
       "materialDescription": "DRAWER INNOTECH POT & PAN H144 L470 HB HET",
       "remark": "HETTICH",
@@ -1226,11 +1309,12 @@
       "brand": "Hettich",
       "thicknessMm": null,
       "rateBasis": "SET",
-      "currentRate": 2450.26
+      "currentRate": 2450.26,
+      "itemName": ""
     },
     {
       "id": "KITCHEN-064",
-      "sNo": 108,
+      "sNo": 61,
       "elevation": "DRAWER QUADRO",
       "materialDescription": "DYNAMOOV QUADRO WITH BRACKET SOFT CLOSE 500XX CDSS250 EBC",
       "remark": "EBCO",
@@ -1244,11 +1328,12 @@
       "brand": "Ebco",
       "thicknessMm": null,
       "rateBasis": "SET",
-      "currentRate": 1021.8295
+      "currentRate": 1021.8295,
+      "itemName": ""
     },
     {
       "id": "KITCHEN-065",
-      "sNo": 109,
+      "sNo": 62,
       "elevation": "DRAWER QUADRO",
       "materialDescription": "DYNAMOOV QUADRO SOFT CLOSE SLIDE ON MOUNTING 450XX HET",
       "remark": "HETTICH",
@@ -1262,11 +1347,12 @@
       "brand": "Hettich",
       "thicknessMm": null,
       "rateBasis": "SET",
-      "currentRate": 1150
+      "currentRate": 1150,
+      "itemName": ""
     },
     {
       "id": "KITCHEN-066",
-      "sNo": 110,
+      "sNo": 63,
       "elevation": "DRAWER QUADRO",
       "materialDescription": "DYNAMOOV QUADRO SOFT CLOSE SLIDE ON MOUNTING 500XX HET",
       "remark": "HETTICH",
@@ -1280,11 +1366,12 @@
       "brand": "Hettich",
       "thicknessMm": null,
       "rateBasis": "SET",
-      "currentRate": 1250
+      "currentRate": 1250,
+      "itemName": ""
     },
     {
       "id": "KITCHEN-067",
-      "sNo": 91,
+      "sNo": 64,
       "elevation": "ACCESSORY",
       "materialDescription": "PVC CUTLERY TRAY ORGA 600XX SILVER T440 9194937 HET",
       "remark": "HETTICH",
@@ -1298,11 +1385,12 @@
       "brand": "Hettich",
       "thicknessMm": null,
       "rateBasis": "PCS",
-      "currentRate": 620.7
+      "currentRate": 620.7,
+      "itemName": ""
     },
     {
       "id": "KITCHEN-068",
-      "sNo": 92,
+      "sNo": 65,
       "elevation": "ACCESSORY",
       "materialDescription": "PVC CUTLERY TRAY ORGA 900XX SILVER T440 919494000 HET",
       "remark": "HETTICH",
@@ -1316,11 +1404,12 @@
       "brand": "Hettich",
       "thicknessMm": null,
       "rateBasis": "PCS",
-      "currentRate": 880
+      "currentRate": 880,
+      "itemName": ""
     },
     {
       "id": "KITCHEN-069",
-      "sNo": 93,
+      "sNo": 66,
       "elevation": "ACCESSORY",
       "materialDescription": "LEMANS CORNER SOFT CLOSE STYLE BASKET STYLE BASKET LH XX450 GREY 2105 ONXY",
       "remark": "ONXY",
@@ -1334,11 +1423,12 @@
       "brand": "Onxy",
       "thicknessMm": null,
       "rateBasis": "PCS",
-      "currentRate": 4500
+      "currentRate": 4500,
+      "itemName": ""
     },
     {
       "id": "KITCHEN-070",
-      "sNo": 94,
+      "sNo": 67,
       "elevation": "ACCESSORY",
       "materialDescription": "LEMANS CORNER SOFT CLOSE STYLE BASKET STYLE BASKET LH XX450 GREY 2105 ONXY",
       "remark": "ONXY",
@@ -1352,11 +1442,12 @@
       "brand": "Onxy",
       "thicknessMm": null,
       "rateBasis": "PCS",
-      "currentRate": 4500
+      "currentRate": 4500,
+      "itemName": ""
     },
     {
       "id": "KITCHEN-071",
-      "sNo": 95,
+      "sNo": 68,
       "elevation": "ACCESSORY",
       "materialDescription": "DISH RACK SS 202 900X565X280 SS 304 SID",
       "remark": "",
@@ -1370,11 +1461,12 @@
       "brand": "",
       "thicknessMm": null,
       "rateBasis": "SET",
-      "currentRate": 816
+      "currentRate": 816,
+      "itemName": ""
     },
     {
       "id": "KITCHEN-072",
-      "sNo": 96,
+      "sNo": 69,
       "elevation": "ACCESSORY",
       "materialDescription": "DISH RACK SS 202 600X565X280 SS 304 FGV",
       "remark": "",
@@ -1388,11 +1480,12 @@
       "brand": "",
       "thicknessMm": null,
       "rateBasis": "SET",
-      "currentRate": 600
+      "currentRate": 600,
+      "itemName": ""
     },
     {
       "id": "KITCHEN-073",
-      "sNo": 97,
+      "sNo": 70,
       "elevation": "ACCESSORY",
       "materialDescription": "DETERGENT HOLDER SS202 XX DOL",
       "remark": "",
@@ -1406,11 +1499,12 @@
       "brand": "",
       "thicknessMm": null,
       "rateBasis": "PCS",
-      "currentRate": 260
+      "currentRate": 260,
+      "itemName": ""
     },
     {
       "id": "KITCHEN-074",
-      "sNo": 98,
+      "sNo": 71,
       "elevation": "ACCESSORY",
       "materialDescription": "WASTEBIN HOLDER SS202 XX DOL",
       "remark": "",
@@ -1424,11 +1518,12 @@
       "brand": "",
       "thicknessMm": null,
       "rateBasis": "PCS",
-      "currentRate": 160
+      "currentRate": 160,
+      "itemName": ""
     },
     {
       "id": "KITCHEN-075",
-      "sNo": 99,
+      "sNo": 72,
       "elevation": "ACCESSORY",
       "materialDescription": "WASTE BIN SS SWING OUT 14 LTR X364X400 SOWB3-14 EBC",
       "remark": "EBCO",
@@ -1442,11 +1537,12 @@
       "brand": "Ebco",
       "thicknessMm": null,
       "rateBasis": "PCS",
-      "currentRate": 1766.0975
+      "currentRate": 1766.0975,
+      "itemName": ""
     },
     {
       "id": "KITCHEN-076",
-      "sNo": 100,
+      "sNo": 73,
       "elevation": "ACCESSORY",
       "materialDescription": "BOTTLE PULLOUT SS202 100MM SS202 CHROME HG FOR CABINET 150MM DOL",
       "remark": "",
@@ -1460,11 +1556,12 @@
       "brand": "",
       "thicknessMm": null,
       "rateBasis": "PCS",
-      "currentRate": 506
+      "currentRate": 506,
+      "itemName": ""
     },
     {
       "id": "KITCHEN-077",
-      "sNo": 101,
+      "sNo": 74,
       "elevation": "ACCESSORY",
       "materialDescription": "BOTTLE PULLOUT SS202 154X500X400 MM CHROME HG FOR CABINET 200MM DOL",
       "remark": "",
@@ -1478,11 +1575,12 @@
       "brand": "",
       "thicknessMm": null,
       "rateBasis": "PCS",
-      "currentRate": 588
+      "currentRate": 588,
+      "itemName": ""
     },
     {
       "id": "KITCHEN-078",
-      "sNo": 102,
+      "sNo": 75,
       "elevation": "ACCESSORY",
       "materialDescription": "BOTTLE PULLOUT SS202 245X500X400 MM CHROME HG FOR CABINET 300MM DOL",
       "remark": "",
@@ -1496,11 +1594,12 @@
       "brand": "",
       "thicknessMm": null,
       "rateBasis": "PCS",
-      "currentRate": 665
+      "currentRate": 665,
+      "itemName": ""
     },
     {
       "id": "KITCHEN-079",
-      "sNo": 103,
+      "sNo": 76,
       "elevation": "ACCESSORY",
       "materialDescription": "TELESCOPIC CHANNEL SOFT CLOSE 500XX SS304 KA4532 HET",
       "remark": "",
@@ -1514,11 +1613,12 @@
       "brand": "",
       "thicknessMm": null,
       "rateBasis": "SET",
-      "currentRate": 650
+      "currentRate": 650,
+      "itemName": ""
     },
     {
       "id": "KITCHEN-080",
-      "sNo": 104,
+      "sNo": 77,
       "elevation": "ACCESSORY",
       "materialDescription": "LOCK FOR WARDROBE KIT STORAGE 2 POINT XX NIKEL PLATED OAK-1 EBC",
       "remark": "EBCO",
@@ -1532,11 +1632,12 @@
       "brand": "Ebco",
       "thicknessMm": null,
       "rateBasis": "SET",
-      "currentRate": 162.659
+      "currentRate": 162.659,
+      "itemName": ""
     },
     {
       "id": "KITCHEN-081",
-      "sNo": 105,
+      "sNo": 78,
       "elevation": "ACCESSORY",
       "materialDescription": "LOCK BAR 2 POINT OVERLAY ROD 1500XX22 P-WL2-22-S EBC",
       "remark": "EBCO",
@@ -1550,11 +1651,12 @@
       "brand": "Ebco",
       "thicknessMm": null,
       "rateBasis": "SET",
-      "currentRate": 611.705
+      "currentRate": 611.705,
+      "itemName": ""
     },
     {
       "id": "KITCHEN-082",
-      "sNo": 106,
+      "sNo": 79,
       "elevation": "ACCESSORY",
       "materialDescription": "LOCK NEW MULTIPURPOSE W/ REV KEY 40X40X20 8000 GOD",
       "remark": "GODREJ",
@@ -1568,11 +1670,12 @@
       "brand": "Godrej",
       "thicknessMm": null,
       "rateBasis": "SET",
-      "currentRate": 99
+      "currentRate": 99,
+      "itemName": ""
     },
     {
       "id": "KITCHEN-083",
-      "sNo": 107,
+      "sNo": 80,
       "elevation": "ACCESSORY",
       "materialDescription": "DOOR CONTACT SWITCH BLACK HAR",
       "remark": "",
@@ -1586,11 +1689,12 @@
       "brand": "",
       "thicknessMm": null,
       "rateBasis": "PCS",
-      "currentRate": 65
+      "currentRate": 65,
+      "itemName": ""
     },
     {
       "id": "KITCHEN-084",
-      "sNo": 111,
+      "sNo": 81,
       "elevation": "LIGHT",
       "materialDescription": "ALU PROF FOR LIGHT PROJECT 3000X15.4X6.4 ANODISED 2464 OML",
       "remark": "",
@@ -1604,11 +1708,12 @@
       "brand": "",
       "thicknessMm": null,
       "rateBasis": "MTR",
-      "currentRate": 45
+      "currentRate": 45,
+      "itemName": ""
     },
     {
       "id": "KITCHEN-085",
-      "sNo": 112,
+      "sNo": 82,
       "elevation": "LIGHT",
       "materialDescription": "PC DIFFUSER FOR LIGHT PROFILE S2/363 SEC. 2464 VAI",
       "remark": "",
@@ -1622,11 +1727,12 @@
       "brand": "",
       "thicknessMm": null,
       "rateBasis": "MTR",
-      "currentRate": 13
+      "currentRate": 13,
+      "itemName": ""
     },
     {
       "id": "KITCHEN-086",
-      "sNo": 113,
+      "sNo": 83,
       "elevation": "LIGHT",
       "materialDescription": "LIGHT FLEXIBLE LED STRIP 3000K, 120 LED/MTR, 60W, W-8MM XX WARM WHITE LOTUS",
       "remark": "",
@@ -1640,11 +1746,12 @@
       "brand": "",
       "thicknessMm": null,
       "rateBasis": "MTR",
-      "currentRate": 75
+      "currentRate": 75,
+      "itemName": ""
     },
     {
       "id": "KITCHEN-087",
-      "sNo": 114,
+      "sNo": 84,
       "elevation": "LIGHT",
       "materialDescription": "LIGHT PROFILE FLEXIBLE LUMINAR XX TRANSPERENT LUM3 OP EBC",
       "remark": "EBCO",
@@ -1658,11 +1765,12 @@
       "brand": "",
       "thicknessMm": null,
       "rateBasis": "MTR",
-      "currentRate": 144.1245
+      "currentRate": 144.1245,
+      "itemName": ""
     },
     {
       "id": "KITCHEN-088",
-      "sNo": 115,
+      "sNo": 85,
       "elevation": "LIGHT",
       "materialDescription": "LIGHT DRIVER LED STRIP 12V, 5AMP , 60W XX LED",
       "remark": "",
@@ -1676,11 +1784,12 @@
       "brand": "",
       "thicknessMm": null,
       "rateBasis": "PCS",
-      "currentRate": 375
+      "currentRate": 375,
+      "itemName": ""
     },
     {
       "id": "KITCHEN-089",
-      "sNo": 116,
+      "sNo": 86,
       "elevation": "LIGHT",
       "materialDescription": "LIGHT DRIVER LED STRIP 12V, 2AMP , 24W XX LED",
       "remark": "",
@@ -1694,11 +1803,12 @@
       "brand": "",
       "thicknessMm": null,
       "rateBasis": "PCS",
-      "currentRate": 150
+      "currentRate": 150,
+      "itemName": ""
     },
     {
       "id": "KITCHEN-090",
-      "sNo": 117,
+      "sNo": 87,
       "elevation": "LIGHT",
       "materialDescription": "LIGHT EXTENSION WIRE TWP SP XX 14/38 SNO",
       "remark": "",
@@ -1712,11 +1822,12 @@
       "brand": "",
       "thicknessMm": null,
       "rateBasis": "MTR",
-      "currentRate": 10.9
+      "currentRate": 10.9,
+      "itemName": ""
     },
     {
       "id": "KITCHEN-091",
-      "sNo": 118,
+      "sNo": 88,
       "elevation": "LIGHT",
       "materialDescription": "LIGHT SURFACE ROUND SPOT 3 WATT XX WARM WHITE SMD LOTUS",
       "remark": "",
@@ -1730,11 +1841,12 @@
       "brand": "",
       "thicknessMm": null,
       "rateBasis": "PCS",
-      "currentRate": 85
+      "currentRate": 85,
+      "itemName": ""
     },
     {
       "id": "KITCHEN-092",
-      "sNo": 119,
+      "sNo": 89,
       "elevation": "PVC SKIRTING & LEG",
       "materialDescription": "SKIRTING 100MM BLACK FINISH CRY",
       "remark": "",
@@ -1748,11 +1860,12 @@
       "brand": "",
       "thicknessMm": null,
       "rateBasis": "MTR",
-      "currentRate": 128.21
+      "currentRate": 128.21,
+      "itemName": ""
     },
     {
       "id": "KITCHEN-093",
-      "sNo": 120,
+      "sNo": 90,
       "elevation": "PVC SKIRTING & LEG",
       "materialDescription": "SKIRTING 100MM SILVER FINISH CRY",
       "remark": "",
@@ -1766,11 +1879,12 @@
       "brand": "",
       "thicknessMm": null,
       "rateBasis": "MTR",
-      "currentRate": 128.21
+      "currentRate": 128.21,
+      "itemName": ""
     },
     {
       "id": "KITCHEN-094",
-      "sNo": 121,
+      "sNo": 91,
       "elevation": "ALU SKIRTING",
       "materialDescription": "ALU PROF END CONNECTOR SKIRTING 3000XX100 W/OUT ANODISED 2434 OML",
       "remark": "",
@@ -1784,7 +1898,8 @@
       "brand": "",
       "thicknessMm": null,
       "rateBasis": "MTR",
-      "currentRate": 395
+      "currentRate": 395,
+      "itemName": ""
     },
     {
       "id": "HARDWARE-001",
@@ -2343,6 +2458,43 @@
       "thicknessMm": null,
       "rateBasis": "SET",
       "currentRate": 69
+    },
+    {
+      "elevation": "CARCASS POSTLAM BWP PLY",
+      "materialDescription": "POSTLAM BWP PLY BOARD BSL 2440X1220X18 WHITE 1002 AMU",
+      "itemName": "POSTlam BWR Ply BSL-18mm",
+      "remark": "0.7MM",
+      "unit": "Pcs",
+      "group": "Carcass/ Shelf Material",
+      "subgroup": "POSTlam BWR Ply BSL",
+      "type": "POSTLAM",
+      "brand": "",
+      "rateBasis": "SQFT",
+      "sNo": 4,
+      "sqft": 32,
+      "price": 1399.5,
+      "sqftPrice": 43.734375,
+      "thicknessMm": 18,
+      "currentRate": 43.734375,
+      "id": "KITCHEN-095"
+    },
+    {
+      "id": "KITCHEN-SINK-PROFILE",
+      "sNo": 0,
+      "elevation": "BASE TOP PROFILE",
+      "materialDescription": "ALU PROF FOR SINK 3000X20X20 ANODISED 2412 OML",
+      "remark": "User-confirmed rate: INR 104 per running metre",
+      "unit": "Mtr",
+      "sqft": null,
+      "price": 104,
+      "sqftPrice": null,
+      "group": "Profile",
+      "subgroup": "Sink Profile",
+      "type": "Base top profile",
+      "brand": "OML",
+      "thicknessMm": null,
+      "rateBasis": "MTR",
+      "currentRate": 104
     }
   ]
 }

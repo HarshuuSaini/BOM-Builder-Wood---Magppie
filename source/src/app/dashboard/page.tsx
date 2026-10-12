@@ -1,7 +1,7 @@
-"use client";
-
 import { BomDashboard } from "@/components/BomDashboard";
+import { requireUser } from "@/lib/user-session";
 
-export default function Page() {
+export default async function Page() {
+  await requireUser();
   return <BomDashboard />;
 }

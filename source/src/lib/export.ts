@@ -28,7 +28,8 @@ export type CostingExportLine = {
 };
 export type CostingExportArea = { eachSqft: number; sqft: number };
 export type CostingExportPricing = {
-  cabinetSqft: number; baseCost: number; conversion: number; profit: number;
+  cabinetSqft: number; fillerSqft: number; totalSqft: number;
+  baseCost: number; conversion: number; profit: number;
   transportation: number; installation: number; loading: number;
   subtotal: number; tax: number; grandTotal: number;
 };
@@ -409,29 +410,78 @@ export function exportCostingWorkbook(
 ) {
   if (!lines.length) return;
   const workbook = XLSX.utils.book_new();
+  // The supplied manual MRP sheet uses rate × required quantity by material/elevation.
+  // Keep its A:H reading order while retaining the app's unrounded billable area.
+  const manualItems = new Map<string, { elevation: string; description: string; code: string; rate: number; unit: string; qty: number }>();
+  lines.forEach((line) => line.details.forEach((detail) => {
+    const sheetBasis = detail.uom === "sqft";
+    const rate = sheetBasis ? detail.rate * 32 : detail.rate;
+    const unit = sheetBasis ? "32 sqft sheet eq" : detail.uom;
+    const qty = sheetBasis ? detail.billableQty / 32 : detail.billableQty;
+    const elevation = detail.category.replace(/ board$/i, "").toUpperCase();
+    const key = JSON.stringify([elevation, detail.itemCode, detail.item, rate, unit]);
+    const found = manualItems.get(key);
+    if (found) found.qty += qty;
+    else manualItems.set(key, { elevation, description: detail.item, code: detail.itemCode, rate, unit, qty });
+  }));
+  const manualRows: (string | number | XLSX.CellObject)[][] = [
+    ["KITCHEN COSTING - MANUAL COMPARISON"],
+    ["Cabinet + filler area (sqft)", pricing.totalSqft, "Total cabinets", lines.filter((line) => !!line.code).reduce((total, line) => total + line.qty, 0)],
+    ["Sheet-equivalent quantities use billable sqft ÷ 32 (including waste); total area includes only filler fronts, not cover-panel sides. Base and Tall cabinets use height + 100mm."],
+    ["Sr. No.", "Elevation", "Material Description", "Item code", "Rate (Rs)", "Unit of Mnt.", "Qty. Req.", "Total Rate (Rs)"],
+  ];
+  [...manualItems.values()].sort((a, b) => a.elevation.localeCompare(b.elevation) || a.description.localeCompare(b.description))
+    .forEach((item, index) => manualRows.push([index + 1, item.elevation, item.description, item.code, item.rate, item.unit, item.qty,
+      { f: `E${index + 5}*G${index + 5}`, t: "n", v: item.rate * item.qty }]));
+  const lastItemRow = manualRows.length;
+  const summaryStart = lastItemRow + 1;
+  manualRows.push(["", "", "", "", "", "", "Material / item cost", { f: `SUM(H5:H${lastItemRow})`, t: "n", v: pricing.baseCost }]);
+  const extraCosts: Array<[string, number]> = [
+    ["Conversion", pricing.conversion], ["Profit", pricing.profit],
+    ["Transportation", pricing.transportation], ["Installation", pricing.installation],
+    ["Loading / Unloading", pricing.loading], ["GST", pricing.tax],
+  ];
+  extraCosts.forEach(([label, amount]) => manualRows.push(["", "", "", "", "", "", label, amount]));
+  const totalRow = manualRows.length + 1;
+  manualRows.push(["", "", "", "", "", "", "Project total", { f: `SUM(H${summaryStart}:H${totalRow - 1})`, t: "n", v: pricing.grandTotal }]);
+  manualRows.push(["", "", "", "", "", "", "Cost per total sqft", { f: `IF(B2=0,0,H${totalRow}/B2)`, t: "n", v: pricing.totalSqft ? pricing.grandTotal / pricing.totalSqft : 0 }]);
+  const manualSheet = XLSX.utils.aoa_to_sheet(manualRows);
+  manualSheet["!cols"] = [{ wch: 9 }, { wch: 27 }, { wch: 72 }, { wch: 25 }, { wch: 18 }, { wch: 20 }, { wch: 20 }, { wch: 22 }];
+  manualSheet["!freeze"] = { xSplit: 0, ySplit: 4 };
+  for (let col = 0; col < 8; col++) {
+    const address = XLSX.utils.encode_cell({ r: 3, c: col });
+    manualSheet[address].s = { fill: { patternType: "solid", fgColor: { rgb: "22685E" } }, font: { bold: true, color: { rgb: "FFFFFF" } }, alignment: { vertical: "center" } };
+  }
+  for (let row = 4; row < manualRows.length; row++) {
+    for (const col of [4, 6, 7]) {
+      const cell = manualSheet[XLSX.utils.encode_cell({ r: row, c: col })];
+      if (cell) cell.z = "#,##0.00";
+    }
+  }
+  XLSX.utils.book_append_sheet(workbook, manualSheet, "Manual Comparison");
   const summary: Array<{
     "Cabinet / item": string; "Cabinet code": string; Qty: number | string;
-    "Sqft / cabinet": number | string; "Total cabinet sqft": number | string;
-    "Cost / cabinet (Rs)": number | string; "Total cost (Rs)": number;
-    "Cost / cabinet sqft (Rs)": number | string;
+    "Sqft / item": number | string; "Total item sqft": number | string;
+    "Cost / item (Rs)": number | string; "Total cost (Rs)": number;
+    "Cost / item sqft (Rs)": number | string;
   }> = lines.map((line, index) => {
     const area = cabinetAreas[index];
     return {
       "Cabinet / item": line.label,
       "Cabinet code": line.code ?? "",
       Qty: line.qty,
-      "Sqft / cabinet": area?.eachSqft ?? "",
-      "Total cabinet sqft": area?.sqft ?? "",
-      "Cost / cabinet (Rs)": line.unitCost,
+      "Sqft / item": area?.eachSqft ?? "",
+      "Total item sqft": area?.sqft ?? "",
+      "Cost / item (Rs)": line.unitCost,
       "Total cost (Rs)": line.cost,
-      "Cost / cabinet sqft (Rs)": area?.sqft ? line.cost / area.sqft : "",
+      "Cost / item sqft (Rs)": area?.sqft ? line.cost / area.sqft : "",
     };
   });
   summary.push({
     "Cabinet / item": "Project item costing total", "Cabinet code": "", Qty: "",
-    "Sqft / cabinet": "", "Total cabinet sqft": pricing.cabinetSqft,
-    "Cost / cabinet (Rs)": "", "Total cost (Rs)": pricing.baseCost,
-    "Cost / cabinet sqft (Rs)": pricing.cabinetSqft ? pricing.baseCost / pricing.cabinetSqft : "",
+    "Sqft / item": "", "Total item sqft": pricing.totalSqft,
+    "Cost / item (Rs)": "", "Total cost (Rs)": pricing.baseCost,
+    "Cost / item sqft (Rs)": pricing.totalSqft ? pricing.baseCost / pricing.totalSqft : "",
   });
   addSheet(workbook, summary, "Cabinet Summary", [
     { wch: 54 }, { wch: 64 }, { wch: 9 }, { wch: 17 }, { wch: 20 },
@@ -442,7 +492,7 @@ export function exportCostingWorkbook(
     "Cabinet / item": line.label,
     "Cabinet code": line.code ?? "",
     "Cabinet qty": line.qty,
-    "Cabinet sqft": cabinetAreas[index]?.sqft ?? "",
+    "Item sqft": cabinetAreas[index]?.sqft ?? "",
     Category: detail.category,
     "Item code": detail.itemCode,
     "Actual item": detail.item,
@@ -453,7 +503,7 @@ export function exportCostingWorkbook(
     Basis: detail.uom,
     "Rate (Rs / basis)": detail.rate,
     "Amount (Rs)": detail.amount,
-    "Cost / cabinet sqft (Rs)": cabinetAreas[index]?.sqft ? detail.amount / cabinetAreas[index].sqft : "",
+    "Cost / item sqft (Rs)": cabinetAreas[index]?.sqft ? detail.amount / cabinetAreas[index].sqft : "",
   })));
   addSheet(workbook, detailRows, "Cabinet Items", [
     { wch: 54 }, { wch: 64 }, { wch: 13 }, { wch: 16 }, { wch: 22 },
@@ -496,6 +546,8 @@ export function exportCostingWorkbook(
 
   addSheet(workbook, [
     { Factor: "Cabinet front area (sqft)", Value: pricing.cabinetSqft },
+    { Factor: "Filler front area (sqft)", Value: pricing.fillerSqft },
+    { Factor: "Total priced area (sqft)", Value: pricing.totalSqft },
     { Factor: "Base item cost (Rs)", Value: pricing.baseCost },
     { Factor: "Conversion (Rs)", Value: pricing.conversion },
     { Factor: "Profit (Rs)", Value: pricing.profit },

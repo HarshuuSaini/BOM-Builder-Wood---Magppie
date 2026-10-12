@@ -1,12 +1,10 @@
-"use client";
-
 import { WoodBomBuilder } from "@/components/WoodBomBuilder";
-import { AuthGate } from "@/components/AuthGate";
+import { requireUser, userSession, sessionMaterials } from "@/lib/user-session";
+import { redirect } from "next/navigation";
 
-export default function Page() {
-  return (
-    <AuthGate>
-      <WoodBomBuilder  />
-    </AuthGate>
-  );
+export default async function Page() {
+  await requireUser();
+  const session = await userSession();
+  if (!sessionMaterials(session)) redirect("/materials");
+  return <WoodBomBuilder materials={sessionMaterials(session)} />;
 }

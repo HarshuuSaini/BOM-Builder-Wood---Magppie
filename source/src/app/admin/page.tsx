@@ -5,7 +5,7 @@ import type { CostingMasterItem } from "@/lib/costing";
 
 const COLUMNS: Array<{ key: keyof CostingMasterItem; label: string; numeric?: boolean }> = [
   { key: "sNo", label: "S.No", numeric: true }, { key: "elevation", label: "Elevation" },
-  { key: "materialDescription", label: "Material Description" },
+  { key: "materialDescription", label: "Item name / description" },
   { key: "remark", label: "Remark" },
   { key: "unit", label: "Unit" }, { key: "sqft", label: "SQFT", numeric: true },
   { key: "price", label: "Price", numeric: true }, { key: "sqftPrice", label: "Sq.FT Price", numeric: true },
