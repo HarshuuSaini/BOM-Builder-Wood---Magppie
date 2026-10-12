@@ -1126,6 +1126,7 @@ function buildCarcassInnerRaw(cfg: {
   const shutterBandM = merged.reduce((a, p) => a + (p.band && (p.pack === "Shutter Pack" || p.visibleSide) ? perim(p.w, p.h) * p.qty : 0), 0);
   const drawerBandM = merged.reduce((a, p) => a + (p.band && p.pack === "Drawer Pack" ? perim(p.w, p.h) * p.qty : 0), 0);
   const carcSqft = merged.filter((p) => p.pack === PK).reduce((a, p) => a + sqft(p.w, p.h) * p.qty, 0);
+  const drawerSqft = merged.filter((p) => p.pack === "Drawer Pack").reduce((a, p) => a + sqft(p.w, p.h) * p.qty, 0);
   const shSqft = merged.filter((p) => p.pack === "Shutter Pack").reduce((a, p) => a + sqft(p.w, p.h) * p.qty, 0);
   const visibleSqft = merged.filter((p) => p.visibleSide).reduce((a, p) => a + sqft(p.w, p.h) * p.qty, 0);
 
@@ -1144,6 +1145,11 @@ function buildCarcassInnerRaw(cfg: {
   if (B.lam) {
     cons.push({ name: "CARCASS LAMINATE 0.8MM", qty: r3(carcSqft * 2), uom: "sqft", pack: PK });
     cons.push({ name: "LAMINATE ADHESIVE", qty: r3(carcSqft * LAM_ADH * 2), uom: "gm", pack: PK });
+  }
+  if (drawerSqft > 0 && isPostlamItem(DRAWER_BOARD_ITEMS.find((item) => item.id === drawerBoardId))) {
+    cons.push({ name: "DRAWER LAMINATE 0.8MM FRONT", qty: r3(drawerSqft), uom: "sqft", pack: "Drawer Pack" });
+    cons.push({ name: "DRAWER LAMINATE 0.8MM BACK", qty: r3(drawerSqft), uom: "sqft", pack: "Drawer Pack" });
+    cons.push({ name: "LAMINATE ADHESIVE", qty: r3(drawerSqft * LAM_ADH * 2), uom: "gm", pack: "Drawer Pack" });
   }
 
   const st = isGlassShutterFam(fk) ? "GLASS" : shType;
@@ -1250,6 +1256,110 @@ function cabinetPacketRows(m: CarcassModel): Array<{ pack: string; item: string;
     ...m.hardware.flatMap(expandHardwarePack).map((part) => ({ pack: part.pack, item: part.name, qty: part.qty, unit: part.uom })),
     ...m.cons.map((part) => ({ pack: part.pack, item: part.name, qty: part.qty, unit: part.uom })),
   ];
+}
+
+/** Export cut panels and an Excel calculator linked to the live project configuration. */
+function exportPanelCalculatorWorkbook(project: ProjectLine[], extraPanels: Panel[], waste: WastePct) {
+  type PanelRecord = {
+    code: string; elevation: string; category: string; panel: Panel; cabinetQty: number;
+    materialType: string;
+  };
+  const records: PanelRecord[] = [];
+  project.forEach((line) => line.m.panels.forEach((panel) => {
+    const category = panel.visibleSide ? "Visible side" : panel.pack === "Drawer Pack" ? "Drawer"
+      : panel.pack === "Shutter Pack" ? "Shutter" : "Carcass";
+    const item = panel.visibleSide ? shutterMasterItem(panel.materialId ?? line.m.visibleSideMaterialId)
+      : panel.pack === "Shutter Pack" ? shutterMasterItem(line.m.shType)
+        : carcassMasterItem(line.m.board, line.m.backBoardId, line.m.drawerBoardId, panel);
+    records.push({ code: line.m.code, elevation: line.elevation, category, panel,
+      cabinetQty: line.qty, materialType: item?.type ?? "Unknown" });
+  }));
+  extraPanels.forEach((panel, index) => {
+    const category = panel.extraMaterialRole === "visible" ? "Visible side"
+      : panel.pack === "Carcass Pack" ? "Carcass" : "Shutter";
+    const item = panel.pack === "Carcass Pack"
+      ? CARCASS_BOARD_ITEMS.find((candidate) => candidate.id === panel.materialId)
+      : shutterMasterItem(panel.materialId ?? "");
+    records.push({ code: `EXTRA-${index + 1}`, elevation: "", category, panel,
+      cabinetQty: 1, materialType: item?.type ?? "Unknown" });
+  });
+
+  const workbook = XLSX.utils.book_new();
+  const headers = ["Cabinet code", "Elevation", "Category", "Panel", "Material", "Width mm", "Height mm",
+    "Thickness mm", "Qty / cabinet", "Cabinet qty", "Total panels", "Material type", "Banded",
+    "Panel sqft net", "Front laminate sqft net", "Back laminate sqft net", "Edge band m net",
+    "Board waste %", "Band waste %", "Front laminate sqft incl waste", "Back laminate sqft incl waste", "Edge band m incl waste"];
+  const panelRows: (string | number | XLSX.CellObject)[][] = [headers];
+  records.forEach(({ code, elevation, category, panel, cabinetQty, materialType }, index) => {
+    const row = index + 2;
+    const count = panel.qty * cabinetQty;
+    const area = panel.w * panel.h * count / SQDIV;
+    const postlam = materialType.toUpperCase() === "POSTLAM";
+    const band = panel.band ? (2 * (panel.w + panel.h) + 4 * BAND_EDGE_ALLOWANCE) * count / 1000 : 0;
+    const boardWaste = category === "Shutter" || category === "Visible side" ? waste.shutter : waste.carcass;
+    const bandWaste = waste.carcass;
+    panelRows.push([code, elevation, category, panel.name, panel.mat ?? "", panel.w, panel.h, panel.t ?? 0,
+      panel.qty, cabinetQty, { f: `I${row}*J${row}`, t: "n", v: count }, materialType,
+      panel.band ? "Yes" : "No", { f: `F${row}*G${row}*K${row}/${SQDIV}`, t: "n", v: area },
+      { f: `IF(L${row}="Postlam",N${row},0)`, t: "n", v: postlam ? area : 0 },
+      { f: `IF(L${row}="Postlam",N${row},0)`, t: "n", v: postlam ? area : 0 },
+      { f: `IF(M${row}="Yes",(2*(F${row}+G${row})+${4 * BAND_EDGE_ALLOWANCE})*K${row}/1000,0)`, t: "n", v: band },
+      boardWaste, bandWaste,
+      { f: `O${row}*(1+R${row}/100)`, t: "n", v: (postlam ? area : 0) * (1 + boardWaste / 100) },
+      { f: `P${row}*(1+R${row}/100)`, t: "n", v: (postlam ? area : 0) * (1 + boardWaste / 100) },
+      { f: `Q${row}*(1+S${row}/100)`, t: "n", v: band * (1 + bandWaste / 100) }]);
+  });
+  const panelSheet = XLSX.utils.aoa_to_sheet(panelRows);
+  panelSheet["!cols"] = [{ wch: 60 }, { wch: 13 }, { wch: 16 }, { wch: 53 }, { wch: 44 },
+    ...Array(6).fill({ wch: 15 }), { wch: 17 }, { wch: 12 }, ...Array(9).fill({ wch: 20 })];
+  panelSheet["!freeze"] = { xSplit: 1, ySplit: 1 };
+  panelSheet["!autofilter"] = { ref: `A1:V${Math.max(2, panelRows.length)}` };
+  for (let column = 0; column < headers.length; column++) {
+    const address = XLSX.utils.encode_cell({ r: 0, c: column });
+    panelSheet[address].s = { fill: { fgColor: { rgb: "17655B" } }, font: { bold: true, color: { rgb: "FFFFFF" } } };
+  }
+  XLSX.utils.book_append_sheet(workbook, panelSheet, "Panels");
+
+  const firstCode = project[0]?.m.code ?? "";
+  const categories = ["Carcass", "Shutter", "Drawer", "Visible side"];
+  const limit = Math.max(records.length + 1, 1000);
+  const summary: (string | number | XLSX.CellObject)[][] = [
+    ["Laminate and edge-band calculator"],
+    ["Paste a cabinet code in B4. Results use the Panels tab exported from this kitchen."],
+    [], ["Cabinet code", firstCode],
+    ["Code status", { f: `IF(B4="","Enter a code",IF(COUNTIFS('Panels'!$A$2:$A$${limit},B4)=0,"Code not found","Found"))`, t: "s" }],
+    ["Postlam laminate is counted on both faces. Prelam, PU, membrane and glass have no separate laminate sheets."],
+    [],
+    ["Category", "Panel sqft net", "Front laminate sqft", "Back laminate sqft", "Total laminate sqft", "Edge band m net", "Laminate sqft incl waste", "Edge band m incl waste"],
+  ];
+  for (let i = 0; i < categories.length; i++) {
+    const row = i + 9;
+    const values: (string | number | XLSX.CellObject)[] = [categories[i]];
+    const criteria = `'Panels'!$A$2:$A$${limit},$B$4,'Panels'!$C$2:$C$${limit},$A${row}`;
+    for (const col of ["N", "O", "P"]) values.push({ f: `IF($B$5<>"Found","",SUMIFS('Panels'!$${col}$2:$${col}$${limit},${criteria}))`, t: "n" });
+    values.push({ f: `IF($B$5<>"Found","",SUM(C${row}:D${row}))`, t: "n" });
+    values.push({ f: `IF($B$5<>"Found","",SUMIFS('Panels'!$Q$2:$Q$${limit},${criteria}))`, t: "n" });
+    values.push({ f: `IF($B$5<>"Found","",SUMIFS('Panels'!$T$2:$T$${limit},${criteria})+SUMIFS('Panels'!$U$2:$U$${limit},${criteria}))`, t: "n" });
+    values.push({ f: `IF($B$5<>"Found","",SUMIFS('Panels'!$V$2:$V$${limit},${criteria}))`, t: "n" });
+    summary.push(values);
+  }
+  summary.push(["Total", ...["B", "C", "D", "E", "F", "G", "H"].map((col) => ({ f: `IF($B$5<>"Found","",SUM(${col}9:${col}12))`, t: "n" as const }))]);
+  summary.push([], ["Code alone does not define the material or visible sides. Export a fresh panel list after changing the kitchen."],
+    ["Banded panels use four edges plus 50 mm per edge; unbanded panels, including grooved backs, have zero edge band."],
+    [], ["Available cabinet codes"]);
+  [...new Set(records.map((record) => record.code))].forEach((code) => summary.push([code]));
+  const summarySheet = XLSX.utils.aoa_to_sheet(summary);
+  summarySheet["!cols"] = [{ wch: 68 }, ...Array(7).fill({ wch: 24 })];
+  summarySheet["!freeze"] = { xSplit: 0, ySplit: 8 };
+  if (summarySheet.B4) summarySheet.B4.s = { fill: { fgColor: { rgb: "FFF2CC" } }, font: { bold: true } };
+  for (let column = 0; column < 8; column++) {
+    const address = XLSX.utils.encode_cell({ r: 7, c: column });
+    summarySheet[address].s = { fill: { fgColor: { rgb: "17655B" } }, font: { bold: true, color: { rgb: "FFFFFF" } } };
+  }
+  XLSX.utils.book_append_sheet(workbook, summarySheet, "Calculator");
+  // Put the code-entry sheet first while preserving the Panels formula references.
+  workbook.SheetNames = ["Calculator", "Panels"];
+  XLSX.writeFile(workbook, `Panel_Laminate_Calculator_${new Date().toISOString().slice(0, 10)}.xlsx`);
 }
 
 function buildCSV(project: ProjectLine[]): string {
@@ -2415,7 +2525,7 @@ function computeCosting(
     });
     // Board-face laminate and edge band already have detailed cost lines above.
     // Every remaining consumable must stay visible, even without a matching price.
-    m.cons.filter((c) => !/^EDGE BAND /i.test(c.name) && !/^(CARCASS|SHUTTER|VISIBLE SIDE) LAMINATE /i.test(c.name)).forEach((c) => {
+    m.cons.filter((c) => !/^EDGE BAND /i.test(c.name) && !/^(CARCASS|DRAWER|SHUTTER|VISIBLE SIDE) LAMINATE /i.test(c.name)).forEach((c) => {
       const item = COSTING_ITEMS.find((candidate) => costingItemNames(candidate).some((name) => hardwareNameKey(name) === hardwareNameKey(c.name)));
       const unit = c.uom.toLowerCase();
       const uom: CostDetail["uom"] = unit === "gm" ? "gm" : unit === "kg" ? "kg" : unit === "sqft" ? "sqft" : /^(rmt|mtr)$/.test(unit) ? "RMT" : unit === "set" ? "set" : "nos";
@@ -3728,6 +3838,8 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
                   onClick={() => dl("wood-bom-project.json", JSON.stringify({ format: PROJECT_FILE_FORMAT, rows: projectSetup }, null, 2), "application/json")}>Project JSON</button>
                 <button className="add" style={{ width: "auto", padding: "8px 16px" }} disabled={fullBom.length === 0}
                   onClick={() => exportBomWorkbook(toReportRows(fullBom), accessoryRows, projectSetup, costing.purchases)}>Excel BOM (.xlsx)</button>
+                <button className="add" style={{ width: "auto", padding: "8px 16px" }} disabled={project.length === 0 && extras.panels.length === 0}
+                  onClick={() => exportPanelCalculatorWorkbook(project, extras.panels, waste)}>Panel list &amp; laminate calculator (.xlsx)</button>
                 <button className="add" style={{ width: "auto", padding: "8px 16px" }} disabled={fullBom.length === 0}
                   onClick={() => exportBomCsv(toReportRows(fullBom))}>Full BOM (.csv)</button>
                 <button className="add" style={{ width: "auto", padding: "8px 16px" }} disabled={project.length === 0}
