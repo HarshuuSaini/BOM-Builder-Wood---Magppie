@@ -76,6 +76,9 @@ function addSheet<T extends Record<string, unknown>>(
     return out;
   });
   const ws = XLSX.utils.json_to_sheet(cleaned);
+  for (const [address, cell] of Object.entries(ws)) {
+    if (!address.startsWith("!") && cell.t === "n") cell.z = "#,##0.00";
+  }
   ws["!cols"] = cols;
   XLSX.utils.book_append_sheet(workbook, ws, sheetName(name));
 }
@@ -450,7 +453,7 @@ export function exportCostingWorkbook(
   for (let row = 4; row < manualRows.length; row++) {
     for (const col of [4, 6, 7]) {
       const cell = manualSheet[XLSX.utils.encode_cell({ r: row, c: col })];
-      if (cell) cell.z = col === 6 && row < lastItemRow ? "#,##0.###" : "#,##0.00";
+      if (cell) cell.z = "#,##0.00";
     }
   }
   XLSX.utils.book_append_sheet(workbook, manualSheet, "Manual Comparison");
@@ -532,7 +535,9 @@ export function exportCostingWorkbook(
   ], "Project Pricing", [{ wch: 36 }, { wch: 20 }]);
 
   if (unpriced.length) addSheet(workbook, unpriced.map((item) => ({
-    "Unpriced item": item, Status: "Rate not set; excluded from costing",
+    "Unpriced item": item, Status: item.includes("(quantity pending)")
+      ? "Required hardware; quantity pending; excluded from costing"
+      : "Rate not set; excluded from costing",
   })), "Unpriced Items", [{ wch: 75 }, { wch: 42 }]);
 
   XLSX.writeFile(workbook, `Costing_Report_${new Date().toISOString().slice(0, 10)}.xlsx`);

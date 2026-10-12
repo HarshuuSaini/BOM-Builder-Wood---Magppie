@@ -1563,12 +1563,14 @@ function buildExtrasBom(
 /* --- Accessories — everything opt-in (CHAT_SUMMARY §17) --- */
 
 // Keep the saved "elenor" key so older project exports still reopen as a light row.
-type AccessoryKind = "skirting" | "elenor";
+type AccessoryKind = "skirting" | "elenor" | "c-handle" | "j-handle";
 interface AccessoryRow {
   id: number;
   kind: AccessoryKind;
   /** metres for skirting, cut height (mm) for the LED profile light */
   size: string;
+  /** Direct run length; legacy light size remains millimetres on import. */
+  lengthMeters?: number;
   qty: number;
   elevation: string;
   straight: number; // skirting connectors
@@ -1589,12 +1591,14 @@ interface MasterAccessoryRow {
 }
 const validAccessoryManualRate = (value: unknown) => value === undefined || value === "" ||
   (typeof value === "string" && value.trim() !== "" && Number.isFinite(Number(value)) && Number(value) >= 0);
-const KITCHEN_ACCESSORY_ITEMS = COSTING_ITEMS.filter((item) => ["Accessory", "LIGHT"].includes(item.group) && item.id.startsWith("KITCHEN-"));
+const KITCHEN_ACCESSORY_ITEMS = COSTING_ITEMS.filter((item) => item.id.startsWith("KITCHEN-") &&
+  (["Accessory", "LIGHT"].includes(item.group) ||
+    (item.group === "HANDLE" && ["C Type", "J Type"].includes(item.subgroup))));
 const accessoryNameKey = (name: string) => name.toUpperCase().replace(/[^A-Z0-9]/g, "");
 const pricedAccessoryNames = new Set(KITCHEN_ACCESSORY_ITEMS.flatMap((item) => costingItemNames(item).map(accessoryNameKey)));
 const MASTER_ACCESSORY_ITEMS = [
   ...KITCHEN_ACCESSORY_ITEMS.map((item) => ({
-    id: item.id, subgroup: item.subgroup, materialDescription: item.materialDescription,
+    id: item.id, subgroup: item.group === "HANDLE" ? `${item.subgroup} handle` : item.subgroup, materialDescription: item.materialDescription,
     type: item.type, brand: item.brand, rateBasis: item.rateBasis,
     currentRate: item.currentRate, priced: true,
   })),
@@ -1620,7 +1624,24 @@ function selectedMasterAccessory(row: MasterAccessoryRow) {
 const ACC_LABEL: Record<AccessoryKind, string> = {
   skirting: "PVC Skirting Profile",
   elenor: "LED Profile Light",
+  "c-handle": "C Type handle",
+  "j-handle": "J Type handle",
 };
+const HANDLE_ITEMS = {
+  "c-handle": COSTING_ITEMS.find((item) => item.id === "KITCHEN-050")!,
+  "j-handle": COSTING_ITEMS.find((item) => item.id === "KITCHEN-049")!,
+};
+const HANDLE_HARDWARE = {
+  "c-handle": ["HARDWARE-022", "HARDWARE-023", "HARDWARE-026"],
+  "j-handle": ["HARDWARE-024", "HARDWARE-025", "HARDWARE-026"],
+};
+function requiredHandleHardware(kind: "c-handle" | "j-handle") {
+  return HANDLE_HARDWARE[kind].map((id) => COSTING_ITEMS.find((item) => item.id === id)!);
+}
+function accessoryMeters(row: AccessoryRow): number {
+  return Math.max(0, row.lengthMeters ?? (row.kind === "elenor"
+    ? (Number(row.size) || 720) / 1000 * (row.qty || 1) : row.qty));
+}
 const LIGHT_ITEMS = {
   profile: COSTING_ITEMS.find((item) => item.id === "KITCHEN-084")!,
   diffuser: COSTING_ITEMS.find((item) => item.id === "KITCHEN-085")!,
@@ -1633,7 +1654,6 @@ function selectedDriver(value: string): CostingMasterItem | undefined {
     ?? (value.includes("2A 24W") ? DRIVER_ITEMS.find((item) => item.id === "KITCHEN-089") : undefined)
     ?? (value.includes("5A 60W") ? DRIVER_ITEMS.find((item) => item.id === "KITCHEN-088") : undefined);
 }
-const LIGHT_WASTE = 0.10;
 const SKIRT_WASTE = 0.10;
 
 /** Default skirting run: sum of leg-mounted project line widths, metres. */
@@ -1665,13 +1685,23 @@ function buildAccessoryRows(accs: AccessoryRow[], project: ProjectLine[], so: st
         "Item Name": "SKIRTING L CONNECTOR", Size: "", Elevation: a.elevation,
         Total: a.lconn, "Actual Qty": a.lconn, "Zoho Item ID": "",
       });
+    } else if (a.kind === "c-handle" || a.kind === "j-handle") {
+      const item = HANDLE_ITEMS[a.kind];
+      const meters = accessoryMeters(a);
+      out.push({ SO: so, "Carcass Items": carcass, Accessory: ACC_LABEL[a.kind], Selected: "yes",
+        "Item Name": item.materialDescription, Size: "Mtr", Elevation: a.elevation,
+        Total: meters, "Actual Qty": meters, "Zoho Item ID": item.id });
+      requiredHandleHardware(a.kind).forEach((hardware) => out.push({
+        SO: so, "Carcass Items": carcass, Accessory: `${ACC_LABEL[a.kind]} hardware — quantity pending`, Selected: "yes",
+        "Item Name": hardware.materialDescription, Size: "Pcs", Elevation: a.elevation,
+        Total: "", "Actual Qty": "", "Zoho Item ID": hardware.id,
+      }));
     } else {
-      const H = parseFloat(a.size) || 720;
       const q = a.qty || 1;
-      const netM = r3(H / 1000 * 2 * q);
-      const billedM = r3(Math.ceil(H * (1 + LIGHT_WASTE)) / 1000 * 2 * q);
+      const netM = accessoryMeters(a);
+      const billedM = netM;
       const rowsDef: Array<[CostingMasterItem, number, number, string]> = [
-        [LIGHT_ITEMS.profile, netM, billedM, `2 × L=${H}mm`],
+        [LIGHT_ITEMS.profile, netM, billedM, "Mtr"],
         [LIGHT_ITEMS.diffuser, netM, billedM, "Mtr"],
         [LIGHT_ITEMS.led, netM, billedM, "Mtr"],
         [LIGHT_ITEMS.wire, 2 * q, 2 * q, "Mtr"],
@@ -2464,13 +2494,18 @@ function computeCosting(
       addAccessoryDetail("PVC SKIRTING PROFILE 100MM", `${netM}m skirting run`, netM, netM * (1 + SKIRT_WASTE), "RMT", SKIRT_WASTE * 100);
       if (accessory.straight > 0) addAccessoryDetail("SKIRTING STRAIGHT CONNECTOR", "Straight connector", accessory.straight, accessory.straight, "nos");
       if (accessory.lconn > 0) addAccessoryDetail("SKIRTING L CONNECTOR", "L connector", accessory.lconn, accessory.lconn, "nos");
+    } else if (accessory.kind === "c-handle" || accessory.kind === "j-handle") {
+      const item = HANDLE_ITEMS[accessory.kind];
+      const meters = accessoryMeters(accessory);
+      addAccessoryDetail(item.materialDescription, `${meters}m handle run`, meters, meters, "RMT");
+      requiredHandleHardware(accessory.kind).forEach((hardware) =>
+        unpriced.add(`${hardware.materialDescription} (quantity pending)`));
     } else {
-      const heightMm = parseFloat(accessory.size) || 720;
       const qty = accessory.qty || 1;
-      const netM = heightMm / 1000 * 2 * qty;
-      const billedM = Math.ceil(heightMm * (1 + LIGHT_WASTE)) / 1000 * 2 * qty;
+      const netM = accessoryMeters(accessory);
+      const billedM = netM;
       for (const item of [LIGHT_ITEMS.profile, LIGHT_ITEMS.diffuser, LIGHT_ITEMS.led]) {
-        addAccessoryDetail(item.materialDescription, `${heightMm}mm × 2 per set`, netM, billedM, "RMT", LIGHT_WASTE * 100);
+        addAccessoryDetail(item.materialDescription, `${netM}m light run`, netM, billedM, "RMT");
       }
       addAccessoryDetail(LIGHT_ITEMS.wire.materialDescription, "2m per set", 2 * qty, 2 * qty, "RMT");
       const driver = selectedDriver(accessory.driver);
@@ -2484,7 +2519,7 @@ function computeCosting(
   masterAccessories.forEach((row) => {
     const item = selectedMasterAccessory(row);
     if (!item) return;
-    const qty = Math.max(1, row.qty || 1);
+    const qty = item.rateBasis === "MTR" ? Math.max(0, row.qty || 0) : Math.max(1, row.qty || 1);
     const manualRate = row.manualRate?.trim() ?? "";
     const hasManualRate = manualRate !== "";
     const rate = hasManualRate ? Number(manualRate) : item.currentRate;
@@ -3109,7 +3144,7 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
         </div>
         <div className="hd-n">
           <span>cabinets<b>{project.reduce((a, l) => a + l.qty, 0)}</b></span>
-          <span>sheets<b>{boardTotals.reduce((a, b) => a + (b.sheets ?? 0), 0)}</b></span>
+          <span>sheets<b>{boardTotals.reduce((a, b) => a + (b.sheets ?? 0), 0).toFixed(2)}</b></span>
         </div>
       </header>
       {importError && <p className="header-import-error" role="alert">{importError}</p>}
@@ -3257,7 +3292,7 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
               <Tbl head={["Pack", "Panel", "Material", "W", "H", "Thk", "Qty", "Band"]}
                 num={[3, 4, 5, 6, 7]}
                 rows={m.panels.map((p) => [p.pack, normalizePartOrPanelName(p.name), p.mat ?? "—",
-                  p.w, p.h, p.t ?? "", p.qty, p.band ? r3(perim(p.w, p.h) * p.qty).toFixed(3) : "—"])} />
+                  p.w, p.h, p.t ?? "", p.qty, p.band ? r3(perim(p.w, p.h) * p.qty).toFixed(2) : "—"])} />
               {m.profiles.length > 0 && <>
                 <h4>Profiles</h4>
                 <Tbl head={["Pack", "Profile", "Len", "Qty"]} num={[2, 3]}
@@ -3269,7 +3304,7 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
               {m.cons.length > 0 && <>
                 <h4>Consumables</h4>
                 <Tbl head={["Pack", "Item", "Qty", "Unit"]} num={[2]}
-                  rows={m.cons.map((c) => [c.pack, c.name, r3(c.qty).toFixed(3), c.uom])} />
+                  rows={m.cons.map((c) => [c.pack, c.name, r3(c.qty).toFixed(2), c.uom])} />
               </>}
               {m.stubs.length > 0 && <Stub list={m.stubs} />}
             </div>
@@ -3344,7 +3379,8 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
                     const derivedWaste = override && b.sqft > 0 ? (override.sheets * 32 / b.sqft - 1) * 100 : b.waste;
                     return [b.mat, b.t, b.pack, b.sqft.toFixed(2), derivedWaste.toFixed(2),
                       b.sheets === null ? "by area" : <input key={key} aria-label={`Sheets for ${b.mat} ${b.t}mm`} type="number" min={0} step="any"
-                        value={boardSheetInputs[key] ?? b.sheets} style={{ width: 140 }}
+                        value={boardSheetInputs[key] ?? b.sheets.toFixed(2)} style={{ width: 140 }}
+                        onBlur={() => setBoardSheetInputs((current) => current[key] ? { ...current, [key]: Number(current[key]).toFixed(2) } : current)}
                         onChange={(e) => { const value = e.target.value; if (value === "" || Number.isFinite(Number(value)) && Number(value) >= 0) setBoardSheetInputs((current) => ({ ...current, [key]: value })); }} />];
                   })} />
               </>}
@@ -3429,15 +3465,16 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
 
               {/* ---- Other Accessories ---- */}
               <SecHead title="Other Accessories" onAdd={addAcc} />
-              {accessories.length === 0 ? <div className="empty">Everything is opt-in: PVC skirting and the LED profile light (two height-length cuts per unit). Light profile, LED strip, diffuser, wire and drivers use the Kitchen master items.</div> : <>
-                <Tbl head={["Accessory", "Size", "Qty", "Elevation", "Straight", "L-conn", "Driver", ""]} num={[2]}
+              {accessories.length === 0 ? <div className="empty">PVC skirting, LED profile light, C and J handles. Enter the total light or handle length in metres. Light profile, diffuser and LED strip use that same length, without doubling. Wire and drivers are separate components.</div> : <>
+                <Tbl head={["Accessory", "Size (m)", "Qty / length (m)", "Elevation", "Straight", "L-conn", "Driver", ""]} num={[2]}
                   rows={accessories.map((a) => [
-                    <select key="k" value={a.kind} onChange={(e) => updAcc(a.id, { kind: e.target.value as AccessoryKind })}>
+                    <select key="k" value={a.kind} onChange={(e) => updAcc(a.id, { kind: e.target.value as AccessoryKind, lengthMeters: 1, qty: 1 })}>
                       {(Object.keys(ACC_LABEL) as AccessoryKind[]).map((k) => <option key={k} value={k}>{ACC_LABEL[k]}</option>)}</select>,
-                    <input key="s" type="number" value={a.size}
+                    a.kind === "skirting" ? <input key="s" type="number" value={a.size}
                       placeholder={a.kind === "skirting" ? `${defSkirtMeters(project)} m` : "H mm"}
-                      onChange={(e) => updAcc(a.id, { size: e.target.value })} style={{ width: 90 }} />,
-                    <input key="q" type="number" min={1} value={a.qty} onChange={(e) => updAcc(a.id, { qty: Math.max(1, +e.target.value) })} style={{ width: 58 }} />,
+                      onChange={(e) => updAcc(a.id, { size: e.target.value })} style={{ width: 90 }} /> : "—",
+                    a.kind === "skirting" ? <input key="q" type="number" min={1} value={a.qty} onChange={(e) => updAcc(a.id, { qty: Math.max(1, +e.target.value) })} style={{ width: 58 }} /> :
+                      <input key="m" aria-label={`${ACC_LABEL[a.kind]} length (metres)`} type="number" min={0} step="0.01" value={accessoryMeters(a)} onChange={(e) => updAcc(a.id, { lengthMeters: Math.max(0, Number(e.target.value)) })} style={{ width: 90 }} />,
                     <input key="e" list="elev-list" value={a.elevation} onChange={(e) => updAcc(a.id, { elevation: e.target.value })} style={{ width: 64 }} />,
                     a.kind === "skirting" ? <input key="st" type="number" min={0} value={a.straight} onChange={(e) => updAcc(a.id, { straight: Math.max(0, +e.target.value) })} style={{ width: 58 }} /> : "—",
                     a.kind === "skirting" ? <input key="lc" type="number" min={0} value={a.lconn} onChange={(e) => updAcc(a.id, { lconn: Math.max(0, +e.target.value) })} style={{ width: 58 }} /> : "—",
@@ -3472,7 +3509,7 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
                         <input type="number" min={0} step="0.01" aria-label={`Manual rate for ${selected?.subgroup ?? "accessory"}`} placeholder={selected?.priced ? selected.currentRate.toFixed(2) : "Enter price"} value={row.manualRate ?? ""} onChange={(e) => updMasterAcc(row.id, { manualRate: e.target.value })} style={{ width: 118 }} />
                         <small style={{ color: "var(--mut)" }}>{row.manualRate !== undefined && row.manualRate !== "" ? `Manual · ${selected?.rateBasis ?? "unit"}` : selected?.priced ? `Master ₹${selected.currentRate.toFixed(2)} / ${selected.rateBasis}` : "No master rate"}</small>
                       </div>,
-                      <input key="q" type="number" min={1} value={row.qty} onChange={(e) => updMasterAcc(row.id, { qty: Math.max(1, +e.target.value) })} style={{ width: 58 }} />,
+                      <input key="q" type="number" aria-label={`Quantity (${selected?.rateBasis ?? "unit"})`} min={selected?.rateBasis === "MTR" ? 0 : 1} step={selected?.rateBasis === "MTR" ? "0.01" : "1"} value={row.qty} onChange={(e) => updMasterAcc(row.id, { qty: Math.max(selected?.rateBasis === "MTR" ? 0 : 1, +e.target.value) })} style={{ width: 78 }} />,
                       <input key="e" list="elev-list" value={row.elevation} onChange={(e) => updMasterAcc(row.id, { elevation: e.target.value })} style={{ width: 64 }} />,
                       <button key="x" className="x" onClick={() => rmMasterAcc(row.id)}>×</button>,
                     ];
@@ -3488,10 +3525,10 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
               <SecHead title="Costing (Rs)" />
               {costing.purchases.length > 0 && <details open style={{ marginBottom: 16 }}>
                 <summary style={{ cursor: "pointer", fontWeight: 650 }}>Whole-kitchen purchase quantities</summary>
-                <p style={{ color: "var(--mut)", fontSize: 12 }}>Same items are combined across all cabinets and panels after wastage, without rounding up quantities. Boards and laminates use 32 sqft sheets; adhesives use kg. Different quoted rates remain separate. Costing uses calculated decimal quantities. Processing remains charged on used billable sqft.</p>
+                <p style={{ color: "var(--mut)", fontSize: 12 }}>Same items are combined across all cabinets and panels after wastage, then quantities are rounded to two decimal places for purchasing and costing—not up to whole units. Boards and laminates use 32 sqft sheets; adhesives use kg. Different quoted rates remain separate. Processing remains charged on billable sqft.</p>
                 <Tbl head={["Category", "Item", "Unit", "Purchase qty", "Rate (Rs)", "Amount (Rs)"]} num={[3, 4, 5]}
                   rows={costing.purchases.map((item) => [item.categories.join(", "), `${item.itemCode} · ${item.item}`, item.unit,
-                    item.quantity, item.rate.toFixed(2), item.amount.toFixed(2)])} />
+                    item.quantity.toFixed(2), item.rate.toFixed(2), item.amount.toFixed(2)])} />
               </details>}
               {shownCosting.lines.length === 0 ? <div className="empty">No costed items for this elevation.</div> : <>
                 <Tbl head={[<ColumnFilter key="cost-cabinet" label="Cabinet" options={cabinetCodeOptions}
@@ -3513,9 +3550,9 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
                               <td style={{ padding: "6px 7px", border: "1px solid #E3E7E4", whiteSpace: "nowrap", fontWeight: 650 }}>{detail.itemCode}</td>
                               <td style={{ padding: "6px 7px", border: "1px solid #E3E7E4" }}>{detail.item}</td>
                               <td style={{ padding: "6px 7px", border: "1px solid #E3E7E4" }}>{detail.specification}</td>
-                              <td style={{ padding: "6px 7px", border: "1px solid #E3E7E4", textAlign: "right" }}>{detail.netQty.toFixed(3)}</td>
+                              <td style={{ padding: "6px 7px", border: "1px solid #E3E7E4", textAlign: "right" }}>{detail.netQty.toFixed(2)}</td>
                               <td style={{ padding: "6px 7px", border: "1px solid #E3E7E4", textAlign: "right" }}>{detail.wastePct}%</td>
-                              <td style={{ padding: "6px 7px", border: "1px solid #E3E7E4", textAlign: "right" }}>{(detail.allocatedBillableQty ?? detail.billableQty).toFixed(3)}</td>
+                              <td style={{ padding: "6px 7px", border: "1px solid #E3E7E4", textAlign: "right" }}>{(detail.allocatedBillableQty ?? detail.billableQty).toFixed(2)}</td>
                               <td style={{ padding: "6px 7px", border: "1px solid #E3E7E4" }}>{detail.uom}</td>
                               <td style={{ padding: "6px 7px", border: "1px solid #E3E7E4", textAlign: "right" }}>{detail.rate.toFixed(2)}</td>
                               <td style={{ padding: "6px 7px", border: "1px solid #E3E7E4", textAlign: "right", fontWeight: 650 }}>{detail.amount.toFixed(2)}</td>
@@ -3526,10 +3563,12 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
                       </details>,
                       c.qty, c.unitCost.toFixed(2), c.cost.toFixed(2),
                     ]),
-                    [<b key="t">{activeElevation === null ? "Project costing total" : `${activeElevation} costing total`}{shownCosting.unpriced.length > 0 ? " (incomplete — missing rates)" : ""}</b>, "", "", <b key="v">{shownCosting.total.toFixed(2)}</b>],
+                    [<b key="t">{activeElevation === null ? "Project costing total" : `${activeElevation} costing total`}{shownCosting.unpriced.length > 0 ? " (incomplete — rates or quantities pending)" : ""}</b>, "", "", <b key="v">{shownCosting.total.toFixed(2)}</b>],
                   ]} />
                 {shownCosting.unpriced.length > 0 && (
-                  <Stub list={shownCosting.unpriced.map((u) => u.includes("(reference accessory)")
+                  <Stub list={shownCosting.unpriced.map((u) => u.includes("(quantity pending)")
+                    ? `${u} — required hardware; quantity not specified and cost not included.`
+                    : u.includes("(reference accessory)")
                     ? `${u} — enter a manual rate in Accessories to include it in the total.`
                     : `${u} — RATE REQUIRED. Listed in the costing, but excluded from the amount until a matching master price is supplied.`)} />
                 )}
@@ -3539,7 +3578,7 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
                     <button type="button" className="add" style={{ width: "auto", padding: "8px 12px" }} onClick={openPricingModal}>Admin · Edit processing costs &amp; factors</button>
                   </div>
                   <p style={{ margin: "0 0 14px", color: "#617069", fontSize: 12 }}>
-                    Per-sqft charges use {shownPricing.totalSqft.toFixed(3)} sqft: {shownPricing.cabinetSqft.toFixed(3)} cabinet sqft + {shownPricing.fillerSqft.toFixed(3)} filler-front sqft. Base and Tall cabinets use width × (height + 100mm) × quantity; fillers use only front width × height × quantity. Cover-panel LH/RH sides remain in material costing.
+                    Per-sqft charges use {shownPricing.totalSqft.toFixed(2)} sqft: {shownPricing.cabinetSqft.toFixed(2)} cabinet sqft + {shownPricing.fillerSqft.toFixed(2)} filler-front sqft. Base and Tall cabinets use width × (height + 100mm) × quantity; fillers use only front width × height × quantity. Cover-panel LH/RH sides remain in material costing.
                   </p>
 
                   <div style={{ marginTop: 14, overflowX: "auto" }}>
@@ -3554,16 +3593,16 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
                         .map(({ line, index }) => <tr key={`${line.label}-${index}`}>
                         <td style={{ padding: "7px 9px", border: "1px solid #E3E7E4" }}>{line.label}</td>
                         <td style={{ padding: "7px 9px", border: "1px solid #E3E7E4", textAlign: "right" }}>{line.qty}</td>
-                        <td style={{ padding: "7px 9px", border: "1px solid #E3E7E4", textAlign: "right" }}>{line.eachSqft.toFixed(3)}</td>
-                        <td style={{ padding: "7px 9px", border: "1px solid #E3E7E4", textAlign: "right" }}>{line.sqft.toFixed(3)}</td>
+                        <td style={{ padding: "7px 9px", border: "1px solid #E3E7E4", textAlign: "right" }}>{line.eachSqft.toFixed(2)}</td>
+                        <td style={{ padding: "7px 9px", border: "1px solid #E3E7E4", textAlign: "right" }}>{line.sqft.toFixed(2)}</td>
                         <td style={{ padding: "7px 9px", border: "1px solid #E3E7E4", textAlign: "right" }}>Rs {line.transportation.toFixed(2)}</td>
                         <td style={{ padding: "7px 9px", border: "1px solid #E3E7E4", textAlign: "right" }}>Rs {line.installation.toFixed(2)}</td>
                         <td style={{ padding: "7px 9px", border: "1px solid #E3E7E4", textAlign: "right" }}>Rs {line.loading.toFixed(2)}</td>
                       </tr>)}{shownPricing.fillerCharges.map((line, index) => <tr key={`filler-${index}`}>
                         <td style={{ padding: "7px 9px", border: "1px solid #E3E7E4" }}>{line.label}</td>
                         <td style={{ padding: "7px 9px", border: "1px solid #E3E7E4", textAlign: "right" }}>{line.qty}</td>
-                        <td style={{ padding: "7px 9px", border: "1px solid #E3E7E4", textAlign: "right" }}>{line.eachSqft.toFixed(3)}</td>
-                        <td style={{ padding: "7px 9px", border: "1px solid #E3E7E4", textAlign: "right" }}>{line.sqft.toFixed(3)}</td>
+                        <td style={{ padding: "7px 9px", border: "1px solid #E3E7E4", textAlign: "right" }}>{line.eachSqft.toFixed(2)}</td>
+                        <td style={{ padding: "7px 9px", border: "1px solid #E3E7E4", textAlign: "right" }}>{line.sqft.toFixed(2)}</td>
                         <td style={{ padding: "7px 9px", border: "1px solid #E3E7E4", textAlign: "right" }}>Rs {line.transportation.toFixed(2)}</td>
                         <td style={{ padding: "7px 9px", border: "1px solid #E3E7E4", textAlign: "right" }}>Rs {line.installation.toFixed(2)}</td>
                         <td style={{ padding: "7px 9px", border: "1px solid #E3E7E4", textAlign: "right" }}>Rs {line.loading.toFixed(2)}</td>
@@ -3572,7 +3611,7 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
                         <td style={{ padding: "8px 9px", border: "1px solid #D8DEDA", fontWeight: 750 }}>{activeElevation === null ? "Cabinets + filler panels total" : `${activeElevation} cabinets + filler panels`}</td>
                         <td style={{ padding: "8px 9px", border: "1px solid #D8DEDA", textAlign: "right", fontWeight: 750 }}>{shownProject.reduce((sum, line) => sum + line.qty, 0) + shownPricing.fillerCharges.reduce((sum, line) => sum + line.qty, 0)}</td>
                         <td style={{ padding: "8px 9px", border: "1px solid #D8DEDA" }} />
-                        <td style={{ padding: "8px 9px", border: "1px solid #D8DEDA", textAlign: "right", fontWeight: 750 }}>{shownPricing.totalSqft.toFixed(3)}</td>
+                        <td style={{ padding: "8px 9px", border: "1px solid #D8DEDA", textAlign: "right", fontWeight: 750 }}>{shownPricing.totalSqft.toFixed(2)}</td>
                         <td style={{ padding: "8px 9px", border: "1px solid #D8DEDA", textAlign: "right", fontWeight: 750 }}>Rs {shownPricing.transportation.toFixed(2)}</td>
                         <td style={{ padding: "8px 9px", border: "1px solid #D8DEDA", textAlign: "right", fontWeight: 750 }}>Rs {shownPricing.installation.toFixed(2)}</td>
                         <td style={{ padding: "8px 9px", border: "1px solid #D8DEDA", textAlign: "right", fontWeight: 750 }}>Rs {shownPricing.loading.toFixed(2)}</td>

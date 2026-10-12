@@ -30,7 +30,7 @@ function purchaseBasis(detail: PurchaseDetail) {
   const identity = detail.itemCode === "—" || detail.itemCode.startsWith("CUSTOM")
     ? `${detail.itemCode}|${detail.item}` : detail.itemCode;
   const key = JSON.stringify([identity, unit, rate, processing]);
-  // Purchase rounding is paused: preserve decimal quantities for reconciliation.
+  // Whole-unit rounding stays disabled; round consolidated quantities to two decimals.
   return { key, unit, rate, divisor, rounded: false };
 }
 
@@ -49,7 +49,7 @@ export function purchaseTotals(details: PurchaseDetail[]): PurchaseTotal[] {
     });
   }
   return [...groups.values()].map(group => {
-    const quantity = group.rounded ? ceilQuantity(group.requiredQty) : group.requiredQty;
+    const quantity = Math.round((group.requiredQty + Number.EPSILON) * 100) / 100;
     return { ...group, quantity, amount: quantity * group.rate };
   });
 }
