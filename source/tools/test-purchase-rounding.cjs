@@ -80,14 +80,22 @@ const model = b.buildModel(config);
 const drawerModel = b.buildModel({...config, fk: 'DW', vid: '2dr-mixed'});
 const drawerPanels = drawerModel.panels.filter(p => p.pack === 'Drawer Pack');
 assert(drawerPanels.length > 0 && drawerPanels.every(p => p.band));
-const drawerBand = drawerPanels.reduce((sum, p) => sum + 2 * (p.w + p.h) / 1000 * p.qty, 0);
+const bandPerPanel = p => (2 * (p.w + p.h) + 4 * 50) / 1000;
+const drawerBand = drawerPanels.reduce((sum, p) => sum + bandPerPanel(p) * p.qty, 0);
 near(drawerModel.cons.find(c => c.pack === 'Drawer Pack' && c.name.startsWith('EDGE BAND')).qty, Math.round(drawerBand * 1000) / 1000);
 near(drawerModel.cons.find(c => c.pack === 'Drawer Pack' && c.name === 'EDGEBAND ADHESIVE').qty, Math.round(drawerBand * 6 * 1000) / 1000);
 const drawerCost = b.computeCosting([{id: 1, m: drawerModel, qty: 1, elevation: 'AA'}], [], [], [], [], [], [], config.shType, config.shType,
   b.DEFAULT_RATES, {carcass: 10, shutter: 20, profile: 20}, {});
 const nonShutterBand = drawerModel.panels.filter(p => p.band && p.pack !== 'Shutter Pack' && !p.visibleSide)
-  .reduce((sum, p) => sum + 2 * (p.w + p.h) / 1000 * p.qty, 0);
+  .reduce((sum, p) => sum + bandPerPanel(p) * p.qty, 0);
 near(drawerCost.lines[0].details.find(d => d.category === 'Carcass edge band').netQty, nonShutterBand);
+const shutterPanels = model.panels.filter(p => p.band && (p.pack === 'Shutter Pack' || p.visibleSide));
+const shutterBand = shutterPanels.reduce((sum, p) => sum + bandPerPanel(p) * p.qty, 0);
+const shutterCost = b.computeCosting([{id: 1, m: model, qty: 1, elevation: 'AA'}], [], [], [], [], [], [], config.shType, config.shType,
+  b.DEFAULT_RATES, {carcass: 10, shutter: 20, profile: 20}, {});
+near(shutterCost.lines[0].details.find(d => d.category === 'Shutter edge band').netQty, shutterBand);
+near(model.cons.find(c => c.pack === 'Shutter Pack' && c.name.startsWith('EDGE BAND')).qty,
+  Math.round(shutterBand * 1000) / 1000);
 const calc = (project, totals) => b.computeCosting(project, [], [], [], [], [], [], config.shType, config.shType,
   b.DEFAULT_RATES, {carcass: 10, shutter: 20, profile: 20}, {}, totals);
 const project = [{ id: 1, m: model, qty: 1, elevation: 'AA' }, { id: 2, m: model, qty: 1, elevation: 'BB' }];

@@ -217,6 +217,8 @@ const SHELF_W_CLR = 1;
 const SHELF_D_OFF = 28;
 /** Edge band is 0.8mm on all four edges of every panel except the back. */
 const BAND_T = 0.8;
+/** Add 50mm to each edge-band strip for cutting allowance. */
+const BAND_EDGE_ALLOWANCE = 50;
 
 const LAM_ADH = 25;                                  // g/sqft/side
 const EDGE_ADH_G_PER_M = 6;                           // g/running metre
@@ -258,7 +260,7 @@ const sqft = (w: number, h: number) => (w * h) / SQDIV;
 /** Pricing area includes the 100mm plinth allowance for leg-mounted Base and Tall units. */
 const cabinetAreaHeight = (zoneKey: string, height: number) =>
   height + (ZONES[zoneKey]?.mount === "legs" ? 100 : 0);
-const perim = (w: number, h: number) => (2 * (w + h)) / 1000;
+const perim = (w: number, h: number) => (2 * (w + h) + 4 * BAND_EDGE_ALLOWANCE) / 1000;
 const r3 = (n: number) => Math.round(n * 1000) / 1000;
 const legCount = (w: number) => (w <= 150 ? 2 : w >= 1050 ? 6 : 4);
 const hingePackCount = (h: number) => (h <= 720 ? 2 : h <= 1050 ? 3 : 5);
