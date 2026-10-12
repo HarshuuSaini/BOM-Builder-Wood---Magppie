@@ -218,6 +218,7 @@ const SHELF_D_OFF = 28;
 const BAND_T = 0.8;
 
 const LAM_ADH = 25;                                  // g/sqft/side
+const EDGE_ADH_G_PER_M = 20;                          // g/running metre
 const PU_RATE = { epoxy: 15, primer: 30, top: 50 };  // g/sqft/side
 const MEMB_OVER = 50;                                // mm per edge
 const MEMB_ADH: number | null = null;                // rate not yet supplied
@@ -1124,11 +1125,11 @@ function buildCarcassInnerRaw(cfg: {
 
   if (carcBandM > 0) {
     cons.push({ name: `EDGE BAND ${BAND_T}MM`, qty: r3(carcBandM), uom: "RMT", pack: PK });
-    cons.push({ name: "EDGEBAND ADHESIVE", qty: r3(carcBandM), uom: "RMT", pack: PK });
+    cons.push({ name: "EDGEBAND ADHESIVE", qty: r3(carcBandM * EDGE_ADH_G_PER_M), uom: "gm", pack: PK });
   }
   if (shutterBandM > 0) {
     cons.push({ name: `EDGE BAND ${BAND_T}MM`, qty: r3(shutterBandM), uom: "RMT", pack: "Shutter Pack" });
-    cons.push({ name: "EDGEBAND ADHESIVE", qty: r3(shutterBandM), uom: "RMT", pack: "Shutter Pack" });
+    cons.push({ name: "EDGEBAND ADHESIVE", qty: r3(shutterBandM * EDGE_ADH_G_PER_M), uom: "gm", pack: "Shutter Pack" });
   }
   if (B.lam) {
     cons.push({ name: "CARCASS LAMINATE 0.8MM", qty: r3(carcSqft * 2), uom: "sqft", pack: PK });

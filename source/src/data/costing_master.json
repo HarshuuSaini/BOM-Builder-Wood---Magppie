@@ -2495,6 +2495,42 @@
       "thicknessMm": null,
       "rateBasis": "MTR",
       "currentRate": 104
+    },
+    {
+      "id": "KITCHEN-EDGEBAND-ADHESIVE",
+      "sNo": 0,
+      "elevation": "",
+      "materialDescription": "EDGEBAND ADHESIVE",
+      "remark": "User-confirmed INR 400/kg; consumption 20 grams per running metre (INR 8 per running metre)",
+      "unit": "kg",
+      "sqft": null,
+      "price": 400,
+      "sqftPrice": null,
+      "group": "Consumable",
+      "subgroup": "Edgeband Adhesive",
+      "type": "Adhesive",
+      "brand": "",
+      "thicknessMm": null,
+      "rateBasis": "KG",
+      "currentRate": 400
+    },
+    {
+      "id": "KITCHEN-LAMINATE-ADHESIVE",
+      "sNo": 0,
+      "elevation": "",
+      "materialDescription": "LAMINATE ADHESIVE",
+      "remark": "User-confirmed INR 130/kg",
+      "unit": "kg",
+      "sqft": null,
+      "price": 130,
+      "sqftPrice": null,
+      "group": "Consumable",
+      "subgroup": "Laminate Adhesive",
+      "type": "Adhesive",
+      "brand": "",
+      "thicknessMm": null,
+      "rateBasis": "KG",
+      "currentRate": 130
     }
   ]
 }

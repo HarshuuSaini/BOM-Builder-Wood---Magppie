@@ -85,7 +85,8 @@ for values in rows:
         item["id"] = f"KITCHEN-{next_id:03d}"
         next_id += 1
         added.append(item)
-unexpected = [item_id for item_id in available if not item_id.startswith("KITCHEN-GLASS-") and item_id != "KITCHEN-SINK-PROFILE"]
+supplemental_ids = {"KITCHEN-SINK-PROFILE", "KITCHEN-EDGEBAND-ADHESIVE", "KITCHEN-LAMINATE-ADHESIVE"}
+unexpected = [item_id for item_id in available if not item_id.startswith("KITCHEN-GLASS-") and item_id not in supplemental_ids]
 if unexpected:
     raise ValueError(f"Existing Kitchen items absent from the sheet: {unexpected}")
 master["items"] = [updates.get(item["id"], item) for item in master["items"]] + added
