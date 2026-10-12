@@ -1,6 +1,7 @@
 import * as XLSX from "xlsx-js-style";
 import { groupLabel, resolveSku, statusLabel } from "@/lib/stock";
 import type { BomReportRow } from "@/lib/types";
+import { purchaseTotals, type PurchaseTotal } from "@/lib/purchase-rounding";
 
 export type AccessoryExportRow = {
   SO: string;
@@ -21,6 +22,7 @@ export type CostingExportDetail = {
   category: string; itemCode: string; item: string; specification: string;
   netQty: number; wastePct: number; billableQty: number;
   uom: string; rate: number; amount: number;
+  allocatedBillableQty?: number;
 };
 export type CostingExportLine = {
   label: string; code?: string; qty: number; unitCost: number; cost: number;
@@ -381,7 +383,7 @@ function applyFullBomColors(ws: XLSX.WorkSheet, data: FullBomExport[]) {
   }
 }
 
-export function exportBomWorkbook(rows: BomReportRow[], accessories: AccessoryExportRow[], projectSetup: ProjectSetupRow[] = []) {
+export function exportBomWorkbook(rows: BomReportRow[], accessories: AccessoryExportRow[], projectSetup: ProjectSetupRow[] = [], purchases: PurchaseTotal[] = []) {
   const workbook = XLSX.utils.book_new();
 
   const bomData = fullBomRows(rows);
@@ -395,6 +397,10 @@ export function exportBomWorkbook(rows: BomReportRow[], accessories: AccessoryEx
   addSheet(workbook, optiRowsFromOos(consolidated), "Opti", COLS_OPTI);
 
   if (accessories.length) addSheet(workbook, accessories, "Accessories", COLS_SF);
+  if (purchases.length) addSheet(workbook, purchases.map(item => ({
+    "Item code": item.itemCode, Item: item.item, Category: item.categories.join(", "),
+    Unit: item.unit, "Purchase qty": item.quantity,
+  })), "Purchase Quantities", [{ wch: 25 }, { wch: 65 }, { wch: 35 }, { wch: 12 }, { wch: 18 }]);
 
   if (projectSetup.length) addSheet(workbook, projectSetup, "Project Setup", [{ wch: 20 }, { wch: 100 }]);
 
@@ -410,27 +416,16 @@ export function exportCostingWorkbook(
 ) {
   if (!lines.length) return;
   const workbook = XLSX.utils.book_new();
-  // The supplied manual MRP sheet uses rate × required quantity by material/elevation.
-  // Keep its A:H reading order while retaining the app's unrounded billable area.
-  const manualItems = new Map<string, { elevation: string; description: string; code: string; rate: number; unit: string; qty: number }>();
-  lines.forEach((line) => line.details.forEach((detail) => {
-    const sheetBasis = detail.uom === "sqft";
-    const rate = sheetBasis ? detail.rate * 32 : detail.rate;
-    const unit = sheetBasis ? "32 sqft sheet eq" : detail.uom;
-    const qty = sheetBasis ? detail.billableQty / 32 : detail.billableQty;
-    const elevation = detail.category.replace(/ board$/i, "").toUpperCase();
-    const key = JSON.stringify([elevation, detail.itemCode, detail.item, rate, unit]);
-    const found = manualItems.get(key);
-    if (found) found.qty += qty;
-    else manualItems.set(key, { elevation, description: detail.item, code: detail.itemCode, rate, unit, qty });
-  }));
+  const purchases = purchaseTotals(lines.flatMap(line => line.details));
+  const manualItems = purchases.map(item => ({ elevation: item.categories.join(", ").toUpperCase(),
+    description: item.item, code: item.itemCode, rate: item.rate, unit: item.unit, qty: item.quantity }));
   const manualRows: (string | number | XLSX.CellObject)[][] = [
     ["KITCHEN COSTING - MANUAL COMPARISON"],
     ["Cabinet + filler area (sqft)", pricing.totalSqft, "Total cabinets", lines.filter((line) => !!line.code).reduce((total, line) => total + line.qty, 0)],
-    ["Sheet-equivalent quantities use billable sqft ÷ 32 (including waste); total area includes only filler fronts, not cover-panel sides. Base and Tall cabinets use height + 100mm."],
+    ["Whole-kitchen quantities include waste without rounding up: boards and laminates in 32 sqft sheets, adhesives in kg, lengths in metres, hardware in pieces/sets. Costing uses calculated decimal quantities. Processing uses billable sqft."],
     ["Sr. No.", "Elevation", "Material Description", "Item code", "Rate (Rs)", "Unit of Mnt.", "Qty. Req.", "Total Rate (Rs)"],
   ];
-  [...manualItems.values()].sort((a, b) => a.elevation.localeCompare(b.elevation) || a.description.localeCompare(b.description))
+  manualItems.sort((a, b) => a.elevation.localeCompare(b.elevation) || a.description.localeCompare(b.description))
     .forEach((item, index) => manualRows.push([index + 1, item.elevation, item.description, item.code, item.rate, item.unit, item.qty,
       { f: `E${index + 5}*G${index + 5}`, t: "n", v: item.rate * item.qty }]));
   const lastItemRow = manualRows.length;
@@ -455,7 +450,7 @@ export function exportCostingWorkbook(
   for (let row = 4; row < manualRows.length; row++) {
     for (const col of [4, 6, 7]) {
       const cell = manualSheet[XLSX.utils.encode_cell({ r: row, c: col })];
-      if (cell) cell.z = "#,##0.00";
+      if (cell) cell.z = col === 6 && row < lastItemRow ? "#,##0.###" : "#,##0.00";
     }
   }
   XLSX.utils.book_append_sheet(workbook, manualSheet, "Manual Comparison");
@@ -500,6 +495,7 @@ export function exportCostingWorkbook(
     "Net qty": detail.netQty,
     "Waste %": detail.wastePct,
     "Billable qty": detail.billableQty,
+    "Allocated purchase qty": detail.allocatedBillableQty ?? detail.billableQty,
     Basis: detail.uom,
     "Rate (Rs / basis)": detail.rate,
     "Amount (Rs)": detail.amount,
@@ -511,37 +507,13 @@ export function exportCostingWorkbook(
     { wch: 15 }, { wch: 11 }, { wch: 20 }, { wch: 18 }, { wch: 27 },
   ]);
 
-  const consolidated = new Map<string, {
-    Category: string; "Item code": string; "Actual item": string;
-    "Net qty": number; "Waste %": number; "Billable qty": number;
-    Basis: string; "Rate (Rs / basis)": number; "Amount (Rs)": number;
-    "Cost lines": number;
-  }>();
-  lines.forEach((line) => line.details.forEach((detail) => {
-    const key = JSON.stringify([detail.itemCode, detail.item, detail.uom, detail.rate, detail.wastePct]);
-    const row = consolidated.get(key);
-    if (row) {
-      row["Net qty"] += detail.netQty;
-      row["Billable qty"] += detail.billableQty;
-      row["Amount (Rs)"] += detail.amount;
-      row["Cost lines"] += 1;
-      if (!row.Category.split(", ").includes(detail.category)) row.Category += `, ${detail.category}`;
-    } else consolidated.set(key, {
-      Category: detail.category,
-      "Item code": detail.itemCode,
-      "Actual item": detail.item,
-      "Net qty": detail.netQty,
-      "Waste %": detail.wastePct,
-      "Billable qty": detail.billableQty,
-      Basis: detail.uom,
-      "Rate (Rs / basis)": detail.rate,
-      "Amount (Rs)": detail.amount,
-      "Cost lines": 1,
-    });
-  }));
-  addSheet(workbook, [...consolidated.values()], "Consolidated Items", [
-    { wch: 30 }, { wch: 18 }, { wch: 65 }, { wch: 15 }, { wch: 12 },
-    { wch: 17 }, { wch: 11 }, { wch: 20 }, { wch: 18 }, { wch: 22 },
+  addSheet(workbook, purchases.map(item => ({
+    Category: item.categories.join(", "), "Item code": item.itemCode, "Actual item": item.item,
+    "Required qty incl. waste": item.requiredQty, "Purchase qty": item.quantity, Basis: item.unit,
+    "Rate (Rs / basis)": item.rate, "Amount (Rs)": item.amount,
+  })), "Consolidated Items", [
+    { wch: 30 }, { wch: 18 }, { wch: 65 }, { wch: 24 }, { wch: 18 },
+    { wch: 11 }, { wch: 20 }, { wch: 18 },
   ]);
 
   addSheet(workbook, [

@@ -31,6 +31,7 @@ import { boardPricesFromMaterials, selectedBoardRate, validBoardSheetPrice, MATE
 import { UserSignOut } from "@/components/UserSignOut";
 import { encodeProjectPrintData, readPrintedProjectPdf } from "@/lib/print-project";
 import type { BomReportRow } from "@/lib/types";
+import { allocatePurchaseCosts, type PurchaseTotal } from "@/lib/purchase-rounding";
 
 /* ------------------------------------------------------------------ */
 /*  Types & Interfaces  (identical shapes to stone)                    */
@@ -218,7 +219,7 @@ const SHELF_D_OFF = 28;
 const BAND_T = 0.8;
 
 const LAM_ADH = 25;                                  // g/sqft/side
-const EDGE_ADH_G_PER_M = 20;                          // g/running metre
+const EDGE_ADH_G_PER_M = 6;                           // g/running metre
 const PU_RATE = { epoxy: 15, primer: 30, top: 50 };  // g/sqft/side
 const MEMB_OVER = 50;                                // mm per edge
 const MEMB_ADH: number | null = null;                // rate not yet supplied
@@ -1369,21 +1370,26 @@ function buildFullBomData(project: ProjectLine[], so: string, finish: string, ws
 type BoardTotal = { mat: string; t: number; pack: string; sqft: number; waste: number; sheets: number | null };
 
 function buildBoardTotals(project: ProjectLine[], wst: WastePct = WASTE, extraPanels: Panel[] = []): BoardTotal[] {
-  const map = new Map<string, BoardTotal>();
+  const map = new Map<string, BoardTotal & { billableArea: number }>();
   const fold = (p: Panel, mult: number) => {
     const mat = p.mat ?? "Board";
     const pack = p.visibleSide ? "Shutter Pack" : p.pack;
-    const k = `${mat}|${p.t}|${pack}`;
+    const k = `${mat}|${p.t}`;
     if (!map.has(k)) {
-      map.set(k, { mat, t: p.t ?? T, pack, sqft: 0, waste: wasteFor(pack, "sqft", wst), sheets: 0 });
+      map.set(k, { mat, t: p.t ?? T, pack, sqft: 0, waste: 0, sheets: 0, billableArea: 0 });
     }
-    map.get(k)!.sqft += sqft(p.w, p.h) * p.qty * mult;
+    const total = map.get(k)!;
+    const area = sqft(p.w, p.h) * p.qty * mult;
+    total.sqft += area;
+    total.billableArea += area * (1 + wasteFor(pack, "sqft", wst) / 100);
+    if (!total.pack.split(", ").includes(pack)) total.pack += `, ${pack}`;
   };
   project.forEach((l) => l.m.panels.forEach((p) => fold(p, l.qty)));
   extraPanels.forEach((p) => fold(p, 1));
   return [...map.values()].map((b) => ({
     ...b,
-    sheets: /glass/i.test(b.mat) ? null : (b.sqft * (1 + b.waste / 100)) / SHEET_SQFT,
+    waste: b.sqft ? r3((b.billableArea / b.sqft - 1) * 100) : 0,
+    sheets: /glass/i.test(b.mat) ? null : b.billableArea / 32,
   }));
 }
 
@@ -1701,6 +1707,7 @@ function buildMasterAccessoryRows(accs: MasterAccessoryRow[], so: string): Acces
 /* --- Costing — rupee totals for the user; factors stay on /admin --- */
 
 type CostDetail = {
+  boardQuantityKey?: string;
   category: string;
   itemCode: string;
   item: string;
@@ -1711,9 +1718,10 @@ type CostDetail = {
   uom: "sqft" | "RMT" | "nos" | "set" | "gm" | "kg";
   rate: number;
   amount: number;
+  allocatedBillableQty?: number;
 };
 type LineCost = { label: string; code?: string; qty: number; unitCost: number; cost: number; details: CostDetail[] };
-type CostingResult = { lines: LineCost[]; total: number; unpriced: string[] };
+type CostingResult = { lines: LineCost[]; total: number; unpriced: string[]; purchases: PurchaseTotal[] };
 type ChargeMode = "sqft" | "direct";
 type NumericInput = number | "";
 type ServiceCharge = { mode: ChargeMode; value: NumericInput };
@@ -2206,6 +2214,8 @@ function computeCosting(
   masterAccessories: MasterAccessoryRow[],
   globalShType: string, countertopShType: string, rates: CostingRates, wst: WastePct,
   processingRates: Record<string, number>,
+  wholeProjectPurchases?: PurchaseTotal[],
+  boardQuantityOverrides: Record<string, { sheets: number; netSqft: number }> = {},
 ): CostingResult {
   const lines: LineCost[] = [];
   const unpriced = new Set<string>();
@@ -2217,8 +2227,10 @@ function computeCosting(
     const m = l.m;
     const st = isGlassShutterFam(m.fk) ? "GLASS" : m.shType;
     const details: CostDetail[] = [];
+    let currentBoardQuantityKey: string | undefined;
     const addDetail = (detail: CostDetail) => {
-      const existing = details.find((row) => row.category === detail.category && row.itemCode === detail.itemCode && row.rate === detail.rate && row.wastePct === detail.wastePct);
+      if (/board$/i.test(detail.category)) detail.boardQuantityKey = currentBoardQuantityKey;
+      const existing = details.find((row) => row.boardQuantityKey === detail.boardQuantityKey && row.category === detail.category && row.itemCode === detail.itemCode && row.rate === detail.rate && row.wastePct === detail.wastePct);
       if (existing) {
         existing.netQty += detail.netQty;
         existing.billableQty += detail.billableQty;
@@ -2241,6 +2253,7 @@ function computeCosting(
       });
     };
     m.panels.forEach((p) => {
+      currentBoardQuantityKey = `${p.mat ?? "Board"}|${p.t}`;
       const a = sqft(p.w, p.h) * p.qty * l.qty;
       if (p.pack === "Shutter Pack" || p.visibleSide) {
         const panelShutterType = p.visibleSide ? (p.materialId ?? m.visibleSideMaterialId) : /glass/i.test(p.mat ?? "") ? "GLASS" : m.shType;
@@ -2335,7 +2348,7 @@ function computeCosting(
       const masterHardware = hardwareMasterItem(h.name);
       const rate = masterHardware?.currentRate ?? 0;
       if (!masterHardware) unpriced.add(h.name);
-      addDetail({ category: masterHardware?.group ?? "Hardware", itemCode: masterHardware?.id ?? `UNPRICED-${hardwareNameKey(h.name)}`, item: masterHardware?.materialDescription ?? h.name, specification: h.pack, netQty: h.qty * l.qty, wastePct: 0, billableQty: h.qty * l.qty, uom: masterHardware?.rateBasis === "SET" ? "set" : "nos", rate, amount: h.qty * l.qty * rate });
+      addDetail({ category: masterHardware?.group ?? "Hardware", itemCode: masterHardware?.id ?? `UNPRICED-${hardwareNameKey(h.name)}`, item: masterHardware?.materialDescription ?? h.name, specification: h.pack, netQty: h.qty * l.qty, wastePct: 0, billableQty: h.qty * l.qty, uom: masterHardware?.rateBasis === "MTR" || /^(Mtr|RMT)$/i.test(h.uom) ? "RMT" : masterHardware?.rateBasis === "KG" ? "kg" : masterHardware?.rateBasis === "SET" ? "set" : "nos", rate, amount: h.qty * l.qty * rate });
     });
     // Board-face laminate and edge band already have detailed cost lines above.
     // Every remaining consumable must stay visible, even without a matching price.
@@ -2372,6 +2385,7 @@ function computeCosting(
     const billed = net * (1 + boardWaste / 100);
     const category = isCarcassSide ? "Carcass board" : p.extraMaterialRole === "visible" ? "Visible side board" : "Shutter board";
     const details: CostDetail[] = [{ category, itemCode: boardItem?.id ?? "—", item: boardItem?.materialDescription ?? p.mat ?? shOf(st).mat, specification: `${boardItem?.subgroup ?? (isCarcassSide ? "Carcass" : shOf(st).label)} · ${boardItem?.thicknessMm ?? p.t ?? "—"}mm`, netQty: net, wastePct: boardWaste, billableQty: billed, uom: "sqft", rate, amount: billed * rate }];
+    details[0].boardQuantityKey = `${p.mat ?? "Board"}|${p.t}`;
     if (isPostlamItem(boardItem)) {
       const laminate = isCarcassSide ? p.extraCarcassLaminate : p.extraLaminate;
       for (const [face, sheetPrice] of [["Front", laminate?.front], ["Back", laminate?.back]] as const) {
@@ -2488,7 +2502,17 @@ function computeCosting(
     });
   });
 
-  return { lines, total: lines.reduce((a, x) => a + x.cost, 0), unpriced: [...unpriced] };
+  for (const line of lines) for (const detail of line.details) {
+    if (!detail.boardQuantityKey || !/board$/i.test(detail.category)) continue;
+    const override = boardQuantityOverrides[detail.boardQuantityKey];
+    if (!override || !Number.isFinite(override.sheets) || override.sheets < 0 || override.netSqft <= 0) continue;
+    const factor = override.sheets * 32 / override.netSqft;
+    detail.billableQty = detail.netQty * factor;
+    detail.wastePct = (factor - 1) * 100;
+    detail.amount = detail.billableQty * detail.rate;
+  }
+  const purchases = allocatePurchaseCosts(lines, wholeProjectPurchases);
+  return { lines, total: lines.reduce((a, x) => a + x.cost, 0), unpriced: [...unpriced], purchases };
 }
 
 /* --- Full BOM → BomReportRow, so export.ts (xlsx) can consume it --- */
@@ -2576,6 +2600,7 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
   const [accessories, setAccessories] = useState<AccessoryRow[]>([]);
   const [masterAccessories, setMasterAccessories] = useState<MasterAccessoryRow[]>([]);
   const [waste, setWaste] = useState({ ...WASTE });
+  const [boardSheetInputs, setBoardSheetInputs] = useState<Record<string, string>>({});
   const [projectPricingInputs, setProjectPricingInputs] = useState<ProjectPricingInputs>(DEFAULT_PROJECT_PRICING);
   const [pricingModalOpen, setPricingModalOpen] = useState(false);
   const [pricingAdminUnlocked, setPricingAdminUnlocked] = useState(false);
@@ -2739,6 +2764,7 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
       const restored = await readProjectFile(file, materials);
       if (project.length > 0 && !window.confirm("Replace the current project with the imported file?")) return;
       setProject(restored.project);
+      setBoardSheetInputs({});
       setFillers(restored.fillers); setVisiblePanels(restored.visiblePanels);
       setCountertops(restored.countertops); setAccessories(restored.accessories);
       setMasterAccessories(restored.masterAccessories);
@@ -2774,6 +2800,12 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
       shutterLamFrontSheetPrice, shutterLamBackSheetPrice, visibleSideMaterialId, visibleLamFrontSheetPrice, visibleLamBackSheetPrice],
   );
   const boardTotals = useMemo(() => buildBoardTotals(project, waste, extras.panels), [project, waste, extras]);
+  const boardQuantityOverrides = useMemo(() => Object.fromEntries(boardTotals.flatMap((b) => {
+    const key = `${b.mat}|${b.t}`;
+    const value = boardSheetInputs[key];
+    return b.sheets !== null && value !== undefined && value.trim() !== "" && Number.isFinite(Number(value)) && Number(value) >= 0
+      ? [[key, { sheets: Number(value), netSqft: b.sqft }]] : [];
+  })), [boardTotals, boardSheetInputs]);
   const fullBom = useMemo(
     () => [...buildFullBomData(project, soMode ? "SO" : "", finish, waste), ...extras.rows],
     [project, soMode, finish, waste, extras],
@@ -2799,8 +2831,8 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
     .filter((type) => processingTypes.some((row) => row.category === category && row.type === type) || replacementTypes[category] === type)
     .map((type) => ({ category, type })));
   const costing = useMemo(
-    () => computeCosting(project, fillers, visiblePanels, countertops, extras.panels, accessories, masterAccessories, shType, countertopShutterType, rates, waste, projectPricingInputs.processingRates),
-    [project, fillers, visiblePanels, countertops, extras, accessories, masterAccessories, shType, countertopShutterType, rates, waste, projectPricingInputs.processingRates],
+    () => computeCosting(project, fillers, visiblePanels, countertops, extras.panels, accessories, masterAccessories, shType, countertopShutterType, rates, waste, projectPricingInputs.processingRates, undefined, boardQuantityOverrides),
+    [project, fillers, visiblePanels, countertops, extras, accessories, masterAccessories, shType, countertopShutterType, rates, waste, projectPricingInputs.processingRates, boardQuantityOverrides],
   );
   const projectPricing = useMemo(() => {
     const cabinetAreas = project.map((line) => {
@@ -2894,13 +2926,12 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
     { itemId: visibleSideMaterialId, front: visibleLamFrontSheetPrice, back: visibleLamBackSheetPrice },
   ), [activeElevation, extras, shownFillers, shownVisiblePanels, project, soMode, shType, countertopShutterType, finish, waste, materials, board,
     shutterLamFrontSheetPrice, shutterLamBackSheetPrice, visibleSideMaterialId, visibleLamFrontSheetPrice, visibleLamBackSheetPrice]);
-  const shownBoardTotals = useMemo(() => activeElevation === null ? boardTotals : buildBoardTotals(shownProject, waste, shownExtras.panels),
-    [activeElevation, boardTotals, shownProject, waste, shownExtras]);
+  const shownBoardTotals = boardTotals;
   const shownCosting = useMemo(() => activeElevation === null ? costing : computeCosting(
     shownProject, shownFillers, shownVisiblePanels, [], shownExtras.panels, shownAccessories, shownMasterAccessories,
-    shType, countertopShutterType, rates, waste, projectPricingInputs.processingRates,
+    shType, countertopShutterType, rates, waste, projectPricingInputs.processingRates, costing.purchases, boardQuantityOverrides,
   ), [activeElevation, costing, shownProject, shownFillers, shownVisiblePanels, shownExtras, shownAccessories, shownMasterAccessories,
-    shType, countertopShutterType, rates, waste, projectPricingInputs.processingRates]);
+    shType, countertopShutterType, rates, waste, projectPricingInputs.processingRates, boardQuantityOverrides]);
   const shownPricing = useMemo(() => {
     if (activeElevation === null) return projectPricing;
     const allocatedCharges = projectPricing.allocatedCharges.filter((_, index) => project[index]?.elevation === activeElevation);
@@ -3078,7 +3109,7 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
         </div>
         <div className="hd-n">
           <span>cabinets<b>{project.reduce((a, l) => a + l.qty, 0)}</b></span>
-          <span>sheets<b>{boardTotals.reduce((a, b) => a + (b.sheets ?? 0), 0).toFixed(1)}</b></span>
+          <span>sheets<b>{boardTotals.reduce((a, b) => a + (b.sheets ?? 0), 0)}</b></span>
         </div>
       </header>
       {importError && <p className="header-import-error" role="alert">{importError}</p>}
@@ -3295,20 +3326,27 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
                       </div>];
                   })} />
 
-                <h4>Wastage % (editable)</h4>
+                <h4>Wastage % (fixed defaults)</h4>
                 <div className="g3" style={{ maxWidth: 420 }}>
                   {(["carcass", "shutter", "profile"] as const).map((k) => (
                     <label key={k} style={{ fontSize: 11, color: "var(--mut)" }}>{k}
-                      <input type="number" min={0} value={waste[k]}
-                        onChange={(e) => setWaste((w0) => ({ ...w0, [k]: Math.max(0, +e.target.value) }))} />
+                      <input type="number" value={waste[k]} readOnly />
                     </label>
                   ))}
                 </div>
 
-                <h4>Boards</h4>
+                <h4>Boards — whole kitchen, editable 32 sqft sheets</h4>
+                <p className="hint">Edit Sheets to change only board cost for this kitchen. Waste % is calculated from the entered sheets; laminate, processing and consumables stay unchanged. Clear an entry to restore the calculated quantity. Overrides are temporary and reset on refresh or import.</p>
                 <Tbl head={["Material", "Thk", "Pack", "Sqft", "Waste %", "Sheets"]} num={[1, 3, 4, 5]}
-                  rows={shownBoardTotals.map((b) => [b.mat, b.t, b.pack, b.sqft.toFixed(2), b.waste,
-                    b.sheets === null ? "by area" : b.sheets.toFixed(2)])} />
+                  rows={shownBoardTotals.map((b) => {
+                    const key = `${b.mat}|${b.t}`;
+                    const override = boardQuantityOverrides[key];
+                    const derivedWaste = override && b.sqft > 0 ? (override.sheets * 32 / b.sqft - 1) * 100 : b.waste;
+                    return [b.mat, b.t, b.pack, b.sqft.toFixed(2), derivedWaste.toFixed(2),
+                      b.sheets === null ? "by area" : <input key={key} aria-label={`Sheets for ${b.mat} ${b.t}mm`} type="number" min={0} step="any"
+                        value={boardSheetInputs[key] ?? b.sheets} style={{ width: 140 }}
+                        onChange={(e) => { const value = e.target.value; if (value === "" || Number.isFinite(Number(value)) && Number(value) >= 0) setBoardSheetInputs((current) => ({ ...current, [key]: value })); }} />];
+                  })} />
               </>}
 
               {/* ---- Fillers ---- */}
@@ -3448,6 +3486,13 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
 
               {/* ---- Costing with an auditable per-cabinet breakdown ---- */}
               <SecHead title="Costing (Rs)" />
+              {costing.purchases.length > 0 && <details open style={{ marginBottom: 16 }}>
+                <summary style={{ cursor: "pointer", fontWeight: 650 }}>Whole-kitchen purchase quantities</summary>
+                <p style={{ color: "var(--mut)", fontSize: 12 }}>Same items are combined across all cabinets and panels after wastage, without rounding up quantities. Boards and laminates use 32 sqft sheets; adhesives use kg. Different quoted rates remain separate. Costing uses calculated decimal quantities. Processing remains charged on used billable sqft.</p>
+                <Tbl head={["Category", "Item", "Unit", "Purchase qty", "Rate (Rs)", "Amount (Rs)"]} num={[3, 4, 5]}
+                  rows={costing.purchases.map((item) => [item.categories.join(", "), `${item.itemCode} · ${item.item}`, item.unit,
+                    item.quantity, item.rate.toFixed(2), item.amount.toFixed(2)])} />
+              </details>}
               {shownCosting.lines.length === 0 ? <div className="empty">No costed items for this elevation.</div> : <>
                 <Tbl head={[<ColumnFilter key="cost-cabinet" label="Cabinet" options={cabinetCodeOptions}
                   selected={projectLineFilters.Cabinet ?? []}
@@ -3462,7 +3507,7 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
                         <summary style={{ cursor: "pointer", color: "var(--acc)", fontWeight: 650 }}>{c.label}</summary>
                         <div style={{ margin: "10px 0 4px", overflowX: "auto" }}>
                           <table style={{ width: "100%", minWidth: 1040, borderCollapse: "collapse", fontSize: 11 }}>
-                            <thead><tr>{["Category", "Master row", "Actual item code / board used", "Board type / thickness", "Total sqft / qty", "Waste", "Billable qty", "Basis", "Rate (Rs)", "Amount (Rs)"].map((heading) => <th key={heading} style={{ padding: "6px 7px", background: "#EEF1EE", border: "1px solid #D8DEDA", textAlign: "left" }}>{heading}</th>)}</tr></thead>
+                            <thead><tr>{["Category", "Master row", "Actual item code / board used", "Board type / thickness", "Total sqft / qty", "Waste", "Allocated purchase qty", "Basis", "Rate (Rs)", "Allocated amount (Rs)"].map((heading) => <th key={heading} style={{ padding: "6px 7px", background: "#EEF1EE", border: "1px solid #D8DEDA", textAlign: "left" }}>{heading}</th>)}</tr></thead>
                             <tbody>{c.details.map((detail, index) => <tr key={`${detail.category}-${detail.item}-${index}`}>
                               <td style={{ padding: "6px 7px", border: "1px solid #E3E7E4" }}>{detail.category}</td>
                               <td style={{ padding: "6px 7px", border: "1px solid #E3E7E4", whiteSpace: "nowrap", fontWeight: 650 }}>{detail.itemCode}</td>
@@ -3470,7 +3515,7 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
                               <td style={{ padding: "6px 7px", border: "1px solid #E3E7E4" }}>{detail.specification}</td>
                               <td style={{ padding: "6px 7px", border: "1px solid #E3E7E4", textAlign: "right" }}>{detail.netQty.toFixed(3)}</td>
                               <td style={{ padding: "6px 7px", border: "1px solid #E3E7E4", textAlign: "right" }}>{detail.wastePct}%</td>
-                              <td style={{ padding: "6px 7px", border: "1px solid #E3E7E4", textAlign: "right" }}>{detail.billableQty.toFixed(3)}</td>
+                              <td style={{ padding: "6px 7px", border: "1px solid #E3E7E4", textAlign: "right" }}>{(detail.allocatedBillableQty ?? detail.billableQty).toFixed(3)}</td>
                               <td style={{ padding: "6px 7px", border: "1px solid #E3E7E4" }}>{detail.uom}</td>
                               <td style={{ padding: "6px 7px", border: "1px solid #E3E7E4", textAlign: "right" }}>{detail.rate.toFixed(2)}</td>
                               <td style={{ padding: "6px 7px", border: "1px solid #E3E7E4", textAlign: "right", fontWeight: 650 }}>{detail.amount.toFixed(2)}</td>
@@ -3607,7 +3652,7 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
                 <button className="add" style={{ width: "auto", padding: "8px 16px" }} disabled={project.length === 0}
                   onClick={() => dl("wood-bom-project.json", JSON.stringify({ format: PROJECT_FILE_FORMAT, rows: projectSetup }, null, 2), "application/json")}>Project JSON</button>
                 <button className="add" style={{ width: "auto", padding: "8px 16px" }} disabled={fullBom.length === 0}
-                  onClick={() => exportBomWorkbook(toReportRows(fullBom), accessoryRows, projectSetup)}>Excel BOM (.xlsx)</button>
+                  onClick={() => exportBomWorkbook(toReportRows(fullBom), accessoryRows, projectSetup, costing.purchases)}>Excel BOM (.xlsx)</button>
                 <button className="add" style={{ width: "auto", padding: "8px 16px" }} disabled={fullBom.length === 0}
                   onClick={() => exportBomCsv(toReportRows(fullBom))}>Full BOM (.csv)</button>
                 <button className="add" style={{ width: "auto", padding: "8px 16px" }} disabled={project.length === 0}
