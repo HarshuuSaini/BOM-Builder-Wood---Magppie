@@ -87,6 +87,8 @@ interface Consumable {
 
 interface FillerRow {
   id: number;
+  /** Cabinet-created fillers follow the linked cabinet's height and quantity. */
+  linkedLineId?: number;
   fillerType?: "filler" | "top-filler" | "cover-panel" | "chimney-panel";
   zone: string;
   customShade: string;
@@ -147,6 +149,7 @@ type CarcassModel = {
   H: number;
   D: number;
   shelfQty: number;
+  fillerWidth?: number;
   panels: Panel[];
   profiles: Profile[];
   hardware: Hardware[];
@@ -158,7 +161,7 @@ type CarcassModel = {
 type PkRow = { pack: string; type: string; qty: number };
 type ProjectLine = { id: number; m: CarcassModel; qty: number; elevation: string };
 type VisibleSides = "" | "LH" | "RH" | "BOTH";
-type CabinetConfig = Pick<CarcassModel, "boardPrices" | "zk" | "fk" | "vid" | "hand" | "handle" | "board" | "backBoardId" | "drawerBoardId" | "shType" | "visibleSides" | "visibleSideMaterialId" | "carcassLamFrontSheetPrice" | "carcassLamBackSheetPrice" | "backLamFrontSheetPrice" | "backLamBackSheetPrice" | "drawerLamFrontSheetPrice" | "drawerLamBackSheetPrice" | "visibleLamFrontSheetPrice" | "visibleLamBackSheetPrice" | "shutterLamFrontSheetPrice" | "shutterLamBackSheetPrice" | "glassType" | "hingeChoice" | "neon" | "W" | "H" | "D" | "drawerModel" | "finish"> & { shelfQty?: number };
+type CabinetConfig = Pick<CarcassModel, "boardPrices" | "zk" | "fk" | "vid" | "hand" | "handle" | "board" | "backBoardId" | "drawerBoardId" | "shType" | "visibleSides" | "visibleSideMaterialId" | "carcassLamFrontSheetPrice" | "carcassLamBackSheetPrice" | "backLamFrontSheetPrice" | "backLamBackSheetPrice" | "drawerLamFrontSheetPrice" | "drawerLamBackSheetPrice" | "visibleLamFrontSheetPrice" | "visibleLamBackSheetPrice" | "shutterLamFrontSheetPrice" | "shutterLamBackSheetPrice" | "glassType" | "hingeChoice" | "neon" | "W" | "H" | "D" | "drawerModel" | "finish"> & { shelfQty?: number; fillerWidth?: number };
 
 type FullBomRow = {
   SO: string;
@@ -411,6 +414,8 @@ const BASE_FAMILIES: Record<string, any> = {
 };
 
 const BLIND_FAMILIES: Record<string, any> = {
+  MGC: { name: "Magic Corner", p2: "AC", top: "panel",
+         variants: [V("mgc", "Magic Corner (handed)", { p3: "MGC", handed: true, blind: true })] },
   LMC: { name: "LeMans Corner", p2: "AC", top: "panel",
          variants: [V("lmc", "LeMans (handed)", { p3: "LMC", handed: true, blind: true })] },
   BSH: { name: "Blind + Shelf", p2: "SH", top: "panel", shelf: 1,
@@ -420,12 +425,12 @@ const BLIND_FAMILIES: Record<string, any> = {
 };
 
 const WALL_FAMILIES: Record<string, any> = {
-  WGL: { name: "Wall Glass Shutter", p2: "SH", glassFam: true,
-         variants: [V("sgl", "Single door (handed)", { p3: "3SG", handed: true }),
-                    V("dbl", "Double door", { p3: "3SG", p4: "2HS", both: true })] },
   WST: { name: "Wall Solid Shutter", p2: "SH",
          variants: [V("sgl", "Single door (handed)", { p3: "1SG", handed: true }),
                     V("dbl", "Double door", { p3: "1SG", p4: "2HS", both: true })] },
+  WGL: { name: "Wall Glass Shutter", p2: "SH", glassFam: true,
+         variants: [V("sgl", "Single door (handed)", { p3: "3SG", handed: true }),
+                    V("dbl", "Double door", { p3: "3SG", p4: "2HS", both: true })] },
   WOP: { name: "Wall Open Shelf", p2: "OP", noShutter: true,
          variants: [V("op", "Open (no door)", { p3: "3SG", p4: "XXX", both: true })] },
   WDR: { name: "Wall Dish Rack", p2: "AC", noBottom: true, top: "frame",
@@ -460,8 +465,6 @@ const TALL_FAMILIES: Record<string, any> = {
 const TALL_BLIND_FAMILIES: Record<string, any> = {
   BLND: { name: "Tall Blind Shelf", p2: "SH", bracket: "TBC", holes: "JD", shelf: 4,
           variants: [V("h", "Blind shelf (handed)", { p3: "6SX", handed: true })] },
-  BLNG: { name: "Tall Blind Glass Shelf", p2: "SH", bracket: "TBC", holes: "JD", shelf: 4, glassFam: true,
-          variants: [V("h", "Blind shelf (handed)", { p3: "6SG", handed: true })] },
 };
 
 const TALL_LOW_FAMILIES: Record<string, any> = {
@@ -507,9 +510,10 @@ const ZONES: Record<string, {
 
 const famSetOf = (z: string) => {
   if (z === "BCL") return { SH: BASE_FAMILIES.SH };
-  if (z === "BB") return { LMC: BLIND_FAMILIES.LMC, BSH: BLIND_FAMILIES.BSH };
+  if (z === "BB") return { BSH: BLIND_FAMILIES.BSH, MGC: BLIND_FAMILIES.MGC, LMC: BLIND_FAMILIES.LMC };
   if (z === "BBL") return { BSH: BLIND_FAMILIES.BSH };
-  if (z === "WB") return { WGL: WALL_FAMILIES.WGL, WST: WALL_FAMILIES.WST };
+  if (z === "WB") return { WST: WALL_FAMILIES.WST };
+  if (z === "LB" || z === "LBF") return { LST: LOFT_FAMILIES.LST };
   const k = ZONES[z]?.fams;
   return k === "blind" ? BLIND_FAMILIES
     : k === "wall" ? WALL_FAMILIES
@@ -532,7 +536,7 @@ const WIDTHS: Record<string, number[]> = {
   AP:  [600],
   SH:  [400, 450, 500, 550, 600, 800, 850, 900, 950, 1000],
   SK:  [500, 600, 900, 1000, 1050, 1100, 1150, 1200],
-  BPO: [150, 300],
+  BPO: [150, 200, 300],
   WBP: [300, 600],
   LMC: [1050, 1100, 1150], BSH: [1050, 1100, 1150], PLB: [1050, 1100, 1150],
   WGL: [300, 400, 450, 500, 550, 600, 800, 850, 900, 1000],
@@ -550,7 +554,7 @@ function defSizes(zoneKey: string, fk: string) {
   const z = ZONES[zoneKey];
   const w = WIDTHS[fk] ?? (z.tall ? TALL_W : [300, 450, 600, 900]);
   const h = z.tall ? [2400, 2040]
-    : z.kind === "wall" ? [1085, 725]
+    : z.kind === "wall" ? [900, 720, 1085]
     : z.kind === "loft" ? [600]
     : z.kind === "md" ? [1650, 1290]
     : [720];
@@ -601,7 +605,7 @@ function shelfCount(zk: string, fk: string, fam: any, H: number): number {
   const z = ZONES[zk];
   if (z.kind === "wall") {
     if (fk === "WDR") return H >= 1085 ? 2 : 0;
-    if (fk === "WOP" || fk === "WGL" || fk === "WST") return H >= 1085 ? 3 : 1;
+    if (fk === "WOP" || fk === "WGL" || fk === "WST") return H >= 1085 ? 3 : H >= 900 ? 2 : 1;
     return 0;
   }
   return fam.shelf ?? 0;
@@ -1209,7 +1213,7 @@ function buildModel(cfg: {
   drawerLamFrontSheetPrice: string; drawerLamBackSheetPrice: string;
   visibleLamFrontSheetPrice: string; visibleLamBackSheetPrice: string;
   shutterLamFrontSheetPrice: string; shutterLamBackSheetPrice: string;
-  W: number; H: number; D: number; shelfQty?: number; drawerModel: string; finish?: string;
+  W: number; H: number; D: number; shelfQty?: number; fillerWidth?: number; drawerModel: string; finish?: string;
 }): CarcassModel {
   const fam = famSetOf(cfg.zk)[cfg.fk];
   const v = fam.variants.find((x: any) => x.id === cfg.vid) ?? fam.variants[0];
@@ -1551,6 +1555,15 @@ function defZoneDepth(zone: string, project: ProjectLine[]): number {
   return l ? l.m.D : zone === "base" || zone === "tall" ? 560 : 336;
 }
 
+function cabinetFillers(project: ProjectLine[]): FillerRow[] {
+  return project.filter((line) => (line.m.fillerWidth ?? 0) > 0).map((line) => ({
+    id: line.id, linkedLineId: line.id, fillerType: "filler" as const,
+    zone: ZONES[line.m.zk].tall ? "tall" : ZONES[line.m.zk].kind === "wall" ? "wall" : ZONES[line.m.zk].kind === "loft" ? "loft" : "base",
+    customShade: line.m.finish, qty: line.qty, customHeight: String(line.m.H),
+    customWidth: String(line.m.fillerWidth), customDepth: String(line.m.D), elevation: line.elevation,
+  }));
+}
+
 /** A filler or visible panel resolves to one banded shutter-type panel. */
 function extraPanelOf(kind: "Filler" | "Visible", zone: string, H: number, W: number, q: number, shTypeKey: string): Panel {
   const S = shOf(shTypeKey);
@@ -1573,16 +1586,17 @@ function buildExtrasBom(
 
   const emit = (kind: "Filler" | "Visible", r: FillerRow, shTypeKey: string) => {
     const zone = r.zone;
-    const H = parseFloat(r.customHeight) || defFillerH(zone, project);
+    const linkedCabinet = r.linkedLineId === undefined ? undefined : project.find((line) => line.id === r.linkedLineId);
+    const H = linkedCabinet?.m.H ?? (parseFloat(r.customHeight) || defFillerH(zone, project));
     const W = parseFloat(r.customWidth) ||
       (kind === "Filler" ? FILLER_DEF_W : defZoneDepth(zone, project) + VP_DEPTH_ADD);
     const q = r.qty || 1;
     const fin = r.customShade || globalFinish;
     const fillerType = kind === "Filler" ? r.fillerType ?? "filler" : "filler";
     const label = kind === "Visible" ? "Visible Panel" : FILLER_TYPES.find((type) => type.value === fillerType)?.label ?? "Filler";
-    const depth = parseFloat(r.customDepth ?? "") || defZoneDepth(zone, project);
+    const depth = linkedCabinet?.m.D ?? (parseFloat(r.customDepth ?? "") || defZoneDepth(zone, project));
     const materialZone = ({ base: "Base", wall: "Wall", tall: "Tall", loft: "Loft", mid: "Mid" } as const)[zone as "base" | "wall" | "tall" | "loft" | "mid"] ?? "Base";
-    const matchingLine = project.find((line) => line.elevation === r.elevation && (FILLER_ZKS[zone] ?? []).includes(line.m.zk));
+    const matchingLine = linkedCabinet ?? project.find((line) => line.elevation === r.elevation && (FILLER_ZKS[zone] ?? []).includes(line.m.zk));
     const zoneMaterials = materials?.[materialZone];
     const selected = kind === "Visible" ? zoneMaterials?.visible : zoneMaterials?.shutter;
     const resolvedShutterType = kind === "Visible"
@@ -1601,6 +1615,22 @@ function buildExtrasBom(
       back: matchingLine?.m.shutterLamBackSheetPrice ?? selected?.backSheetPrice ?? fallbackShutterLaminate.back,
     };
     const partPanels: Panel[] = [frontPanel];
+    if (kind === "Filler" && zone === "wall" && linkedCabinet) {
+      const selectedMaterials = zoneMaterials?.carcass;
+      const boardId = matchingLine?.m.board ?? selectedMaterials?.itemId ?? fallbackBoardId;
+      const carcassBoard = carcassBoardOf(boardId);
+      const laminate = {
+        front: matchingLine?.m.carcassLamFrontSheetPrice ?? selectedMaterials?.frontSheetPrice ?? DEFAULT_LAMINATE_PRICES.carcassLamFrontSheetPrice,
+        back: matchingLine?.m.carcassLamBackSheetPrice ?? selectedMaterials?.backSheetPrice ?? DEFAULT_LAMINATE_PRICES.carcassLamBackSheetPrice,
+      };
+      for (const face of ["Top", "Bottom"]) partPanels.push({
+        name: `Panels- CR Wall Filler ${face} ${carcassBoard.coreT}mm ${Math.round(W)}x${Math.round(depth)}`,
+        w: Math.round(W), h: Math.round(depth), qty: q, drill: null, pack: "Carcass Pack",
+        t: carcassBoard.coreT, mat: carcassBoard.core, band: true,
+        materialId: carcassBoard.item?.id, extraCarcassLaminate: laminate,
+        extraBoardPrice: matchingLine?.m.boardPrices?.carcass ?? boardPricesFromMaterials(zoneMaterials).carcass,
+      });
+    }
     if (fillerType === "cover-panel") {
       const selectedMaterials = zoneMaterials?.carcass;
       const boardId = matchingLine?.m.board ?? selectedMaterials?.itemId ?? zoneLine(zone, project)?.m.board ?? fallbackBoardId;
@@ -1699,6 +1729,7 @@ interface AccessoryRow {
 }
 interface MasterAccessoryRow {
   id: number;
+  linkedLineId?: number;
   itemId: string;
   qty: number;
   elevation: string;
@@ -1730,6 +1761,21 @@ const MASTER_ACCESSORY_ITEMS = [
       currentRate: 0, priced: false,
     })),
 ];
+/** Cabinet-linked accessories are derived from lines, so edits and deletion cannot leave stale rows. */
+function cabinetAccessories(project: ProjectLine[], manualRates: Record<string, string> = {}): MasterAccessoryRow[] {
+  return project.flatMap((line) => {
+    const bottleItem = ({ 150: "KITCHEN-076", 200: "KITCHEN-077", 300: "KITCHEN-078" } as Record<number, string>)[line.m.W];
+    const itemIds = line.m.fk === "BPO"
+      ? bottleItem ? [bottleItem, "KITCHEN-079"] : []
+      : line.m.fk === "WDR" ? line.m.W === 600 ? ["KITCHEN-072"] : line.m.W === 900 ? ["KITCHEN-071"] : []
+      : line.m.fk === "MGC" ? ["ACCESSORIES-101"]
+      : line.m.fk === "LMC" ? ["KITCHEN-069"]
+      : line.m.fk === "WBP" ? ["KITCHEN-075"] : [];
+    return itemIds.filter((id): id is string => !!id && MASTER_ACCESSORY_ITEMS.some((item) => item.id === id))
+      .map((itemId, index) => ({ id: -(line.id * 10 + index + 1), linkedLineId: line.id, itemId, qty: line.qty, elevation: line.elevation,
+        manualRate: manualRates[`${line.id}|${itemId}`] ?? "" }));
+  });
+}
 function selectedMasterAccessory(row: MasterAccessoryRow) {
   const catalogItem = MASTER_ACCESSORY_ITEMS.find((item) => item.id === row.itemId);
   if (catalogItem) return catalogItem;
@@ -1993,8 +2039,8 @@ const MATERIAL_EDIT_DRAFT_KEY = "wood-bom-material-edit-draft";
 const isRecord = (value: unknown): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value);
 
 function cabinetConfig(model: CarcassModel): CabinetConfig {
-  const { boardPrices, zk, fk, vid, hand, handle, board, backBoardId, drawerBoardId, shType, visibleSides, visibleSideMaterialId, carcassLamFrontSheetPrice, carcassLamBackSheetPrice, backLamFrontSheetPrice, backLamBackSheetPrice, drawerLamFrontSheetPrice, drawerLamBackSheetPrice, visibleLamFrontSheetPrice, visibleLamBackSheetPrice, shutterLamFrontSheetPrice, shutterLamBackSheetPrice, glassType, hingeChoice, neon, W, H, D, shelfQty, drawerModel, finish } = model;
-  return { boardPrices, zk, fk, vid, hand, handle, board, backBoardId, drawerBoardId, shType, visibleSides, visibleSideMaterialId, carcassLamFrontSheetPrice, carcassLamBackSheetPrice, backLamFrontSheetPrice, backLamBackSheetPrice, drawerLamFrontSheetPrice, drawerLamBackSheetPrice, visibleLamFrontSheetPrice, visibleLamBackSheetPrice, shutterLamFrontSheetPrice, shutterLamBackSheetPrice, glassType, hingeChoice, neon, W, H, D, shelfQty, drawerModel, finish };
+  const { boardPrices, zk, fk, vid, hand, handle, board, backBoardId, drawerBoardId, shType, visibleSides, visibleSideMaterialId, carcassLamFrontSheetPrice, carcassLamBackSheetPrice, backLamFrontSheetPrice, backLamBackSheetPrice, drawerLamFrontSheetPrice, drawerLamBackSheetPrice, visibleLamFrontSheetPrice, visibleLamBackSheetPrice, shutterLamFrontSheetPrice, shutterLamBackSheetPrice, glassType, hingeChoice, neon, W, H, D, shelfQty, fillerWidth, drawerModel, finish } = model;
+  return { boardPrices, zk, fk, vid, hand, handle, board, backBoardId, drawerBoardId, shType, visibleSides, visibleSideMaterialId, carcassLamFrontSheetPrice, carcassLamBackSheetPrice, backLamFrontSheetPrice, backLamBackSheetPrice, drawerLamFrontSheetPrice, drawerLamBackSheetPrice, visibleLamFrontSheetPrice, visibleLamBackSheetPrice, shutterLamFrontSheetPrice, shutterLamBackSheetPrice, glassType, hingeChoice, neon, W, H, D, shelfQty, fillerWidth, drawerModel, finish };
 }
 
 function projectSetupRows(data: Omit<ProjectRestore, "notice">): ProjectSetupRow[] {
@@ -2015,6 +2061,11 @@ function projectSetupRows(data: Omit<ProjectRestore, "notice">): ProjectSetupRow
 function validatedCabinetConfig(value: unknown): CabinetConfig {
   if (!isRecord(value)) throw new Error("A cabinet configuration is missing.");
   const config = value as CabinetConfig;
+  // Older exports could contain blind glass families. Convert them to the
+  // corresponding solid family when restoring under the no-glass rule.
+  if (config.zk === "WB" && config.fk === "WGL") config.fk = "WST";
+  if (config.zk === "TB" && config.fk === "BLNG") config.fk = "BLND";
+  if ((config.zk === "LB" || config.zk === "LBF") && config.fk === "LGL") config.fk = "LST";
   if (config.boardPrices !== undefined && (!isRecord(config.boardPrices) || Object.entries(config.boardPrices).some(([key, price]) => !MATERIAL_FIELDS.includes(key as typeof MATERIAL_FIELDS[number]) || !isRecord(price) || typeof price.itemId !== "string" || !COSTING_ITEMS.some(item => item.id === price.itemId) || !validBoardSheetPrice(price.sheetPrice)))) throw new Error("Invalid saved Prelam board price.");
   const family = typeof config.zk === "string" ? famSetOf(config.zk)[config.fk] : undefined;
   if (!ZONES[config.zk] || !family || !family.variants.some((variant: { id: string }) => variant.id === config.vid)) {
@@ -2025,6 +2076,9 @@ function validatedCabinetConfig(value: unknown): CabinetConfig {
   }
   if (config.shelfQty !== undefined && (!Number.isSafeInteger(config.shelfQty) || config.shelfQty < 0)) {
     throw new Error("A cabinet has an invalid shelf quantity.");
+  }
+  if (config.fillerWidth !== undefined && (!Number.isFinite(config.fillerWidth) || config.fillerWidth <= 0)) {
+    throw new Error("A cabinet has an invalid filler width.");
   }
   if (!CARCASS_BOARD_ITEMS.some((item) => item.id === config.board) || !SHUTTER_BOARD_ITEMS.some((item) => item.id === config.shType)) {
     throw new Error("A saved cabinet material is not available in the current master.");
@@ -2172,6 +2226,7 @@ function restoreLegacyBom(rows: Record<string, unknown>[]): ProjectRestore {
     const rawFinish = parts.slice(11).join("-");
     const finish = (boardFinishesData as string[]).find((name) => name.toUpperCase() === rawFinish) ?? rawFinish;
     const shelfQty = ZONES[zone].kind === "wall" && /^\d+/.test(parts[4]) ? Number(parts[4].match(/^\d+/)?.[0]) : undefined;
+    const solidBlindFamily = matToken === "GL" ? zone === "WB" ? "WST" : zone === "TB" ? "BLND" : zone === "LB" || zone === "LBF" ? "LST" : "" : "";
     const candidates = Object.entries(famSetOf(zone)).flatMap(([fk, family]: [string, any]) => {
       if (family.p2 !== familyCode || (isGlassShutterFam(fk) ? "GL" : "WD") !== matToken) return [];
       return family.variants.map((variant: { id: string }) => ({ fk, vid: variant.id }));
@@ -2179,8 +2234,9 @@ function restoreLegacyBom(rows: Record<string, unknown>[]): ProjectRestore {
       const config: CabinetConfig = { zk: zone, fk, vid, hand, handle: handleToken === "CJ" ? "XCJ" : "STD", board: DEFAULT_BOARD_ID, backBoardId: DEFAULT_BACK_ID, drawerBoardId: DEFAULT_DRAWER_ID, shType: DEFAULT_SHTYPE, visibleSides: "", visibleSideMaterialId: MATERIAL_MASTER.visibleSideShutterMaterialId, ...DEFAULT_LAMINATE_PRICES, backLamFrontSheetPrice: "550", backLamBackSheetPrice: "550", drawerLamFrontSheetPrice: "550", drawerLamBackSheetPrice: "550", visibleLamFrontSheetPrice: "550", visibleLamBackSheetPrice: "550", glassType: DEFAULT_GLASS_TYPE, hingeChoice: HINGE_CHOICES[0], neon: "NEON50", W, H, D, shelfQty, drawerModel: DRAWER_MODELS[0], finish };
       return buildModel(config).code.split("-").slice(0, 7).join("-") === parts.slice(0, 7).join("-");
     });
-    if (candidates.length !== 1) throw new Error(`Cannot uniquely identify cabinet ${code} from this older export. Please use a new Excel BOM with Project Setup.`);
-    const config: CabinetConfig = { zk: zone, ...candidates[0], hand, handle: handleToken === "CJ" ? "XCJ" : "STD", board: DEFAULT_BOARD_ID, backBoardId: DEFAULT_BACK_ID, drawerBoardId: DEFAULT_DRAWER_ID, shType: DEFAULT_SHTYPE, visibleSides: "", visibleSideMaterialId: MATERIAL_MASTER.visibleSideShutterMaterialId, ...DEFAULT_LAMINATE_PRICES, backLamFrontSheetPrice: "550", backLamBackSheetPrice: "550", drawerLamFrontSheetPrice: "550", drawerLamBackSheetPrice: "550", visibleLamFrontSheetPrice: "550", visibleLamBackSheetPrice: "550", glassType: DEFAULT_GLASS_TYPE, hingeChoice: HINGE_CHOICES[0], neon: "NEON50", W, H, D, shelfQty, drawerModel: DRAWER_MODELS[0], finish };
+    if (candidates.length !== 1 && !solidBlindFamily) throw new Error(`Cannot uniquely identify cabinet ${code} from this older export. Please use a new Excel BOM with Project Setup.`);
+    const selected = solidBlindFamily ? { fk: solidBlindFamily, vid: famSetOf(zone)[solidBlindFamily].variants[0].id } : candidates[0];
+    const config: CabinetConfig = { zk: zone, ...selected, hand, handle: handleToken === "CJ" ? "XCJ" : "STD", board: DEFAULT_BOARD_ID, backBoardId: DEFAULT_BACK_ID, drawerBoardId: DEFAULT_DRAWER_ID, shType: DEFAULT_SHTYPE, visibleSides: "", visibleSideMaterialId: MATERIAL_MASTER.visibleSideShutterMaterialId, ...DEFAULT_LAMINATE_PRICES, backLamFrontSheetPrice: "550", backLamBackSheetPrice: "550", drawerLamFrontSheetPrice: "550", drawerLamBackSheetPrice: "550", visibleLamFrontSheetPrice: "550", visibleLamBackSheetPrice: "550", glassType: DEFAULT_GLASS_TYPE, hingeChoice: HINGE_CHOICES[0], neon: "NEON50", W, H, D, shelfQty, drawerModel: DRAWER_MODELS[0], finish };
     const qty = Number(row["SO Qty"] ?? row.quantityNeeded ?? 1);
     if (!Number.isFinite(qty) || qty < 1) throw new Error(`Invalid cabinet quantity: ${code}`);
     return { id: index + 1, m: buildModel(config), qty, elevation: String(row.Elevation ?? "") };
@@ -2287,11 +2343,14 @@ function restoreLegacyPrintedPdf(pages: string[], pdfMaterials?: KitchenMaterial
   return restored;
 }
 
-async function readProjectFile(file: File, pdfMaterials?: KitchenMaterials): Promise<ProjectRestore> {
+async function readProjectFile(file: File, pdfMaterials?: KitchenMaterials, requireSavedPdfMaterials = false): Promise<ProjectRestore> {
   if (file.size > 10_000_000) throw new Error("The selected file is too large (maximum 10 MB).");
   if (file.name.toLowerCase().endsWith(".pdf")) {
     const data = await readPrintedProjectPdf(file);
-    if (isRecord(data) && Array.isArray(data.legacyPages)) return restoreLegacyPrintedPdf(data.legacyPages as string[], pdfMaterials);
+    if (isRecord(data) && Array.isArray(data.legacyPages)) {
+      if (requireSavedPdfMaterials) throw new Error("This older PDF does not contain per-cabinet saved materials. Use Import printed PDF to apply the current kitchen selections instead.");
+      return restoreLegacyPrintedPdf(data.legacyPages as string[], pdfMaterials);
+    }
     if (!Array.isArray(data)) throw new Error("This PDF does not contain valid project rows.");
     return restoreProjectSetup(data as Record<string, unknown>[], pdfMaterials);
   }
@@ -2544,7 +2603,7 @@ function computeCosting(
 
   // Cover-panel returns use carcass material; visible panels have their own board and laminate selection.
   const extraRows = [
-    ...fillers.flatMap((f) => Array(f.fillerType === "cover-panel" ? 3 : 1).fill(globalShType) as string[]),
+    ...fillers.flatMap((f) => Array(f.fillerType === "cover-panel" || (f.zone === "wall" && f.linkedLineId !== undefined) ? 3 : 1).fill(globalShType) as string[]),
     ...visiblePanels.map((v) => v.shutterType || globalShType),
   ];
   extrasPanels.forEach((p, i) => {
@@ -2722,6 +2781,7 @@ function toReportRows(rows: FullBomRow[]): BomReportRow[] {
 export function WoodBomBuilder({ soMode = false, planningMode = false, materials }: { soMode?: boolean; planningMode?: boolean; materials?: KitchenMaterials } = {}) {
   const railRef = useRef<HTMLElement>(null);
   const pdfImportRef = useRef<HTMLInputElement>(null);
+  const savedMaterialsPdfRef = useRef<HTMLInputElement>(null);
   const [zk, setZk] = useState("BC");
   const [fk, setFk] = useState("SH");
   const [vid, setVid] = useState("single");
@@ -2756,6 +2816,9 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
   const [W, setW] = useState(600);
   const [H, setH] = useState(720);
   const [D, setD] = useState(560);
+  const [zoneHeights, setZoneHeights] = useState<Record<string, number>>({});
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [fillerWidth, setFillerWidth] = useState<number | null>(null);
   const [shelfOverride, setShelfOverride] = useState<number | null>(null);
   const [project, setProject] = useState<ProjectLine[]>([]);
   const [editingLineId, setEditingLineId] = useState<number | null>(null);
@@ -2765,6 +2828,9 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
   const [selectedElevation, setSelectedElevation] = useState<string | null>(null);
   const [projectLineFilters, setProjectLineFilters] = useState<Record<string, string[]>>({});
   const [projectLineSort, setProjectLineSort] = useState<{ column: string; direction: "asc" | "desc" } | null>(null);
+  const [selectedProjectLineIds, setSelectedProjectLineIds] = useState<number[]>([]);
+  const [bulkHeightOpen, setBulkHeightOpen] = useState(false);
+  const [bulkHeightInput, setBulkHeightInput] = useState("");
 
   useEffect(() => {
     if (project.length === 0) {
@@ -2779,6 +2845,11 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
   const [countertops, setCountertops] = useState<CountertopRow[]>([]);
   const [accessories, setAccessories] = useState<AccessoryRow[]>([]);
   const [masterAccessories, setMasterAccessories] = useState<MasterAccessoryRow[]>([]);
+  const [linkedAccessoryRates, setLinkedAccessoryRates] = useState<Record<string, string>>({});
+  const linkedFillers = useMemo(() => cabinetFillers(project), [project]);
+  const allFillers = useMemo(() => [...fillers, ...linkedFillers], [fillers, linkedFillers]);
+  const linkedAccessories = useMemo(() => cabinetAccessories(project, linkedAccessoryRates), [project, linkedAccessoryRates]);
+  const allMasterAccessories = useMemo(() => [...masterAccessories, ...linkedAccessories], [masterAccessories, linkedAccessories]);
   const [waste, setWaste] = useState({ ...WASTE });
   const [boardSheetInputs, setBoardSheetInputs] = useState<Record<string, string>>({});
   const [projectPricingInputs, setProjectPricingInputs] = useState<ProjectPricingInputs>(DEFAULT_PROJECT_PRICING);
@@ -2838,10 +2909,11 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
   const laminatePricesValid = (!carcassPostlam || (isValidLaminatePrice(carcassLamFrontSheetPrice) && isValidLaminatePrice(carcassLamBackSheetPrice)))
     && (!shutterPostlam || (isValidLaminatePrice(shutterLamFrontSheetPrice) && isValidLaminatePrice(shutterLamBackSheetPrice)))
     && [backLamFrontSheetPrice, backLamBackSheetPrice, drawerLamFrontSheetPrice, drawerLamBackSheetPrice, visibleLamFrontSheetPrice, visibleLamBackSheetPrice].every(isValidLaminatePrice);
+  const accessoryWidthValid = fkSafe !== "BPO" || [150, 200, 300].includes(W);
 
   const m = useMemo(
-    () => buildModel({ boardPrices, zk, fk: fkSafe, vid: v.id, hand, handle, board, backBoardId, drawerBoardId, shType, visibleSides, visibleSideMaterialId, carcassLamFrontSheetPrice, carcassLamBackSheetPrice, backLamFrontSheetPrice, backLamBackSheetPrice, drawerLamFrontSheetPrice, drawerLamBackSheetPrice, visibleLamFrontSheetPrice, visibleLamBackSheetPrice, shutterLamFrontSheetPrice, shutterLamBackSheetPrice, glassType, hingeChoice, neon, W, H, D, shelfQty: effectiveShelfQty, drawerModel, finish }),
-    [boardPrices, zk, fkSafe, v.id, hand, handle, board, backBoardId, drawerBoardId, shType, visibleSides, visibleSideMaterialId, carcassLamFrontSheetPrice, carcassLamBackSheetPrice, backLamFrontSheetPrice, backLamBackSheetPrice, drawerLamFrontSheetPrice, drawerLamBackSheetPrice, visibleLamFrontSheetPrice, visibleLamBackSheetPrice, shutterLamFrontSheetPrice, shutterLamBackSheetPrice, glassType, hingeChoice, neon, W, H, D, effectiveShelfQty, drawerModel, finish],
+    () => buildModel({ boardPrices, zk, fk: fkSafe, vid: v.id, hand, handle, board, backBoardId, drawerBoardId, shType, visibleSides, visibleSideMaterialId, carcassLamFrontSheetPrice, carcassLamBackSheetPrice, backLamFrontSheetPrice, backLamBackSheetPrice, drawerLamFrontSheetPrice, drawerLamBackSheetPrice, visibleLamFrontSheetPrice, visibleLamBackSheetPrice, shutterLamFrontSheetPrice, shutterLamBackSheetPrice, glassType, hingeChoice, neon, W, H, D, shelfQty: effectiveShelfQty, fillerWidth: fillerWidth ?? undefined, drawerModel, finish }),
+    [boardPrices, zk, fkSafe, v.id, hand, handle, board, backBoardId, drawerBoardId, shType, visibleSides, visibleSideMaterialId, carcassLamFrontSheetPrice, carcassLamBackSheetPrice, backLamFrontSheetPrice, backLamBackSheetPrice, drawerLamFrontSheetPrice, drawerLamBackSheetPrice, visibleLamFrontSheetPrice, visibleLamBackSheetPrice, shutterLamFrontSheetPrice, shutterLamBackSheetPrice, glassType, hingeChoice, neon, W, H, D, effectiveShelfQty, fillerWidth, drawerModel, finish],
   );
 
   const applyMaterialChoices = useCallback((chosen: ZoneMaterials | undefined) => {
@@ -2866,8 +2938,9 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
     setFk(f);
     setVid(famSetOf(z)[f].variants[0].id);
     const s = defSizes(z, f);
-    setW(s.w[0]); setH(s.h[0]); setD(s.d);
-  }, [materials, applyMaterialChoices]);
+    setW(s.w[0]); setH(zoneHeights[z] ?? s.h[0]); setD(s.d);
+    setFillerWidth(null);
+  }, [materials, applyMaterialChoices, zoneHeights]);
 
   const onFam = useCallback((f: string) => {
     const nextMaterialZone = kitchenZoneForCode(zk, f);
@@ -2879,8 +2952,9 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
     setShelfOverride(null);
     setVid(fams[f].variants[0].id);
     const s = defSizes(zk, f);
-    setW(s.w[0]); setH(s.h[0]); setD(s.d);
-  }, [zk, fkSafe, fams, materials, applyMaterialChoices]);
+    setW(s.w[0]); setH(zoneHeights[zk] ?? H); setD(s.d);
+    setFillerWidth(null);
+  }, [zk, fkSafe, fams, materials, applyMaterialChoices, zoneHeights, H]);
 
   const onVariant = (nextId: string) => {
     const doubleWidth = doubleShutterWidth(zk);
@@ -2899,8 +2973,14 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
     if (nextWidth > 0) setVid((current) => widthVariant(zk, fam, current, nextWidth));
   };
 
+  const onHeight = (nextHeight: number) => {
+    setH(nextHeight);
+    if (nextHeight > 0) setZoneHeights((current) => ({ ...current, [zk]: nextHeight }));
+    setShelfOverride(null);
+  };
+
   const addLine = () => {
-    if (!laminatePricesValid) return;
+    if (!laminatePricesValid || !accessoryWidthValid || (fillerWidth !== null && fillerWidth <= 0)) return;
     if (editingLineId !== null) {
       setProject((p) => p.map((line) => line.id === editingLineId ? { ...line, m, qty, elevation } : line));
       setEditingLineId(null);
@@ -2929,6 +3009,8 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
     setGlassType(config.glassType); setHingeChoice(config.hingeChoice);
     setDrawerModel(config.drawerModel); setFinish(config.finish);
     setW(config.W); setH(config.H); setD(config.D); setShelfOverride(config.shelfQty ?? null);
+    setFillerWidth(config.fillerWidth ?? null);
+    setZoneHeights((current) => ({ ...current, [config.zk]: config.H }));
   };
   const editLine = (line: ProjectLine) => {
     loadConfig(cabinetConfig(line.m));
@@ -2938,14 +3020,17 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
   const delLine = (id: number) => {
     if (editingLineId === id) { setEditingLineId(null); setShelfOverride(null); }
     setProject((p) => p.filter((x) => x.id !== id));
+    setSelectedProjectLineIds((current) => current.filter((selectedId) => selectedId !== id));
   };
 
-  const importFile = async (file: File) => {
+  const importFile = async (file: File, pdfSource: "current" | "saved" = "current") => {
     setImportError(""); setImportMessage("");
     try {
-      const restored = await readProjectFile(file, materials);
+      const restored = await readProjectFile(file, pdfSource === "saved" ? undefined : materials, pdfSource === "saved");
       if (project.length > 0 && !window.confirm("Replace the current project with the imported file?")) return;
       setProject(restored.project);
+      setSelectedProjectLineIds([]);
+      setLinkedAccessoryRates({});
       setBoardSheetInputs({});
       setFillers(restored.fillers); setVisiblePanels(restored.visiblePanels);
       setCountertops(restored.countertops); setAccessories(restored.accessories);
@@ -2975,10 +3060,10 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
     return types.length === 1 ? types[0] : shType;
   }, [project, shType]);
   const extras = useMemo(
-    () => buildExtrasBom(fillers, visiblePanels, countertops, project, soMode ? "SO" : "", shType, countertopShutterType, finish, waste, materials, board,
+    () => buildExtrasBom(allFillers, visiblePanels, countertops, project, soMode ? "SO" : "", shType, countertopShutterType, finish, waste, materials, board,
       { front: shutterLamFrontSheetPrice, back: shutterLamBackSheetPrice },
       { itemId: visibleSideMaterialId, front: visibleLamFrontSheetPrice, back: visibleLamBackSheetPrice }),
-    [fillers, visiblePanels, countertops, project, soMode, shType, countertopShutterType, finish, waste, materials, board,
+    [allFillers, visiblePanels, countertops, project, soMode, shType, countertopShutterType, finish, waste, materials, board,
       shutterLamFrontSheetPrice, shutterLamBackSheetPrice, visibleSideMaterialId, visibleLamFrontSheetPrice, visibleLamBackSheetPrice],
   );
   const boardTotals = useMemo(() => buildBoardTotals(project, waste, extras.panels), [project, waste, extras]);
@@ -2994,8 +3079,8 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
   );
   const accessoryRows = useMemo(() => [
     ...buildAccessoryRows(accessories, project, soMode ? "SO" : ""),
-    ...buildMasterAccessoryRows(masterAccessories, soMode ? "SO" : ""),
-  ], [accessories, masterAccessories, project, soMode]);
+    ...buildMasterAccessoryRows(allMasterAccessories, soMode ? "SO" : ""),
+  ], [accessories, allMasterAccessories, project, soMode]);
   const rawSelections = useMemo(() => Object.entries(rawMap).flatMap(([key, state]) => {
     if (!state.sel) return [];
     const item = state.items.find((candidate) => candidate.item_id === state.sel);
@@ -3014,6 +3099,8 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
       if (!Array.isArray(draft.rows)) throw new Error("Saved kitchen is incomplete.");
       const restored = restoreProjectSetup(draft.rows, materials);
       setProject(restored.project);
+      setSelectedProjectLineIds([]);
+      setLinkedAccessoryRates({});
       setFillers(restored.fillers); setVisiblePanels(restored.visiblePanels);
       setCountertops(restored.countertops); setAccessories(restored.accessories);
       setMasterAccessories(restored.masterAccessories);
@@ -3046,8 +3133,8 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
     .filter((type) => processingTypes.some((row) => row.category === category && row.type === type) || replacementTypes[category] === type)
     .map((type) => ({ category, type })));
   const costing = useMemo(
-    () => computeCosting(project, fillers, visiblePanels, countertops, extras.panels, accessories, masterAccessories, shType, countertopShutterType, rates, waste, projectPricingInputs.processingRates, undefined, boardQuantityOverrides),
-    [project, fillers, visiblePanels, countertops, extras, accessories, masterAccessories, shType, countertopShutterType, rates, waste, projectPricingInputs.processingRates, boardQuantityOverrides],
+    () => computeCosting(project, allFillers, visiblePanels, countertops, extras.panels, accessories, allMasterAccessories, shType, countertopShutterType, rates, waste, projectPricingInputs.processingRates, undefined, boardQuantityOverrides),
+    [project, allFillers, visiblePanels, countertops, extras, accessories, allMasterAccessories, shType, countertopShutterType, rates, waste, projectPricingInputs.processingRates, boardQuantityOverrides],
   );
   const projectPricing = useMemo(() => {
     const cabinetAreas = project.map((line) => {
@@ -3064,8 +3151,8 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
     // filler's front face counts toward project area; cover-panel returns stay
     // in the BOM and material cost but not in the service-charge area.
     let panelIndex = 0;
-    const fillerAreaSlots = fillers.flatMap((filler) => {
-      const count = filler.fillerType === "cover-panel" ? 3 : 1;
+    const fillerAreaSlots = allFillers.flatMap((filler) => {
+      const count = filler.fillerType === "cover-panel" || (filler.zone === "wall" && filler.linkedLineId !== undefined) ? 3 : 1;
       const panels = extras.panels.slice(panelIndex, panelIndex + count);
       panelIndex += count;
       return panels.map((panel, index) => {
@@ -3106,14 +3193,14 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
     const allocatedCharges = cabinetAreas.map(allocate);
     const fillerCharges = fillerAreas.map((line) => ({ ...allocate(line), elevation: line.elevation }));
     return { cabinetSqft, fillerSqft, totalSqft, baseCost, conversion, convertedCost, profit, transportation, installation, loading, subtotal, tax, grandTotal: subtotal + tax, allocatedCharges, fillerCharges, fillerAreaSlots };
-  }, [costing, project, fillers, extras, projectPricingInputs]);
+  }, [costing, project, allFillers, extras, projectPricingInputs]);
   const elevations = useMemo(() => [...new Set([
     ...project.map((line) => line.elevation),
-    ...fillers.map((line) => line.elevation),
+    ...allFillers.map((line) => line.elevation),
     ...visiblePanels.map((line) => line.elevation),
     ...accessories.map((line) => line.elevation),
-    ...masterAccessories.map((line) => line.elevation),
-  ].filter(Boolean))].sort((a, b) => a.localeCompare(b)), [project, fillers, visiblePanels, accessories, masterAccessories]);
+    ...allMasterAccessories.map((line) => line.elevation),
+  ].filter(Boolean))].sort((a, b) => a.localeCompare(b)), [project, allFillers, visiblePanels, accessories, allMasterAccessories]);
   const activeElevation = selectedElevation !== null && elevations.includes(selectedElevation) ? selectedElevation : null;
   const shownProject = useMemo(() => activeElevation === null ? project : project.filter((line) => line.elevation === activeElevation), [project, activeElevation]);
   const projectLineValue = (line: ProjectLine, column: string) => {
@@ -3130,11 +3217,32 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
     !projectLineFilters[column]?.length || projectLineFilters[column].includes(projectLineValue(line, column))))
     .sort((a, b) => projectLineSort ? projectLineValue(a, projectLineSort.column).localeCompare(
       projectLineValue(b, projectLineSort.column), undefined, { numeric: true }) * (projectLineSort.direction === "asc" ? 1 : -1) : 0);
+  const selectedProjectLines = project.filter((line) => selectedProjectLineIds.includes(line.id));
+  const selectedCabinetType = selectedProjectLines[0]?.m;
+  const sameCabinetType = (line: ProjectLine) => !selectedCabinetType ||
+    (line.m.zk === selectedCabinetType.zk && line.m.fk === selectedCabinetType.fk);
+  const selectableVisibleLines = filteredProjectLines.filter(sameCabinetType);
+  const allVisibleSelected = selectableVisibleLines.length > 0 && selectableVisibleLines.every((line) => selectedProjectLineIds.includes(line.id));
+  const applySelectedHeight = () => {
+    const height = Number(bulkHeightInput);
+    if (!Number.isSafeInteger(height) || height <= 0 || selectedProjectLines.length === 0 || !selectedCabinetType) return;
+    const ids = new Set(selectedProjectLines.map((line) => line.id));
+    setProject((current) => current.map((line) => {
+      if (!ids.has(line.id) || line.m.zk !== selectedCabinetType.zk || line.m.fk !== selectedCabinetType.fk) return line;
+      const config = cabinetConfig(line.m);
+      const family = famSetOf(config.zk)[config.fk];
+      const previousDefault = shelfCount(config.zk, config.fk, family, config.H);
+      const shelfQty = config.shelfQty === previousDefault ? shelfCount(config.zk, config.fk, family, height) : config.shelfQty;
+      return { ...line, m: buildModel({ ...config, H: height, shelfQty }) };
+    }));
+    setBulkHeightOpen(false);
+    setSelectedProjectLineIds([]);
+  };
   const matchingCabinetCodes = new Set(filteredProjectLines.map((line) => line.m.code));
-  const shownFillers = useMemo(() => activeElevation === null ? fillers : fillers.filter((line) => line.elevation === activeElevation), [fillers, activeElevation]);
+  const shownFillers = useMemo(() => activeElevation === null ? allFillers : allFillers.filter((line) => line.elevation === activeElevation), [allFillers, activeElevation]);
   const shownVisiblePanels = useMemo(() => activeElevation === null ? visiblePanels : visiblePanels.filter((line) => line.elevation === activeElevation), [visiblePanels, activeElevation]);
   const shownAccessories = useMemo(() => activeElevation === null ? accessories : accessories.filter((line) => line.elevation === activeElevation), [accessories, activeElevation]);
-  const shownMasterAccessories = useMemo(() => activeElevation === null ? masterAccessories : masterAccessories.filter((line) => line.elevation === activeElevation), [masterAccessories, activeElevation]);
+  const shownMasterAccessories = useMemo(() => activeElevation === null ? allMasterAccessories : allMasterAccessories.filter((line) => line.elevation === activeElevation), [allMasterAccessories, activeElevation]);
   const shownExtras = useMemo(() => activeElevation === null ? extras : buildExtrasBom(
     shownFillers, shownVisiblePanels, [], project, soMode ? "SO" : "", shType, countertopShutterType, finish, waste, materials, board,
     { front: shutterLamFrontSheetPrice, back: shutterLamBackSheetPrice },
@@ -3311,6 +3419,12 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
             event.target.value = "";
           }} />
           <button type="button" className="add" onClick={() => pdfImportRef.current?.click()}>Import printed PDF</button>
+          <input ref={savedMaterialsPdfRef} type="file" accept=".pdf,application/pdf" aria-label="Import PDF with saved materials" style={{ display: "none" }} onChange={(event) => {
+            const file = event.target.files?.[0];
+            if (file) void importFile(file, "saved");
+            event.target.value = "";
+          }} />
+          <button type="button" className="add" onClick={() => savedMaterialsPdfRef.current?.click()}>Import PDF with saved materials</button>
           <button type="button" className="add" disabled={project.length === 0} onClick={() => {
             setTab("totals");
             setSelectedElevation(null);
@@ -3341,7 +3455,12 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
       <div className="body">
         {/* ---------------- Configure Unit ---------------- */}
         <aside className="rail" ref={railRef}>
-          <h2>Configure unit</h2>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 18 }}>
+            <h2 style={{ margin: 0 }}>Configure unit</h2>
+            <button type="button" className="x" aria-label={showAdvanced ? "Hide additional configuration fields" : "Show additional configuration fields"}
+              aria-expanded={showAdvanced} onClick={() => setShowAdvanced((current) => !current)}
+              style={{ whiteSpace: "nowrap", fontSize: 14 }}>{showAdvanced ? "👁 Hide details" : "👁 Show details"}</button>
+          </div>
 
           <Fld label="Zone">
             <select value={zk} onChange={(e) => onZone(e.target.value)}>
@@ -3367,12 +3486,12 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
             <Fld label="Hand"><Seg opts={[["LHS", "LHS"], ["RHS", "RHS"]]} val={hand} set={setHand} /></Fld>
           )}
 
-          <Fld label="Handle / profile">
+          {showAdvanced && <Fld label="Handle / profile">
             <Seg opts={[["STD", "Standard"], ["XCJ", "Gola"]]} val={handle} set={setHandle} />
             {handle === "XCJ" && <Hint>Top depth cuts to {D - CJ_CUT}. Base shutters lose 33mm.</Hint>}
-          </Fld>
+          </Fld>}
 
-          {!drawerOnly && (
+          {showAdvanced && !drawerOnly && (
             <Fld label="Hinge brand and type">
               <select value={hingeChoice} disabled={hingeLocked} onChange={(e) => setHingeChoice(e.target.value as HingeChoice)}>
                 {HINGE_CHOICES.map((choice) => <option key={choice} value={choice}>{choice}</option>)}
@@ -3381,19 +3500,19 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
             </Fld>
           )}
 
-          <Fld label="Carcass board type">
+          {showAdvanced && <Fld label="Carcass board type">
             <select value={board} onChange={(e) => setBoard(e.target.value)}>
               {CARCASS_BOARD_ITEMS.map((item) => <option key={item.id} value={item.id}>{item.subgroup} · {item.thicknessMm ?? "—"}mm</option>)}
             </select>
             <Hint>{carcassBoardOf(board, backBoardId).core} · Back: {carcassBoardOf(board, backBoardId).backItem?.subgroup ?? "—"} · {carcassBoardOf(board, backBoardId).backCoreT}mm · Drawer: {DRAWER_BOARD_ITEMS.find((item) => item.id === drawerBoardId)?.subgroup ?? "—"}</Hint>
-          </Fld>
+          </Fld>}
           <Fld label="Visible sides">
             <Seg opts={[["LH", "LH"], ["RH", "RH"], ["BOTH", "Both sides"]]} val={visibleSides} set={(value) => setVisibleSides(value as VisibleSides)} />
             {visibleSides && <button className="x" type="button" onClick={() => setVisibleSides("")}>Clear visible sides</button>}
             <Hint>{visibleSides ? `Selected side${visibleSides === "BOTH" ? "s" : ""} use ${SHUTTER_BOARD_ITEMS.find((item) => item.id === visibleSideMaterialId)?.subgroup ?? "the admin-selected shutter material"}.` : "No visible side selected."}</Hint>
           </Fld>
 
-          {!fam.noShutter && (isGlass ? (
+          {showAdvanced && !fam.noShutter && (isGlass ? (
             <>
               <Fld label="Glass material type">
                 <select value={glassType} onChange={(e) => setGlassType(e.target.value)}>
@@ -3401,10 +3520,10 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
                 </select>
                 <Hint>Shutters use 5mm glass. Internal glass shelves use 6mm clear glass at ₹{GLASS_SHELF_ITEM?.currentRate ?? 135}/sqft.</Hint>
               </Fld>
-              <Fld label="Neon profile">
+              {showAdvanced && <Fld label="Neon profile">
                 <div className="fixed-value">Neon 50</div>
                 <Hint>Glass shutters use Neon 50 only — inset {SH_INSET.NEON50}mm, frame {SH_FRAME.NEON50}mm.</Hint>
-              </Fld>
+              </Fld>}
             </>
           ) : (
             <Fld label="Shutter board type">
@@ -3415,7 +3534,7 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
             </Fld>
           ))}
 
-          {fam.drawers && (
+          {showAdvanced && fam.drawers && (
             <Fld label="Drawer model">
               <select value={drawerModel} disabled={drawerLocked} onChange={(e) => setDrawerModel(e.target.value)}>
                 {DRAWER_MODELS.map((x) => <option key={x}>{x}</option>)}
@@ -3434,12 +3553,25 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
             <div className="g3">
               <input type="number" min={1} step={1} list="cabinet-width-presets" aria-label="Width in millimetres" title="Width (mm)" placeholder="Width" value={W || ""} onChange={(e) => onWidth(e.target.value === "" ? 0 : +e.target.value)} />
               <datalist id="cabinet-width-presets">{sizes.w.map((x) => <option key={x} value={x} />)}</datalist>
-              <input type="number" min={1} step={1} list="cabinet-height-presets" aria-label="Height in millimetres" title="Height (mm)" placeholder="Height" value={H || ""} onChange={(e) => setH(e.target.value === "" ? 0 : +e.target.value)} />
+              <input type="number" min={1} step={1} list="cabinet-height-presets" aria-label="Height in millimetres" title="Height (mm)" placeholder="Height" value={H || ""} onChange={(e) => onHeight(e.target.value === "" ? 0 : +e.target.value)} />
               <datalist id="cabinet-height-presets">{sizes.h.map((x) => <option key={x} value={x} />)}</datalist>
               <input type="number" min={1} step={1} list="cabinet-depth-presets" aria-label="Depth in millimetres" title="Depth (mm)" placeholder="Depth" value={D || ""} onChange={(e) => setD(e.target.value === "" ? 0 : +e.target.value)} />
               <datalist id="cabinet-depth-presets"><option value={sizes.d} /></datalist>
             </div>
             <Hint>Enter any custom width, height, or depth in millimetres. Standard sizes appear as suggestions.</Hint>
+            {!accessoryWidthValid && <Hint>Bottle pull-out accessories are available for 150, 200, or 300 mm cabinets.</Hint>}
+          </Fld>
+
+          <Fld label="Cabinet filler">
+            <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <input type="checkbox" checked={fillerWidth !== null} onChange={(event) => setFillerWidth(event.target.checked ? FILLER_DEF_W : null)} style={{ width: "auto" }} />
+              Add a filler with this cabinet
+            </label>
+            {fillerWidth !== null && <>
+              <input type="number" min={1} step={1} aria-label="Cabinet filler width in millimetres" value={fillerWidth || ""}
+                onChange={(event) => setFillerWidth(event.target.value === "" ? 0 : Number(event.target.value))} />
+              <Hint>Width in mm; height follows the cabinet. Wall fillers also include top and bottom carcass panels at cabinet depth.</Hint>
+            </>}
           </Fld>
 
           <Fld label="Shelf quantity">
@@ -3456,7 +3588,7 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
             </div>
           </Fld>
 
-          <button className="add" disabled={W <= 0 || H <= 0 || D <= 0 || !laminatePricesValid} onClick={addLine}>{editingLineId === null ? "Add to project" : "Save cabinet changes"}</button>
+          <button className="add" disabled={W <= 0 || H <= 0 || D <= 0 || !accessoryWidthValid || (fillerWidth !== null && fillerWidth <= 0) || !laminatePricesValid} onClick={addLine}>{editingLineId === null ? "Add to project" : "Save cabinet changes"}</button>
           {editingLineId !== null && <button className="x" onClick={() => { setEditingLineId(null); setShelfOverride(null); }}>Cancel edit</button>}
           <div className="code">{m.code}</div>
         </aside>
@@ -3517,21 +3649,38 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
                   </select>
                 </label>
                 {activeElevation !== null && <p className="hint">Showing elevation {activeElevation}. Unassigned items and Counter Ply stay in All elevations; exports still contain the full project.</p>}
-                <h4>Project lines</h4>
+                <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                  <h4>Project lines</h4>
+                  {selectedProjectLines.length > 0 && <>
+                    <span className="hint">{selectedProjectLines.length} selected · {ZONES[selectedCabinetType!.zk].name} / {famSetOf(selectedCabinetType!.zk)[selectedCabinetType!.fk].name}</span>
+                    <button type="button" className="add" onClick={() => { setBulkHeightInput(String(selectedProjectLines[0].m.H)); setBulkHeightOpen(true); }}>Edit selected heights</button>
+                    <button type="button" className="x" onClick={() => setSelectedProjectLineIds([])}>Clear selection</button>
+                  </>}
+                </div>
+                {selectedProjectLines.length > 0 && <button type="button" className="x" style={{ marginBottom: 10 }}
+                  onClick={() => setSelectedProjectLineIds((current) => allVisibleSelected
+                    ? current.filter((id) => !selectableVisibleLines.some((line) => line.id === id))
+                    : [...new Set([...current, ...selectableVisibleLines.map((line) => line.id)])])}>
+                  {allVisibleSelected ? "Deselect" : "Select"} all matching visible cabinets
+                </button>}
                 {(hasProjectLineFilter || projectLineSort) && <p className="hint" style={{ marginBottom: 8 }}>
                   Showing {filteredProjectLines.length} of {shownProject.length} cabinet lines. Filters also apply to cabinet rows in costing and service charges; project totals and exports remain complete.
                   <button type="button" className="x" style={{ marginLeft: 8 }} onClick={() => { setProjectLineFilters({}); setProjectLineSort(null); }}>Clear filters &amp; sort</button>
                 </p>}
-                <Tbl head={[...projectFilterColumns.map((column) => <ColumnFilter key={column} label={column}
+                <Tbl head={["Select", ...projectFilterColumns.map((column) => <ColumnFilter key={column} label={column}
                   options={[...new Set(shownProject.map((line) => projectLineValue(line, column)))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))}
                   selected={projectLineFilters[column] ?? []}
                   onChange={(values) => setProjectLineFilters((current) => ({ ...current, [column]: values }))}
                   sortDirection={projectLineSort?.column === column ? projectLineSort.direction : null}
-                  onSort={(direction) => setProjectLineSort({ column, direction })} />), ""]} num={[4]}
+                  onSort={(direction) => setProjectLineSort({ column, direction })} />), ""]} num={[5]}
                   rows={filteredProjectLines.map((l) => {
                     const packetRows = cabinetPacketRows(l.m);
                     const packNames = [...new Set([...l.m.pkRows.map((row) => row.pack), ...packetRows.map((row) => row.pack)])];
-                    return [l.elevation,
+                    return [<input key={`select-${l.id}`} type="checkbox" aria-label={`Select cabinet ${l.m.code} in elevation ${l.elevation}`}
+                      checked={selectedProjectLineIds.includes(l.id)} disabled={!sameCabinetType(l)}
+                      title={!sameCabinetType(l) ? "Select cabinets of the same zone and family only" : undefined}
+                      onChange={(event) => setSelectedProjectLineIds((current) => event.target.checked ? [...current, l.id] : current.filter((id) => id !== l.id))} />,
+                      l.elevation,
                       <details key={l.id}>
                         <summary style={{ cursor: "pointer", color: "var(--acc)", fontWeight: 650 }}>{l.m.code}</summary>
                         <div style={{ marginTop: 10, minWidth: 500 }}>
@@ -3575,7 +3724,15 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
 
               {/* ---- Fillers ---- */}
               <SecHead title="Fillers" onAdd={addFiller} />
-              {fillers.length === 0 ? <div className="empty">No fillers. A filler is a shutter-type panel with {BAND_T}mm band — default width {FILLER_DEF_W}mm.</div> :
+              {linkedFillers.length > 0 && <>
+                <p className="hint">These fillers follow their cabinets. Edit the cabinet to change width, height, or quantity.</p>
+                <Tbl head={["Cabinet", "Zone", "Width (mm)", "Height (mm)", "Qty"]} num={[2, 3, 4]}
+                  rows={linkedFillers.map((filler) => {
+                    const line = project.find((candidate) => candidate.id === filler.linkedLineId);
+                    return [line?.m.code ?? "—", filler.zone, filler.customWidth, filler.customHeight, filler.qty];
+                  })} />
+              </>}
+              {fillers.length === 0 ? <div className="empty">No additional stand-alone fillers. A filler is a shutter-type panel with {BAND_T}mm band — default width {FILLER_DEF_W}mm.</div> :
                 <Tbl head={["Type", "Zone", "Qty", "Shade", "Height (mm)", "Width (mm)", ...(fillers.some((f) => f.fillerType === "cover-panel") ? ["Depth (mm)"] : []), "Elevation", ""]} num={[2]}
                   rows={fillers.map((f) => [
                     <select key="t" value={f.fillerType ?? "filler"} onChange={(e) => updFiller(f.id, { fillerType: e.target.value as FillerRow["fillerType"] })}>
@@ -3678,6 +3835,18 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
 
               {/* ---- Accessories from the priced KITCHEN master and reference catalog ---- */}
               <SecHead title="Accessories" onAdd={addMasterAcc} />
+              {linkedAccessories.length > 0 && <>
+                <p className="hint">Automatically included from cabinet configuration. Change or remove the cabinet to update these items.</p>
+                <Tbl head={["Accessory item", "Cabinet", "Qty", "Elevation", "Rate override (Rs/unit)"]} num={[2, 4]}
+                  rows={linkedAccessories.map((row) => {
+                    const item = selectedMasterAccessory(row);
+                    const line = project.find((candidate) => candidate.id === row.linkedLineId);
+                    return [item?.materialDescription ?? row.itemId, line?.m.code ?? "—", row.qty, row.elevation,
+                      <input key="rate" type="number" min={0} step="0.01" aria-label={`Rate for ${item?.subgroup ?? row.itemId}`}
+                        placeholder={item?.priced ? item.currentRate.toFixed(2) : "Enter rate"} value={row.manualRate ?? ""}
+                        onChange={(event) => { const value = event.target.value; if (value === "" || Number.isFinite(Number(value)) && Number(value) >= 0) setLinkedAccessoryRates((current) => ({ ...current, [`${row.linkedLineId}|${row.itemId}`]: value })); }} style={{ width: 120 }} />];
+                  })} />
+              </>}
               {masterAccessories.length === 0 ? <div className="empty">No accessories selected. Priced Kitchen-master items and the wider reference accessory catalog are available.</div> :
                 <Tbl head={["Accessory item", "Brand", "Rate (Rs/unit)", "Qty", "Elevation", ""]} num={[2, 3]}
                   rows={masterAccessories.map((row) => {
@@ -3817,7 +3986,7 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
                     <table style={{ width: "100%", borderCollapse: "collapse", background: "white" }}>
                       <tbody>{[
                         ["Base cabinet / item costing (includes filler panels)", shownPricing.baseCost],
-                        ["Filler panel material costing, including sides (included above)", shownCosting.lines.slice(shownProject.length, shownProject.length + shownFillers.reduce((sum, filler) => sum + (filler.fillerType === "cover-panel" ? 3 : 1), 0)).reduce((sum, line) => sum + line.cost, 0)],
+                        ["Filler panel material costing, including sides (included above)", shownCosting.lines.slice(shownProject.length, shownProject.length + shownFillers.reduce((sum, filler) => sum + (filler.fillerType === "cover-panel" || (filler.zone === "wall" && filler.linkedLineId !== undefined) ? 3 : 1), 0)).reduce((sum, line) => sum + line.cost, 0)],
                         [`Conversion (${Number(projectPricingInputs.conversionPct || 0).toFixed(2)}%)`, shownPricing.conversion],
                         [`Profit (${Number(projectPricingInputs.profitPct || 0).toFixed(2)}% of cost after conversion)`, shownPricing.profit],
                         [`Transportation${projectPricingInputs.transportation.mode === "sqft" ? ` (${Number(projectPricingInputs.transportation.value || 0).toFixed(2)} / sqft)` : " (direct)"}`, shownPricing.transportation],
@@ -3897,7 +4066,7 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
                   if (file) void importFile(file);
                   event.target.value = "";
                 }} />
-                <Hint>Import replaces the current project. PDFs use the kitchen materials and laminate prices selected before entering the Builder; Excel BOM and JSON files restore their saved material choices. Older printed PDFs may not contain every other setting.</Hint>
+                <Hint>Import replaces the current project. This standard PDF import uses the kitchen materials selected before entering the Builder; use “Import PDF with saved materials” above to restore the exact material choices and prices stored in a newer exported PDF. Excel BOM and JSON files restore their saved choices.</Hint>
                 {importMessage && <p role="status" style={{ color: "var(--acc)" }}>{importMessage}</p>}
                 {importError && <p role="alert" style={{ color: "var(--flag)" }}>{importError}</p>}
               </div>
@@ -3908,6 +4077,23 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
           )}
         </main>
       </div>
+      {bulkHeightOpen && <div className="pricing-overlay" onKeyDown={(event) => { if (event.key === "Escape") setBulkHeightOpen(false); }}>
+        <section className="pricing-modal" role="dialog" aria-modal="true" aria-labelledby="bulk-height-title" style={{ maxWidth: 480 }}>
+          <div className="pricing-modal-header">
+            <div><h2 id="bulk-height-title">Edit cabinet height</h2><p>{selectedProjectLines.length} selected cabinet{selectedProjectLines.length === 1 ? "" : "s"} · same type only</p></div>
+            <button type="button" className="x" aria-label="Close bulk height popup" onClick={() => setBulkHeightOpen(false)}>✕</button>
+          </div>
+          <label htmlFor="bulk-cabinet-height" style={{ display: "block", marginTop: 20, fontWeight: 650 }}>New height · mm</label>
+          <input id="bulk-cabinet-height" type="number" min={1} step={1} autoFocus value={bulkHeightInput}
+            onChange={(event) => setBulkHeightInput(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") applySelectedHeight(); }} />
+          <p className="hint">Only the selected cabinet lines will change. Their codes, panels, BOM and costing will be recalculated. Default shelf quantities follow the new height; custom quantities stay unchanged.</p>
+          <div className="pricing-modal-footer" style={{ justifyContent: "flex-end" }}>
+            <button type="button" className="x" onClick={() => setBulkHeightOpen(false)}>Cancel</button>
+            <button type="button" className="add" disabled={!Number.isSafeInteger(Number(bulkHeightInput)) || Number(bulkHeightInput) <= 0 || selectedProjectLines.length === 0}
+              onClick={applySelectedHeight}>Apply height</button>
+          </div>
+        </section>
+      </div>}
       {pricingModalOpen && <div className="pricing-overlay" onKeyDown={(event) => { if (event.key === "Escape") setPricingModalOpen(false); }}>
         <section className="pricing-modal" role="dialog" aria-modal="true" aria-labelledby="pricing-modal-title">
           <div className="pricing-modal-header">
@@ -4002,7 +4188,7 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
       </div>}
       <section className="print-data" aria-label="Project restore data">
         <h2>Project restore data</h2>
-        <p>Keep this final page when saving or printing to PDF. It lets the builder restore cabinet and project details; on PDF import, cabinet materials and laminate prices come from the current kitchen material selection.</p>
+        <p>Keep this final page when saving or printing to PDF. It lets the Builder restore cabinet and project details. Use “Import PDF with saved materials” to restore the material choices in this PDF, or the standard import to apply the current kitchen selection.</p>
         {printRestoreLines.map((line) => <div className="print-data-line" key={line.slice(0, 11)}>{line}</div>)}
       </section>
     </div>
