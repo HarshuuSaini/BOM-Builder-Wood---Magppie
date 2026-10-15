@@ -40,7 +40,7 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: `Invalid ${zone} ${field} selection.` }, { status: 400 });
       }
       const item = COSTING_ITEMS.find((candidate) => candidate.id === selection.itemId && candidate.group === GROUP[field] &&
-        (field !== "visible" || candidate.thicknessMm === 18));
+        (field !== "visible" || [18, 25].includes(candidate.thicknessMm ?? 0)));
       if (!item) return NextResponse.json({ error: `Unknown ${zone} ${field} material.` }, { status: 400 });
       if (selection.boardSheetPrice !== undefined && !validBoardSheetPrice(selection.boardSheetPrice)) {
         return NextResponse.json({ error: `Invalid ${zone} ${field} Prelam board sheet price.` }, { status: 400 });

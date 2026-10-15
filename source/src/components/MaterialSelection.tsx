@@ -32,6 +32,33 @@ function typeOf(option: Option) {
   if (/^PU\b/i.test(option.subgroup)) return "PU";
   return /POSTLAM/i.test(option.type) ? "Postlam" : "Prelam";
 }
+const SYNC_TARGETS: Partial<Record<MaterialField, MaterialField[]>> = {
+  carcass: ["back", "drawer"],
+  shutter: ["visible"],
+};
+
+function updateMaterialChoices(choices: ZoneMaterials, field: MaterialField, change: Partial<MaterialChoice>, options: Option[]) {
+  const next = copyZone(choices);
+  next[field] = { ...next[field], ...change };
+  const unmatched: MaterialField[] = [];
+  for (const target of SYNC_TARGETS[field] ?? []) {
+    const sourceOption = options.find((option) => option.id === next[field].itemId);
+    const matchingOption = sourceOption && options.find((option) =>
+      option.group === GROUPS[target].group && option.subgroup.toLowerCase() === sourceOption.subgroup.toLowerCase());
+    if (!matchingOption) {
+      unmatched.push(target);
+      continue;
+    }
+    const sourcePrice = next[field].boardSheetPrice ?? sourceOption.boardSheetPrice;
+    next[target] = {
+      itemId: matchingOption.id,
+      frontSheetPrice: next[field].frontSheetPrice,
+      backSheetPrice: next[field].backSheetPrice,
+      boardSheetPrice: typeOf(sourceOption) === "Prelam" ? sourcePrice : undefined,
+    };
+  }
+  return { choices: next, unmatched };
+}
 
 export function MaterialSelection({ options, initial }: { options: Option[]; initial?: KitchenMaterials }) {
   const router = useRouter();
@@ -41,7 +68,7 @@ export function MaterialSelection({ options, initial }: { options: Option[]; ini
   const [handleDefaults, setHandleDefaults] = useState(() => initial?._handleDefaults ?? { Base: "STD" as const, Tall: "STD" as const });
   const normalizeVisible = (zone: ZoneMaterials): ZoneMaterials => {
     const copy = copyZone(zone);
-    if (!options.some((option) => option.id === copy.visible.itemId && option.group === "Shutter Material" && option.thicknessMm === 18)) {
+    if (!options.some((option) => option.id === copy.visible.itemId && option.group === "Shutter Material" && [18, 25].includes(option.thicknessMm ?? 0))) {
       copy.visible.itemId = DEFAULT_IDS.visible;
     }
     return copy;
@@ -63,6 +90,7 @@ export function MaterialSelection({ options, initial }: { options: Option[]; ini
   });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [syncWarning, setSyncWarning] = useState("");
 
   const effective = (zone: KitchenZone, seen = new Set<KitchenZone>()): ZoneMaterials => {
     if (seen.has(zone)) return zones[zone];
@@ -73,11 +101,27 @@ export function MaterialSelection({ options, initial }: { options: Option[]; ini
     return zones[zone];
   };
   const update = (zone: KitchenZone | "All", field: MaterialField, change: Partial<MaterialChoice>) => {
+    const missing = new Set<MaterialField>();
     if (zone === "All") {
-      setAll((old) => ({ ...old, [field]: { ...old[field], ...change } }));
-      setSources(Object.fromEntries(KITCHEN_ZONES.map((current) => [current, "All"])) as Record<KitchenZone, MaterialSource>);
+      const allUpdated = updateMaterialChoices(all, field, change, options);
+      allUpdated.unmatched.forEach((target) => missing.add(target));
+      const snapshots = Object.fromEntries(KITCHEN_ZONES.map((current) => {
+        const updated = updateMaterialChoices(effective(current), field, change, options);
+        updated.unmatched.forEach((target) => missing.add(target));
+        return [current, updated.choices];
+      })) as unknown as KitchenMaterials;
+      setAll(allUpdated.choices);
+      setZones(snapshots);
+      // Material sources apply to whole zones. Snapshotting before this one-field
+      // broadcast keeps unrelated, zone-specific choices intact.
+      setSources(Object.fromEntries(KITCHEN_ZONES.map((current) => [current, "Own"])) as Record<KitchenZone, MaterialSource>);
     }
-    else setZones((old) => ({ ...old, [zone]: { ...old[zone], [field]: { ...old[zone][field], ...change } } }));
+    else {
+      const updated = updateMaterialChoices(zones[zone], field, change, options);
+      updated.unmatched.forEach((target) => missing.add(target));
+      setZones((old) => ({ ...old, [zone]: updated.choices }));
+    }
+    setSyncWarning(missing.size ? `No matching master board for ${[...missing].map((target) => GROUPS[target].label).join(" and ")}. Those selections were left unchanged.` : "");
   };
   const changeSource = (zone: KitchenZone, source: MaterialSource) => {
     if (source !== "Own" && source !== "All" && createsMaterialSourceCycle(zone, source, sources)) {
@@ -96,7 +140,7 @@ export function MaterialSelection({ options, initial }: { options: Option[]; ini
     return <div style={{ display: "grid", gridTemplateColumns: "repeat(5,minmax(225px,1fr))", gap: 12, minWidth: 1185 }}>
       {MATERIAL_FIELDS.map((field) => {
         const meta = GROUPS[field];
-        const available = options.filter((option) => option.group === meta.group && (field !== "visible" || option.thicknessMm === 18));
+        const available = options.filter((option) => option.group === meta.group && (field !== "visible" || [18, 25].includes(option.thicknessMm ?? 0)));
         const selected = choices[field];
         const selectedOption = available.find((option) => option.id === selected.itemId);
         const postlam = selectedOption && typeOf(selectedOption) === "Postlam";
@@ -214,6 +258,7 @@ export function MaterialSelection({ options, initial }: { options: Option[]; ini
         </div>;
       })}
       </section>
+      {syncWarning && <p role="status" style={{ color: "#945615" }}>{syncWarning}</p>}
       {error && <p role="alert" style={{ color: "#a4412e" }}>{error}</p>}
       <button type="button" disabled={busy} onClick={() => void continueToBuilder()} style={{ padding: "11px 18px", border: 0, borderRadius: 6, background: "#15645a", color: "white", font: "inherit", fontWeight: 700, cursor: "pointer" }}>{busy ? "Applying…" : "Continue to Builder →"}</button>
     </div>
