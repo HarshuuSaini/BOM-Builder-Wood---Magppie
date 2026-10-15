@@ -46,6 +46,45 @@ button:disabled {
   opacity: 0.55;
 }
 
+.kitchen-step-nav {
+  display: flex;
+  gap: 14px;
+  padding: 18px 20px 0;
+  border-bottom: 1px solid #d6dfd8;
+  background: #f3f5f3;
+  overflow-x: auto;
+}
+
+.kitchen-step-nav a,
+.kitchen-step-nav button,
+.kitchen-step-nav span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 240px;
+  min-height: 58px;
+  padding: 12px 20px;
+  border: 1px solid #cbdad2;
+  border-bottom: 0;
+  border-radius: 13px 13px 0 0;
+  background: #fff;
+  color: #486257;
+  font-size: 18px;
+  font-weight: 700;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.kitchen-step-nav [aria-current="page"] {
+  background: #17645b;
+  border-color: #17645b;
+  color: #fff;
+}
+
+@media print {
+  .kitchen-step-nav { display: none !important; }
+}
+
 .app-shell {
   min-height: 100vh;
   padding: 18px;

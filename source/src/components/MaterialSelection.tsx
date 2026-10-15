@@ -35,6 +35,10 @@ function typeOf(option: Option) {
 
 export function MaterialSelection({ options, initial }: { options: Option[]; initial?: KitchenMaterials }) {
   const router = useRouter();
+  const [activeSection, setActiveSection] = useState<KitchenZone | "All">("All");
+  const [hingeBrand, setHingeBrand] = useState(() => initial?._hingeChoice?.split(" ")[0] ?? "Hettich");
+  const [hingeType, setHingeType] = useState(() => initial?._hingeChoice?.endsWith("Non Soft Close") ? "Non Soft Close" : "Soft Close");
+  const [handleDefaults, setHandleDefaults] = useState(() => initial?._handleDefaults ?? { Base: "STD" as const, Tall: "STD" as const });
   const normalizeVisible = (zone: ZoneMaterials): ZoneMaterials => {
     const copy = copyZone(zone);
     if (!options.some((option) => option.id === copy.visible.itemId && option.group === "Shutter Material" && option.thicknessMm === 18)) {
@@ -69,7 +73,10 @@ export function MaterialSelection({ options, initial }: { options: Option[]; ini
     return zones[zone];
   };
   const update = (zone: KitchenZone | "All", field: MaterialField, change: Partial<MaterialChoice>) => {
-    if (zone === "All") setAll((old) => ({ ...old, [field]: { ...old[field], ...change } }));
+    if (zone === "All") {
+      setAll((old) => ({ ...old, [field]: { ...old[field], ...change } }));
+      setSources(Object.fromEntries(KITCHEN_ZONES.map((current) => [current, "All"])) as Record<KitchenZone, MaterialSource>);
+    }
     else setZones((old) => ({ ...old, [zone]: { ...old[zone], [field]: { ...old[zone][field], ...change } } }));
   };
   const changeSource = (zone: KitchenZone, source: MaterialSource) => {
@@ -130,6 +137,8 @@ export function MaterialSelection({ options, initial }: { options: Option[]; ini
     try {
       const selected = Object.fromEntries(KITCHEN_ZONES.map((zone) => [zone, copyZone(effective(zone))])) as unknown as KitchenMaterials;
       selected._sources = { ...sources };
+      selected._hingeChoice = `${hingeBrand} ${hingeType}`;
+      selected._handleDefaults = { ...handleDefaults };
       const response = await fetch("/api/kitchen-materials", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(selected) });
       if (!response.ok) {
         const result = await response.json().catch(() => ({}));
@@ -137,7 +146,6 @@ export function MaterialSelection({ options, initial }: { options: Option[]; ini
         return;
       }
       router.push("/builder");
-      router.refresh();
     } catch { setError("Could not reach the server."); }
     finally { setBusy(false); }
   }
@@ -149,13 +157,48 @@ export function MaterialSelection({ options, initial }: { options: Option[]; ini
           <p style={{ margin: 0, color: "#607168" }}>Choose the materials for this kitchen before opening the Builder. These choices are not added to the admin master.</p></div>
         <UserSignOut />
       </header>
+      <nav className="kitchen-step-nav" aria-label="Kitchen setup steps" style={{ marginBottom: 15, paddingLeft: 0 }}>
+        <span aria-current="page">1 · Material selection</span>
+        <button type="button" disabled={busy} onClick={() => void continueToBuilder()}>2 · Builder configuration</button>
+      </nav>
       <section style={{ background: "#fff", border: "1px solid #d6dfd8", borderRadius: 8, padding: 16, marginBottom: 15 }}>
-        <h2 style={{ fontSize: 18, margin: "0 0 12px" }}>All cabinets</h2>
-        <div style={{ overflowX: "auto" }}>{materialCards("All", all, false)}</div>
+        <h2 style={{ fontSize: 18, margin: "0 0 5px" }}>Hinges for this kitchen</h2>
+        <p style={{ color: "#607168", margin: "0 0 13px" }}>Choose the brand and type once. These apply across this kitchen.</p>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: 12 }}>
+          <label style={{ display: "grid", gap: 5 }}>Hinge brand
+            <select value={hingeBrand} onChange={(event) => setHingeBrand(event.target.value)} style={fieldStyle}>
+              {["Hettich", "Hafele", "Blum", "Magppie"].map((brand) => <option key={brand} value={brand}>{brand}</option>)}
+            </select>
+          </label>
+          <label style={{ display: "grid", gap: 5 }}>Hinge type
+            <select value={hingeType} onChange={(event) => setHingeType(event.target.value)} style={fieldStyle}>
+              <option value="Soft Close">Soft Close</option><option value="Non Soft Close">Non Soft Close</option>
+            </select>
+          </label>
+        </div>
       </section>
-      {KITCHEN_ZONES.map((zone) => {
+      <section style={{ background: "#fff", border: "1px solid #d6dfd8", borderRadius: 8, padding: 16, marginBottom: 15 }}>
+        <h2 style={{ fontSize: 18, margin: "0 0 5px" }}>Handle / profile defaults</h2>
+        <p style={{ color: "#607168", margin: "0 0 13px" }}>Base and tall start with your chosen handle. Wall, loft and middle stay Standard.</p>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: 12 }}>
+          {(["Base", "Tall"] as const).map((zone) => <label key={zone} style={{ display: "grid", gap: 5 }}>{zone} cabinets
+            <select value={handleDefaults[zone]} onChange={(event) => setHandleDefaults((old) => ({ ...old, [zone]: event.target.value as "STD" | "XCJ" }))} style={fieldStyle}>
+              <option value="STD">Standard</option><option value="XCJ">Gola / CJ</option>
+            </select>
+          </label>)}
+          <div style={{ display: "grid", gap: 5 }}>Wall · Loft · Middle<div style={{ ...fieldStyle, background: "#f2f5f2" }}>Standard</div></div>
+        </div>
+      </section>
+      <section style={{ background: "#fff", border: "1px solid #d6dfd8", borderRadius: 8, padding: 16, marginBottom: 15 }}>
+        <h2 style={{ fontSize: 18, margin: "0 0 12px" }}>Material groups</h2>
+        <div role="tablist" aria-label="Cabinet material groups" style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 15 }}>
+          {(["All", ...KITCHEN_ZONES] as const).map((section) => <button key={section} type="button" role="tab" aria-selected={activeSection === section}
+            onClick={() => setActiveSection(section)} style={{ padding: "9px 14px", border: "1px solid #cbd8d0", borderRadius: 30, background: activeSection === section ? "#17645b" : "white", color: activeSection === section ? "white" : "#496157", cursor: "pointer" }}>{section === "All" ? "All cabinets" : section}</button>)}
+        </div>
+        {activeSection === "All" && <div style={{ overflowX: "auto" }}>{materialCards("All", all, false)}</div>}
+      {KITCHEN_ZONES.filter((zone) => zone === activeSection).map((zone) => {
         const inherited = sources[zone] !== "Own";
-        return <section key={zone} style={{ background: inherited ? "#f9fbf9" : "#fff", border: "1px solid #d6dfd8", borderRadius: 8, padding: 16, marginBottom: 15 }}>
+        return <div key={zone} style={{ background: inherited ? "#f9fbf9" : "#fff" }}>
           <header style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "center", flexWrap: "wrap", marginBottom: 12 }}>
             <h2 style={{ fontSize: 18, margin: 0 }}>{zone} cabinets</h2>
             <label style={{ display: "flex", alignItems: "center", gap: 8 }}>Materials from
@@ -168,8 +211,9 @@ export function MaterialSelection({ options, initial }: { options: Option[]; ini
             </label>
           </header>
           <div style={{ overflowX: "auto" }}>{materialCards(zone, effective(zone), inherited)}</div>
-        </section>;
+        </div>;
       })}
+      </section>
       {error && <p role="alert" style={{ color: "#a4412e" }}>{error}</p>}
       <button type="button" disabled={busy} onClick={() => void continueToBuilder()} style={{ padding: "11px 18px", border: 0, borderRadius: 6, background: "#15645a", color: "white", font: "inherit", fontWeight: 700, cursor: "pointer" }}>{busy ? "Applying…" : "Continue to Builder →"}</button>
     </div>

@@ -53,6 +53,8 @@ export function selectedBoardRate(item: { id: string; type: string; currentRate:
 export type ZoneMaterials = Record<MaterialField, MaterialChoice>;
 export type KitchenMaterials = Record<KitchenZone, ZoneMaterials> & {
   _sources?: Partial<Record<KitchenZone, MaterialSource>>;
+  _hingeChoice?: string;
+  _handleDefaults?: { Base: "STD" | "XCJ"; Tall: "STD" | "XCJ" };
 };
 
 export function kitchenZoneForCode(code: string, family?: string): KitchenZone {

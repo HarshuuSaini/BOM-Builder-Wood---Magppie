@@ -1989,6 +1989,7 @@ type ProjectRestore = {
 };
 
 const PROJECT_FILE_FORMAT = "wood-bom-project";
+const MATERIAL_EDIT_DRAFT_KEY = "wood-bom-material-edit-draft";
 const isRecord = (value: unknown): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value);
 
 function cabinetConfig(model: CarcassModel): CabinetConfig {
@@ -2066,6 +2067,7 @@ function cabinetConfigWithSelectedMaterials(value: unknown, materials: KitchenMa
     drawerBoardId: selected.drawer.itemId,
     shType: selected.shutter.itemId,
     visibleSideMaterialId: selected.visible.itemId,
+    hingeChoice: (materials._hingeChoice ?? value.hingeChoice) as HingeChoice,
     carcassLamFrontSheetPrice: selected.carcass.frontSheetPrice,
     carcassLamBackSheetPrice: selected.carcass.backSheetPrice,
     backLamFrontSheetPrice: selected.back.frontSheetPrice,
@@ -2724,7 +2726,7 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
   const [fk, setFk] = useState("SH");
   const [vid, setVid] = useState("single");
   const [hand, setHand] = useState("LHS");
-  const [handle, setHandle] = useState("STD");
+  const [handle, setHandle] = useState<string>(materials?._handleDefaults?.Base ?? "STD");
   const [boardPrices, setBoardPrices] = useState<BoardPriceOverrides>(() => boardPricesFromMaterials(materials?.Base));
   const [board, setBoard] = useState(materials?.Base.carcass.itemId ?? DEFAULT_BOARD_ID);
   const [backBoardId, setBackBoardId] = useState(materials?.Base.back.itemId ?? DEFAULT_BACK_ID);
@@ -2743,7 +2745,7 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
   const [shutterLamFrontSheetPrice, setShutterLamFrontSheetPrice] = useState(materials?.Base.shutter.frontSheetPrice ?? DEFAULT_LAMINATE_PRICES.shutterLamFrontSheetPrice);
   const [shutterLamBackSheetPrice, setShutterLamBackSheetPrice] = useState(materials?.Base.shutter.backSheetPrice ?? DEFAULT_LAMINATE_PRICES.shutterLamBackSheetPrice);
   const [glassType, setGlassType] = useState(DEFAULT_GLASS_TYPE);
-  const [hingeChoice, setHingeChoice] = useState<HingeChoice>("Hettich Soft Close");
+  const [hingeChoice, setHingeChoice] = useState<HingeChoice>((materials?._hingeChoice as HingeChoice | undefined) ?? "Hettich Soft Close");
   const [neon] = useState("NEON50");
   const [hingeLocked, setHingeLocked] = useState(false);
   const [drawerModel, setDrawerModel] = useState("Hettich");
@@ -2857,6 +2859,7 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
 
   const onZone = useCallback((z: string) => {
     setZk(z);
+    setHandle(kitchenZoneForCode(z) === "Tall" ? materials?._handleDefaults?.Tall ?? "STD" : kitchenZoneForCode(z) === "Base" ? materials?._handleDefaults?.Base ?? "STD" : "STD");
     setShelfOverride(null);
     const f = Object.keys(famSetOf(z))[0];
     applyMaterialChoices(materials?.[kitchenZoneForCode(z, f)] ?? materials?.Base);
@@ -2868,6 +2871,7 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
 
   const onFam = useCallback((f: string) => {
     const nextMaterialZone = kitchenZoneForCode(zk, f);
+    setHandle(nextMaterialZone === "Tall" ? materials?._handleDefaults?.Tall ?? "STD" : nextMaterialZone === "Base" || nextMaterialZone === "Sink" ? materials?._handleDefaults?.Base ?? "STD" : "STD");
     if (nextMaterialZone !== kitchenZoneForCode(zk, fkSafe)) {
       applyMaterialChoices(materials?.[nextMaterialZone] ?? materials?.Base);
     }
@@ -3002,6 +3006,39 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
     waste, pricing: projectPricingInputs, rawSelections,
     current: W > 0 && H > 0 && D > 0 ? { config: cabinetConfig(m), elevation, qty } : undefined,
   }), [project, fillers, visiblePanels, countertops, accessories, masterAccessories, waste, projectPricingInputs, rawSelections, W, H, D, m, elevation, qty]);
+  useEffect(() => {
+    const saved = window.sessionStorage.getItem(MATERIAL_EDIT_DRAFT_KEY);
+    if (!saved || !materials) return;
+    try {
+      const draft = JSON.parse(saved) as { rows?: ProjectSetupRow[]; editingLineIndex?: number; boardSheetInputs?: Record<string, string> };
+      if (!Array.isArray(draft.rows)) throw new Error("Saved kitchen is incomplete.");
+      const restored = restoreProjectSetup(draft.rows, materials);
+      setProject(restored.project);
+      setFillers(restored.fillers); setVisiblePanels(restored.visiblePanels);
+      setCountertops(restored.countertops); setAccessories(restored.accessories);
+      setMasterAccessories(restored.masterAccessories);
+      setWaste(restored.waste); setProjectPricingInputs(restored.pricing);
+      setBoardSheetInputs(draft.boardSheetInputs ?? {});
+      setRawMap(Object.fromEntries(restored.rawSelections.map((selection) => [selection.key, {
+        loading: false, error: "", sel: selection.id,
+        items: [{ item_id: selection.id, name: selection.name, sku: selection.sku, stock_on_hand: selection.stock_on_hand }],
+      }])));
+      if (restored.current) {
+        loadConfig(restored.current.config);
+        setElevation(restored.current.elevation); setQty(restored.current.qty);
+      }
+      setEditingLineId(typeof draft.editingLineIndex === "number" ? restored.project[draft.editingLineIndex]?.id ?? null : null);
+      setHingeLocked(restored.project.some((line) => !famSetOf(line.m.zk)[line.m.fk]?.drawers || !!famSetOf(line.m.zk)[line.m.fk]?.fixedDpn));
+      setDrawerLocked(restored.project.some((line) => !!famSetOf(line.m.zk)[line.m.fk]?.drawers));
+      setImportMessage("Kitchen preserved. Updated material selections and laminate prices have been applied to the existing cabinets.");
+    } catch (error) {
+      setImportError(error instanceof Error ? error.message : "Could not restore the kitchen after editing materials.");
+    } finally {
+      window.sessionStorage.removeItem(MATERIAL_EDIT_DRAFT_KEY);
+    }
+  // Run once when returning from Material Selection; the draft is removed after restoration.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [materials]);
   const printRestoreLines = useMemo(() => encodeProjectPrintData(projectSetup), [projectSetup]);
   const processingBoards = useMemo(() => usedProcessingBoards(project), [project]);
   const processingTypes = useMemo(() => usedProcessingTypes(processingBoards), [processingBoards]);
@@ -3267,9 +3304,6 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
           </p>
         </div>
         <div className="hd-actions">
-          <a href="/materials" onClick={(event) => {
-            if (project.length > 0 && !window.confirm("Changing kitchen materials will leave this unsaved Builder project. Continue?")) event.preventDefault();
-          }}>Kitchen materials</a>
           <UserSignOut hasUnsavedWork={project.length > 0} />
           <input ref={pdfImportRef} type="file" accept=".pdf,application/pdf" aria-label="Import printed project PDF" style={{ display: "none" }} onChange={(event) => {
             const file = event.target.files?.[0];
@@ -3290,6 +3324,17 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
           <span>sheets<b>{boardTotals.reduce((a, b) => a + (b.sheets ?? 0), 0).toFixed(2)}</b></span>
         </div>
       </header>
+      <nav className="kitchen-step-nav" aria-label="Kitchen setup steps">
+        <a href="/materials" onClick={(event) => {
+          try {
+            window.sessionStorage.setItem(MATERIAL_EDIT_DRAFT_KEY, JSON.stringify({ rows: projectSetup, editingLineIndex: project.findIndex((line) => line.id === editingLineId), boardSheetInputs }));
+          } catch {
+            event.preventDefault();
+            setImportError("This kitchen could not be saved temporarily. Export the Project JSON before changing materials.");
+          }
+        }}>1 · Material selection</a>
+        <span aria-current="page">2 · Builder configuration</span>
+      </nav>
       {importError && <p className="header-import-error" role="alert">{importError}</p>}
       {importMessage && <p className="header-import-success" role="status">{importMessage}</p>}
 

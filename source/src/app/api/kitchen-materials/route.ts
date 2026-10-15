@@ -24,6 +24,14 @@ export async function POST(request: Request) {
   try { value = JSON.parse(raw); } catch { return NextResponse.json({ error: "Invalid JSON." }, { status: 400 }); }
   if (!value || typeof value !== "object" || Array.isArray(value)) return NextResponse.json({ error: "Invalid materials." }, { status: 400 });
   const materials = value as KitchenMaterials;
+  if (materials._hingeChoice !== undefined && !["Hettich", "Hafele", "Blum", "Magppie"].some((brand) =>
+    ["Soft Close", "Non Soft Close"].some((type) => materials._hingeChoice === `${brand} ${type}`))) {
+    return NextResponse.json({ error: "Invalid kitchen hinge choice." }, { status: 400 });
+  }
+  if (materials._handleDefaults !== undefined && (!materials._handleDefaults ||
+    ![materials._handleDefaults.Base, materials._handleDefaults.Tall].every((choice) => choice === "STD" || choice === "XCJ"))) {
+    return NextResponse.json({ error: "Invalid handle defaults." }, { status: 400 });
+  }
   for (const zone of KITCHEN_ZONES) {
     if (!materials[zone] || typeof materials[zone] !== "object") return NextResponse.json({ error: `Missing ${zone} materials.` }, { status: 400 });
     for (const field of MATERIAL_FIELDS) {
