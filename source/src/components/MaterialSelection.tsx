@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { UserSignOut } from "@/components/UserSignOut";
-import { KITCHEN_ZONES, DEFAULT_MATERIAL_SOURCES, MATERIAL_FIELDS, createsMaterialSourceCycle, type KitchenMaterials, type KitchenZone, type MaterialSource, type MaterialChoice, type MaterialField, type ZoneMaterials } from "@/lib/kitchen-materials";
+import { KITCHEN_ZONES, HANDLE_ZONES, DEFAULT_MATERIAL_SOURCES, MATERIAL_FIELDS, createsMaterialSourceCycle, handleSettingFor, type HandleSetting, type HandleZone, type KitchenMaterials, type KitchenZone, type MaterialSource, type MaterialChoice, type MaterialField, type ZoneMaterials } from "@/lib/kitchen-materials";
 
 type Option = { id: string; group: string; subgroup: string; thicknessMm: number | null; type: string; boardSheetPrice: string };
 const GROUPS: Record<MaterialField, { label: string; group: string }> = {
@@ -65,7 +65,8 @@ export function MaterialSelection({ options, initial }: { options: Option[]; ini
   const [activeSection, setActiveSection] = useState<KitchenZone | "All">("All");
   const [hingeBrand, setHingeBrand] = useState(() => initial?._hingeChoice?.split(" ")[0] ?? "Hettich");
   const [hingeType, setHingeType] = useState(() => initial?._hingeChoice?.endsWith("Non Soft Close") ? "Non Soft Close" : "Soft Close");
-  const [handleDefaults, setHandleDefaults] = useState(() => initial?._handleDefaults ?? { Base: "STD" as const, Tall: "STD" as const });
+  const [handleDefaults, setHandleDefaults] = useState<Record<HandleZone, HandleSetting>>(() =>
+    Object.fromEntries(HANDLE_ZONES.map((zone) => [zone, handleSettingFor(initial, zone)])) as Record<HandleZone, HandleSetting>);
   const normalizeVisible = (zone: ZoneMaterials): ZoneMaterials => {
     const copy = copyZone(zone);
     if (!options.some((option) => option.id === copy.visible.itemId && option.group === "Shutter Material" && [18, 25].includes(option.thicknessMm ?? 0))) {
@@ -223,14 +224,23 @@ export function MaterialSelection({ options, initial }: { options: Option[]; ini
       </section>
       <section style={{ background: "#fff", border: "1px solid #d6dfd8", borderRadius: 8, padding: 16, marginBottom: 15 }}>
         <h2 style={{ fontSize: 18, margin: "0 0 5px" }}>Handle / profile defaults</h2>
-        <p style={{ color: "#607168", margin: "0 0 13px" }}>Base and tall start with your chosen handle. Wall, loft and middle stay Standard.</p>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: 12 }}>
-          {(["Base", "Tall"] as const).map((zone) => <label key={zone} style={{ display: "grid", gap: 5 }}>{zone} cabinets
-            <select value={handleDefaults[zone]} onChange={(event) => setHandleDefaults((old) => ({ ...old, [zone]: event.target.value as "STD" | "XCJ" }))} style={fieldStyle}>
-              <option value="STD">Standard</option><option value="XCJ">Gola / CJ</option>
-            </select>
-          </label>)}
-          <div style={{ display: "grid", gap: 5 }}>Wall · Loft · Middle<div style={{ ...fieldStyle, background: "#f2f5f2" }}>Standard</div></div>
+        <p style={{ color: "#607168", margin: "0 0 13px" }}>Choose a default per zone. Sink follows Base; Middle follows Wall. You can change a cabinet later.</p>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(235px,1fr))", gap: 12 }}>
+          {HANDLE_ZONES.map((zone) => <div key={zone} style={{ display: "grid", alignContent: "start", gap: 10, border: "1px solid #dae2dc", borderRadius: 7, padding: 12 }}>
+            <label style={{ display: "grid", gap: 5 }}>{zone} cabinets · handle
+              <select value={handleDefaults[zone].type} onChange={(event) => setHandleDefaults((old) => ({ ...old, [zone]: { ...old[zone], type: event.target.value as HandleSetting["type"] } }))} style={fieldStyle}>
+                <option value="XCJ">C/J/G Gola</option><option value="PUSH">Push to Open</option><option value="KNOB">Knob</option><option value="HANDLE">Handle</option><option value="NONE">No Handle</option>
+              </select>
+            </label>
+            {(["PUSH", "KNOB", "HANDLE"] as string[]).includes(handleDefaults[zone].type) && <label style={{ display: "grid", gap: 5 }}>Price · ₹ / piece
+              <input type="number" min="0" step="0.01" value={handleDefaults[zone].price} onChange={(event) => setHandleDefaults((old) => ({ ...old, [zone]: { ...old[zone], price: event.target.value } }))} style={fieldStyle} />
+            </label>}
+            {handleDefaults[zone].type === "PUSH" && <label style={{ display: "grid", gap: 5 }}>Push to Open brand
+              <select value={handleDefaults[zone].brand || "Hettich"} onChange={(event) => setHandleDefaults((old) => ({ ...old, [zone]: { ...old[zone], brand: event.target.value } }))} style={fieldStyle}>
+                {["Hettich", "Hafele", "Blum", "Magppie"].map((brand) => <option key={brand} value={brand}>{brand}</option>)}
+              </select>
+            </label>}
+          </div>)}
         </div>
       </section>
       <section style={{ background: "#fff", border: "1px solid #d6dfd8", borderRadius: 8, padding: 16, marginBottom: 15 }}>

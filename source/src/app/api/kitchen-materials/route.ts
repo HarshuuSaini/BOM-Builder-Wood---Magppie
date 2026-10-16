@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { COSTING_ITEMS } from "@/lib/costing";
 import { currentUser, userSession, setSessionMaterials } from "@/lib/user-session";
-import { KITCHEN_ZONES, MATERIAL_FIELDS, createsMaterialSourceCycle, validBoardSheetPrice, type KitchenMaterials, type MaterialField, type MaterialSource } from "@/lib/kitchen-materials";
+import { KITCHEN_ZONES, HANDLE_ZONES, HANDLE_TYPES, MATERIAL_FIELDS, createsMaterialSourceCycle, validBoardSheetPrice, type KitchenMaterials, type MaterialField, type MaterialSource } from "@/lib/kitchen-materials";
 
 const GROUP: Record<MaterialField, string> = {
   carcass: "Carcass/ Shelf Material", back: "Carcass Back Material", drawer: "Drawer Material",
@@ -29,7 +29,13 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid kitchen hinge choice." }, { status: 400 });
   }
   if (materials._handleDefaults !== undefined && (!materials._handleDefaults ||
-    ![materials._handleDefaults.Base, materials._handleDefaults.Tall].every((choice) => choice === "STD" || choice === "XCJ"))) {
+    !HANDLE_ZONES.every((zone) => {
+      const choice = materials._handleDefaults?.[zone];
+      if (choice === "STD" || choice === "XCJ") return true; // older saved selections
+      return !!choice && typeof choice === "object" && HANDLE_TYPES.includes(choice.type) &&
+        typeof choice.price === "string" && (choice.price === "" || /^(?:\d{1,7})(?:\.\d{1,2})?$/.test(choice.price)) &&
+        typeof choice.brand === "string" && (choice.type !== "PUSH" || ["", "Hettich", "Hafele", "Blum", "Magppie"].includes(choice.brand));
+    }))) {
     return NextResponse.json({ error: "Invalid handle defaults." }, { status: 400 });
   }
   for (const zone of KITCHEN_ZONES) {

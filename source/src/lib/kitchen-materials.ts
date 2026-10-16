@@ -51,10 +51,26 @@ export function selectedBoardRate(item: { id: string; type: string; currentRate:
 }
 
 export type ZoneMaterials = Record<MaterialField, MaterialChoice>;
+export const HANDLE_ZONES = ["Base", "Wall", "Tall", "Loft"] as const;
+export type HandleZone = (typeof HANDLE_ZONES)[number];
+export const HANDLE_TYPES = ["XCJ", "PUSH", "KNOB", "HANDLE", "NONE"] as const;
+export type HandleType = (typeof HANDLE_TYPES)[number];
+export type HandleSetting = { type: HandleType; price: string; brand: string };
+export type HandleDefaults = Partial<Record<HandleZone, HandleSetting | "STD" | "XCJ">>;
+export function handleZoneForCode(code: string, family?: string): HandleZone {
+  if (HANDLE_ZONES.includes(code as HandleZone)) return code as HandleZone;
+  const zone = kitchenZoneForCode(code, family);
+  return zone === "Sink" ? "Base" : zone === "Mid" ? "Wall" : zone;
+}
+export function handleSettingFor(materials: KitchenMaterials | undefined, code: string, family?: string): HandleSetting {
+  const saved = materials?._handleDefaults?.[handleZoneForCode(code, family)];
+  if (typeof saved === "string") return { type: saved === "XCJ" ? "XCJ" : "NONE", price: "", brand: "" };
+  return saved ?? { type: "NONE", price: "", brand: "" };
+}
 export type KitchenMaterials = Record<KitchenZone, ZoneMaterials> & {
   _sources?: Partial<Record<KitchenZone, MaterialSource>>;
   _hingeChoice?: string;
-  _handleDefaults?: { Base: "STD" | "XCJ"; Tall: "STD" | "XCJ" };
+  _handleDefaults?: HandleDefaults;
 };
 
 export function kitchenZoneForCode(code: string, family?: string): KitchenZone {
