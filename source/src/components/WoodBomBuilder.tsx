@@ -1837,10 +1837,10 @@ function selectedDriver(value: string): CostingMasterItem | undefined {
 }
 const SKIRT_WASTE = 0.10;
 
-/** Default skirting run: sum of leg-mounted project line widths, metres. */
+/** Default skirting run: base and tall cabinet widths, metres. */
 function defSkirtMeters(project: ProjectLine[]): number {
   const mm = project.reduce((a, l) =>
-    a + (FILLER_ZKS.base.includes(l.m.zk) ? l.m.W * l.qty : 0), 0);
+    a + (FILLER_ZKS.base.includes(l.m.zk) || FILLER_ZKS.tall.includes(l.m.zk) ? l.m.W * l.qty : 0), 0);
   return r3(mm / 1000);
 }
 
@@ -1850,7 +1850,8 @@ function calculatedAccessories(project: ProjectLine[], fillers: FillerRow[]): Ac
   return elevations.flatMap((elevation, index) => {
     const zoneLines = project.filter((line) => line.elevation === elevation);
     const zoneFillers = fillers.filter((filler) => filler.elevation === elevation);
-    const baseWidths = zoneLines.reduce((total, line) => total + (FILLER_ZKS.base.includes(line.m.zk) ? line.m.W * line.qty : 0), 0);
+    const skirtingCabinetWidths = zoneLines.reduce((total, line) => total +
+      (FILLER_ZKS.base.includes(line.m.zk) || FILLER_ZKS.tall.includes(line.m.zk) ? line.m.W * line.qty : 0), 0);
     const wallWidths = zoneLines.reduce((total, line) => total + (FILLER_ZKS.wall.includes(line.m.zk) ? line.m.W * line.qty : 0), 0);
     const extraSkirting = zoneFillers.reduce((total, filler) => total +
       ((filler.linkedLineId !== undefined && filler.zone === "base") || filler.fillerType === "dishwasher-panel" ? panelWidth(filler) : 0), 0);
@@ -1859,7 +1860,7 @@ function calculatedAccessories(project: ProjectLine[], fillers: FillerRow[]): Ac
       id: -1000 - index * 2 - offset, kind, size: (millimetres / 1000).toFixed(3), qty: 1,
       elevation, straight: 0, lconn: 0, driver: "",
     });
-    return [row("skirting", 1, baseWidths + extraSkirting), row("elenor", 2, Math.max(0, wallWidths - chimneyWidth))]
+    return [row("skirting", 1, skirtingCabinetWidths + extraSkirting), row("elenor", 2, Math.max(0, wallWidths - chimneyWidth))]
       .filter((item) => Number(item.size) > 0);
   });
 }
@@ -3873,7 +3874,7 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
 
               {/* ---- Other Accessories ---- */}
               <SecHead title="Other Accessories" onAdd={addAcc} />
-              <p className="hint">PVC skirting uses base cabinet widths plus linked base fillers and dishwasher panels. LED profile light uses wall cabinet widths minus chimney panels. Manual rows of the same type override the calculated length.</p>
+              <p className="hint">PVC skirting uses base and tall cabinet widths plus linked base fillers and dishwasher panels. LED profile light uses wall cabinet widths minus chimney panels. Manual rows of the same type override the calculated length.</p>
               {automaticAccessories.length > 0 && <Tbl head={["Calculated accessory", "Elevation", "Total cut length (m)", "Source"]} num={[2]}
                 rows={automaticAccessories.map((item) => [ACC_LABEL[item.kind], item.elevation || "—", accessoryMeters(item).toFixed(3),
                   accessories.some((manual) => manual.kind === item.kind && (!manual.elevation || manual.elevation === item.elevation))
