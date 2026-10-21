@@ -3481,6 +3481,7 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
     setSelectedProjectLineIds([]);
   };
   const matchingCabinetCodes = new Set(filteredProjectLines.map((line) => line.m.code));
+  const showFillerDepth = [...linkedFillers, ...fillers].some((row) => row.fillerType === "cover-panel");
   const shownFillers = useMemo(() => activeElevation === null ? allFillers : allFillers.filter((line) => line.elevation === activeElevation), [allFillers, activeElevation]);
   const shownVisiblePanels = useMemo(() => activeElevation === null ? visiblePanels : visiblePanels.filter((line) => line.elevation === activeElevation), [visiblePanels, activeElevation]);
   const shownAccessories = useMemo(() => activeElevation === null ? allAccessories : allAccessories.filter((line) => line.elevation === activeElevation), [allAccessories, activeElevation]);
@@ -3966,45 +3967,43 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
 
               {/* ---- Fillers ---- */}
               <SecHead title="Filler / Other Panels" onAdd={addFiller} />
-              {linkedFillers.length > 0 && <>
-                <p className="hint">Cabinet fillers start with cabinet dimensions. Edit them here for this project, or reset to the cabinet defaults.</p>
-                <Tbl head={["Use", "Cabinet", "Type", "Qty", "Shade", "Width (mm)", "Height (mm)", ...(linkedFillers.some((row) => row.fillerType === "cover-panel") ? ["Depth (mm)"] : []), "Elevation", ""]} num={[3]}
-                  rows={linkedFillers.map((filler) => {
-                    const line = project.find((candidate) => candidate.id === filler.linkedLineId);
+              <p className="hint">Cabinet fillers start with cabinet dimensions. Edit them here for this project; Remove excludes a suggested filler, and Reset restores its cabinet defaults.</p>
+              {linkedFillers.length === 0 && fillers.length === 0 ? <div className="empty">No fillers or other panels. Add a row to include one.</div> :
+                <Tbl head={["Type", "Qty", "Shade", "Width (mm)", "Height (mm)", ...(showFillerDepth ? ["Depth (mm)"] : []), "Elevation", ""]} num={[1]}
+                  rows={[
+                    ...linkedFillers.map((filler) => {
                     const changed = linkedFillerEdits.some((edit) => edit.linkedLineId === filler.linkedLineId);
+                    const disabled = !!filler.disabled;
                     return [
-                      <input key="use" type="checkbox" aria-label={`Include filler for ${line?.m.code ?? "cabinet"}`} checked={!filler.disabled}
-                        onChange={(event) => updLinkedFiller(filler, { disabled: !event.target.checked })} />,
-                      line?.m.code ?? "—",
-                      <select key="type" aria-label={`Filler type for ${line?.m.code ?? "cabinet"}`} value={filler.fillerType ?? "filler"}
+                      <select key="type" aria-label="Suggested filler type" disabled={disabled} value={filler.fillerType ?? "filler"}
                         onChange={(event) => {
                           const fillerType = event.target.value as FillerRow["fillerType"];
                           updLinkedFiller(filler, { fillerType, zone: fillerType === "chimney-panel" ? "wall" : fillerType === "dishwasher-panel" ? "base" : cabinetFillers(project).find((row) => row.linkedLineId === filler.linkedLineId)?.zone ?? filler.zone });
                         }}>
                         {FILLER_TYPES.map((type) => <option key={type.value} value={type.value}>{type.label}</option>)}
                       </select>,
-                      <input key="qty" type="number" min={1} step={1} aria-label={`Filler quantity for ${line?.m.code ?? "cabinet"}`} value={filler.qty}
+                      <input key="qty" type="number" min={1} step={1} disabled={disabled} aria-label="Suggested filler quantity" value={filler.qty}
                         onChange={(event) => updLinkedFiller(filler, { qty: Math.max(1, Math.trunc(Number(event.target.value) || 1)) })} style={{ width: 60 }} />,
-                      <select key="shade" aria-label={`Filler shade for ${line?.m.code ?? "cabinet"}`} value={filler.customShade}
+                      <select key="shade" aria-label="Suggested filler shade" disabled={disabled} value={filler.customShade}
                         onChange={(event) => updLinkedFiller(filler, { customShade: event.target.value })}>
                         {(boardFinishesData as string[]).map((shade) => <option key={shade}>{shade}</option>)}
                       </select>,
-                      <input key="width" type="number" min={1} aria-label={`Filler width for ${line?.m.code ?? "cabinet"}`} value={filler.customWidth}
+                      <input key="width" type="number" min={1} disabled={disabled} aria-label="Suggested filler width" value={filler.customWidth}
                         onChange={(event) => updLinkedFiller(filler, { customWidth: event.target.value })} style={{ width: 84 }} />,
-                      <input key="height" type="number" min={1} aria-label={`Filler height for ${line?.m.code ?? "cabinet"}`} value={filler.customHeight}
+                      <input key="height" type="number" min={1} disabled={disabled} aria-label="Suggested filler height" value={filler.customHeight}
                         onChange={(event) => updLinkedFiller(filler, { customHeight: event.target.value })} style={{ width: 84 }} />,
-                      ...(linkedFillers.some((row) => row.fillerType === "cover-panel") ? [filler.fillerType === "cover-panel" ?
-                        <input key="depth" type="number" min={1} aria-label={`Filler depth for ${line?.m.code ?? "cabinet"}`} value={filler.customDepth ?? ""}
+                      ...(showFillerDepth ? [filler.fillerType === "cover-panel" ?
+                        <input key="depth" type="number" min={1} disabled={disabled} aria-label="Suggested filler depth" value={filler.customDepth ?? ""}
                           onChange={(event) => updLinkedFiller(filler, { customDepth: event.target.value })} style={{ width: 84 }} /> : null] : []),
-                      <input key="elevation" list="elev-list" aria-label={`Filler elevation for ${line?.m.code ?? "cabinet"}`} value={filler.elevation}
+                      <input key="elevation" list="elev-list" disabled={disabled} aria-label="Suggested filler elevation" value={filler.elevation}
                         onChange={(event) => updLinkedFiller(filler, { elevation: event.target.value })} style={{ width: 65 }} />,
-                      changed ? <button key="reset" type="button" onClick={() => resetLinkedFiller(filler)}>Reset</button> : "—",
+                      <div key="actions" style={{ display: "flex", gap: 6 }}>
+                        <button type="button" onClick={() => updLinkedFiller(filler, { disabled: !disabled })}>{disabled ? "Restore" : "Remove"}</button>
+                        {changed && <button type="button" onClick={() => resetLinkedFiller(filler)}>Reset</button>}
+                      </div>,
                     ];
-                  })} />
-              </>}
-              {fillers.length === 0 ? <div className="empty">No additional stand-alone fillers. A filler is a shutter-type panel with {BAND_T}mm band — default width {FILLER_DEF_W}mm.</div> :
-                <Tbl head={["Type", "Qty", "Shade", "Width (mm)", "Height (mm)", ...(fillers.some((f) => f.fillerType === "cover-panel") ? ["Depth (mm)"] : []), "Elevation", ""]} num={[1]}
-                  rows={fillers.map((f) => [
+                  }),
+                    ...fillers.map((f) => [
                     <select key="t" value={f.fillerType ?? "filler"} onChange={(e) => {
                       const fillerType = e.target.value as FillerRow["fillerType"];
                       updFiller(f.id, { fillerType, zone: fillerType === "chimney-panel" ? "wall" : fillerType === "dishwasher-panel" ? "base" : f.zone });
@@ -4019,12 +4018,13 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
                       onChange={(e) => updFiller(f.id, { customWidth: e.target.value })} style={{ width: 80 }} />,
                     <input key="h" type="number" placeholder={String(defFillerH(f.zone, project))} value={f.customHeight}
                       onChange={(e) => updFiller(f.id, { customHeight: e.target.value })} style={{ width: 80 }} />,
-                    ...(fillers.some((row) => row.fillerType === "cover-panel") ? [f.fillerType === "cover-panel" ? <input key="d" type="number" min={1} aria-label="Cover panel depth in mm"
+                    ...(showFillerDepth ? [f.fillerType === "cover-panel" ? <input key="d" type="number" min={1} aria-label="Cover panel depth in mm"
                       placeholder={String(defZoneDepth(f.zone, project))} value={f.customDepth ?? ""}
                       onChange={(e) => updFiller(f.id, { customDepth: e.target.value })} style={{ width: 80 }} /> : null] : []),
                     <input key="e" list="elev-list" value={f.elevation} onChange={(e) => updFiller(f.id, { elevation: e.target.value })} style={{ width: 64 }} />,
                     <button key="x" className="x" onClick={() => rmFiller(f.id)}>×</button>,
-                  ])} />}
+                  ]),
+                  ]} />}
 
               {/* ---- Visible Panels ---- */}
               {SHOW_STANDALONE_VISIBLE_PANELS && <>
@@ -4093,25 +4093,22 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
               <p className="hint">Calculated items are editable defaults; Reset restores their calculated values. Matching cabinet accessories combine by item and elevation. Gola base cabinets get a J handle, and drawer-bearing base cabinets also get a C handle, each cut to cabinet width.</p>
               {automaticAccessories.length === 0 && accessories.filter((row) => !row.automaticKey).length === 0 && linkedAccessories.length === 0 && masterAccessories.length === 0
                 ? <div className="empty">No accessories selected. Add a cut-length or priced item above.</div>
-                : <Tbl head={["Use", "Accessory", "Cut size (m)", "Qty", "Total (m)", "Elevation", "Brand", "Rate (Rs/unit)", "Straight", "L-conn", "Driver", ""]} num={[3, 4, 7]}
+                : <Tbl head={["Accessory", "Cut size (m)", "Qty", "Total (m)", "Elevation", "Brand", "Rate (Rs/unit)", "Straight", "L-conn", "Driver", ""]} num={[2, 3, 6]}
                 rows={[
                   ...automaticAccessories.map((source) => {
                   const override = accessories.find((row) => row.automaticKey === source.automaticKey);
                   const item = { ...source, ...override };
                   const disabled = !!override?.disabled;
-                  const cabinet = project.find((line) => source.automaticKey?.startsWith(`cabinet:${line.id}:`));
                   return [
-                    <input key="use" type="checkbox" aria-label={`Include ${ACC_LABEL[source.kind]} for ${cabinet?.m.code ?? source.elevation}`} checked={!override?.disabled}
-                      onChange={(event) => updAutomaticAcc(source, { disabled: !event.target.checked })} />,
-                    <select key="kind" value={item.kind} disabled={disabled} aria-label={`Accessory type for ${cabinet?.m.code ?? source.elevation}`}
+                    <select key="kind" value={item.kind} disabled={disabled} aria-label={`Accessory type in ${source.elevation}`}
                       onChange={(event) => updAutomaticAcc(source, { kind: event.target.value as AccessoryKind })}>
                       {(Object.keys(ACC_LABEL) as AccessoryKind[]).map((kind) => <option key={kind} value={kind}>{ACC_LABEL[kind]}</option>)}</select>,
-                    <input key="size" type="number" min={0} step="0.001" value={item.size} disabled={disabled} aria-label={`Cut size for ${ACC_LABEL[source.kind]} ${cabinet?.m.code ?? source.elevation}`}
+                    <input key="size" type="number" min={0} step="0.001" value={item.size} disabled={disabled} aria-label={`Cut size for ${ACC_LABEL[source.kind]} in ${source.elevation}`}
                       onChange={(event) => updAutomaticAcc(source, { size: event.target.value })} style={{ width: 90 }} />,
-                    <input key="qty" type="number" min={1} step={1} value={item.qty} disabled={disabled} aria-label={`Quantity for ${ACC_LABEL[source.kind]} ${cabinet?.m.code ?? source.elevation}`}
+                    <input key="qty" type="number" min={1} step={1} value={item.qty} disabled={disabled} aria-label={`Quantity for ${ACC_LABEL[source.kind]} in ${source.elevation}`}
                       onChange={(event) => updAutomaticAcc(source, { qty: Math.max(1, Math.trunc(Number(event.target.value) || 1)) })} style={{ width: 58 }} />,
                     accessoryMeters(item).toFixed(3),
-                    <input key="elev" list="elev-list" value={item.elevation} disabled={disabled} aria-label={`Elevation for ${ACC_LABEL[source.kind]} ${cabinet?.m.code ?? source.elevation}`}
+                    <input key="elev" list="elev-list" value={item.elevation} disabled={disabled} aria-label={`Elevation for ${ACC_LABEL[source.kind]} in ${source.elevation}`}
                       onChange={(event) => updAutomaticAcc(source, { elevation: event.target.value })} style={{ width: 64 }} />,
                     "—",
                     "—",
@@ -4123,11 +4120,14 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
                       onChange={(event) => updAutomaticAcc(source, { driver: event.target.value })}>
                       <option value="">— no driver —</option>{DRIVER_ITEMS.map((driver) => <option key={driver.id} value={driver.id}>{driver.subgroup}</option>)}
                     </select> : "—",
-                    override && <button key="reset" type="button" onClick={() => resetAutomaticAcc(source)}>Reset</button>,
+                    <div key="actions" style={{ display: "flex", gap: 6 }}>
+                      {disabled ? <button type="button" onClick={() => updAutomaticAcc(source, { disabled: false })}>Restore</button>
+                        : <button type="button" onClick={() => updAutomaticAcc(source, { disabled: true })}>Remove</button>}
+                      {override && <button type="button" onClick={() => resetAutomaticAcc(source)}>Reset</button>}
+                    </div>,
                   ];
                 }),
                   ...accessories.filter((row) => !row.automaticKey).map((a) => [
-                    <span key="use" className="hint">Manual</span>,
                     <select key="k" value={a.kind} onChange={(e) => updAcc(a.id, { kind: e.target.value as AccessoryKind, size: "", lengthMeters: undefined, qty: 1 })}>
                       {(Object.keys(ACC_LABEL) as AccessoryKind[]).map((k) => <option key={k} value={k}>{ACC_LABEL[k]}</option>)}</select>,
                     <input key="s" aria-label={`${ACC_LABEL[a.kind]} cutting size (metres)`} type="number" min={0} step="0.001" value={a.size}
@@ -4152,9 +4152,8 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
                       const modified = rows.some((entry) => linkedAccessoryEdits.some((edit) => edit.linkedLineId === entry.linkedLineId && edit.sourceItemId === entry.sourceItemId));
                       const rates = new Set(rows.map((entry) => entry.manualRate ?? ""));
                       const rate = rates.size === 1 ? row.manualRate ?? "" : "";
+                      const included = rows.some((entry) => !entry.disabled);
                       return [
-                        <input key="use" type="checkbox" aria-label={`Include ${label} in ${row.elevation}`} checked={rows.some((entry) => !entry.disabled)}
-                          onChange={(event) => updLinkedAccGroup(rows, { disabled: !event.target.checked })} />,
                         <div key="item" style={{ minWidth: 320 }}>
                           <AccessoryPicker rowId={row.id} selectedLabel={item ? `${item.subgroup} — ${item.materialDescription}` : row.customName ?? ""}
                             selectedId={row.itemId}
@@ -4182,13 +4181,16 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
                         "—",
                         "—",
                         "—",
-                        modified ? <button key="reset" type="button" onClick={() => rows.forEach(resetLinkedAcc)}>Reset</button> : "—",
+                        <div key="actions" style={{ display: "flex", gap: 6 }}>
+                          {included ? <button type="button" onClick={() => setLinkedAccGroupQty(rows, 0)}>Remove</button>
+                            : <button type="button" onClick={() => rows.forEach(resetLinkedAcc)}>Restore</button>}
+                          {modified && <button type="button" onClick={() => rows.forEach(resetLinkedAcc)}>Reset</button>}
+                        </div>,
                       ];
                     }),
                     ...masterAccessories.map((row) => {
                     const selected = selectedMasterAccessory(row);
                     return [
-                      <span key="manual" className="hint">Manual</span>,
                       <div key="i" style={{ minWidth: 360 }}>
                         <AccessoryPicker rowId={row.id} selectedLabel={selected ? `${selected.subgroup} — ${selected.materialDescription}` : ""}
                           selectedId={row.itemId}
