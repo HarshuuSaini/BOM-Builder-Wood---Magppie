@@ -1838,6 +1838,18 @@ function selectedMasterAccessory(row: MasterAccessoryRow) {
     rateBasis: unit, currentRate: 0, priced: false,
   };
 }
+
+function groupLinkedAccessories(rows: MasterAccessoryRow[]): MasterAccessoryRow[][] {
+  const groups = new Map<string, MasterAccessoryRow[]>();
+  for (const row of rows) {
+    const identity = row.itemId === "CUSTOM"
+      ? `CUSTOM|${(row.customName ?? "").trim().toUpperCase()}|${row.customUnit ?? "PCS"}|${(row.customBrand ?? "").trim().toUpperCase()}`
+      : row.itemId;
+    const key = `${row.elevation}\u0000${identity}`;
+    groups.set(key, [...(groups.get(key) ?? []), row]);
+  }
+  return [...groups.values()];
+}
 const ACC_LABEL: Record<AccessoryKind, string> = {
   skirting: "PVC Skirting Profile",
   elenor: "LED Profile Light",
@@ -2998,6 +3010,7 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
     })];
   }, [accessories, automaticAccessories]);
   const linkedAccessories = useMemo(() => cabinetAccessories(project, linkedAccessoryEdits), [project, linkedAccessoryEdits]);
+  const linkedAccessoryGroups = useMemo(() => groupLinkedAccessories(linkedAccessories), [linkedAccessories]);
   const allMasterAccessories = useMemo(() => [...masterAccessories, ...linkedAccessories.filter((row) => !row.disabled)], [masterAccessories, linkedAccessories]);
   const [waste, setWaste] = useState({ ...WASTE });
   const [boardSheetInputs, setBoardSheetInputs] = useState<Record<string, string>>({});
@@ -3054,6 +3067,19 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
   });
   const resetLinkedAcc = (source: MasterAccessoryRow) => setLinkedAccessoryEdits((current) =>
     current.filter((row) => row.linkedLineId !== source.linkedLineId || row.sourceItemId !== source.sourceItemId));
+  const updLinkedAccGroup = (rows: MasterAccessoryRow[], change: Partial<LinkedAccessoryEdit>) => {
+    rows.forEach((row) => updLinkedAcc(row, change));
+  };
+  const setLinkedAccGroupQty = (rows: MasterAccessoryRow[], value: number) => {
+    if (!Number.isFinite(value) || value < 0 || rows.length === 0) return;
+    const item = selectedMasterAccessory(rows[0]);
+    const target = item?.rateBasis === "MTR" ? value : Math.trunc(value);
+    const enabledCount = item?.rateBasis === "MTR" ? Math.min(rows.length, target > 0 ? 1 : 0) : Math.min(rows.length, target);
+    rows.forEach((row, index) => updLinkedAcc(row, {
+      disabled: index >= enabledCount,
+      qty: index === 0 ? (item?.rateBasis === "MTR" ? target : Math.max(1, target - enabledCount + 1)) : 1,
+    }));
+  };
   const rmMasterAcc = (id: number) => setMasterAccessories((c) => c.filter((r) => r.id !== id));
 
   /* --- raw material selection + stock check (Zoho) --- */
@@ -4097,46 +4123,49 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
 
               {/* ---- Accessories from the priced KITCHEN master and reference catalog ---- */}
               <SecHead title="Accessories" onAdd={addMasterAcc} />
-              {linkedAccessories.length > 0 && <>
-                <p className="hint">Suggested from cabinet configuration. You can change the item, quantity, elevation or rate, exclude it, or reset it to the calculated default.</p>
-                <Tbl head={["Use", "Accessory item", "Cabinet", "Qty", "Elevation", "Rate (Rs/unit)", ""]} num={[3, 5]}
-                  rows={linkedAccessories.map((row) => {
-                    const item = selectedMasterAccessory(row);
-                    const line = project.find((candidate) => candidate.id === row.linkedLineId);
-                    const modified = linkedAccessoryEdits.some((edit) => edit.linkedLineId === row.linkedLineId && edit.sourceItemId === row.sourceItemId);
-                    return [
-                      <input key="use" type="checkbox" aria-label={`Include ${item?.subgroup ?? row.itemId} for ${line?.m.code ?? "cabinet"}`} checked={!row.disabled}
-                        onChange={(event) => updLinkedAcc(row, { disabled: !event.target.checked })} />,
-                      <div key="item" style={{ minWidth: 320 }}>
-                        <AccessoryPicker rowId={row.id} selectedLabel={item ? `${item.subgroup} — ${item.materialDescription}` : row.customName ?? ""}
-                          selectedId={row.itemId}
-                          onSelect={(itemId) => updLinkedAcc(row, { itemId, customName: undefined, customUnit: undefined, customBrand: undefined, manualRate: "" })}
-                          onCustom={(customName) => updLinkedAcc(row, { itemId: "CUSTOM", customName, customUnit: "PCS", customBrand: "", manualRate: "" })} />
-                        {row.itemId === "CUSTOM" && <div className="accessory-custom-fields">
-                          <input aria-label="Linked custom accessory name" placeholder="Accessory name" value={row.customName ?? ""} onChange={(event) => updLinkedAcc(row, { customName: event.target.value })} />
-                          <select aria-label="Linked custom accessory unit" value={row.customUnit ?? "PCS"} onChange={(event) => updLinkedAcc(row, { customUnit: event.target.value as "PCS" | "SET" | "MTR" })}>
-                            <option value="PCS">PCS</option><option value="SET">SET</option><option value="MTR">MTR</option>
-                          </select>
-                        </div>}
-                      </div>,
-                      line?.m.code ?? "—",
-                      <input key="qty" type="number" min={item?.rateBasis === "MTR" ? 0 : 1} step={item?.rateBasis === "MTR" ? "0.01" : "1"}
-                        aria-label={`Quantity for ${item?.subgroup ?? row.itemId}`} value={row.qty}
-                        onChange={(event) => { const value = Number(event.target.value); if (Number.isFinite(value) && value >= (item?.rateBasis === "MTR" ? 0 : 1)) updLinkedAcc(row, { qty: item?.rateBasis === "MTR" ? value : Math.trunc(value) }); }} style={{ width: 76 }} />,
-                      <input key="elevation" list="elev-list" aria-label={`Elevation for ${item?.subgroup ?? row.itemId}`} value={row.elevation}
-                        onChange={(event) => updLinkedAcc(row, { elevation: event.target.value })} style={{ width: 68 }} />,
-                      <input key="rate" type="number" min={0} step="0.01" aria-label={`Rate for ${item?.subgroup ?? row.itemId}`}
-                        placeholder={item?.priced ? item.currentRate.toFixed(2) : "Enter rate"} value={row.manualRate ?? ""}
-                        onChange={(event) => { const value = event.target.value; if (value === "" || Number.isFinite(Number(value)) && Number(value) >= 0) updLinkedAcc(row, { manualRate: value }); }} style={{ width: 120 }} />,
-                      modified ? <button key="reset" type="button" onClick={() => resetLinkedAcc(row)}>Reset</button> : "—",
-                    ];
-                  })} />
-              </>}
-              {masterAccessories.length === 0 ? <div className="empty">No accessories selected. Priced Kitchen-master items and the wider reference accessory catalog are available.</div> :
-                <Tbl head={["Accessory item", "Brand", "Rate (Rs/unit)", "Qty", "Elevation", ""]} num={[2, 3]}
-                  rows={masterAccessories.map((row) => {
+              <p className="hint">Cabinet accessories are combined by item and elevation. The total quantity, item, rate and elevation can be edited here; Reset restores the cabinet defaults. Manually added accessories appear in the same list.</p>
+              {linkedAccessories.length === 0 && masterAccessories.length === 0 ? <div className="empty">No accessories selected. Priced Kitchen-master items and the wider reference accessory catalog are available.</div> :
+                <Tbl head={["Use", "Accessory item", "Brand", "Qty", "Elevation", "Rate (Rs/unit)", ""]} num={[3, 5]}
+                  rows={[
+                    ...linkedAccessoryGroups.map((rows) => {
+                      const row = rows[0];
+                      const item = selectedMasterAccessory(row);
+                      const label = item?.subgroup ?? row.itemId;
+                      const modified = rows.some((entry) => linkedAccessoryEdits.some((edit) => edit.linkedLineId === entry.linkedLineId && edit.sourceItemId === entry.sourceItemId));
+                      const rates = new Set(rows.map((entry) => entry.manualRate ?? ""));
+                      const rate = rates.size === 1 ? row.manualRate ?? "" : "";
+                      return [
+                        <input key="use" type="checkbox" aria-label={`Include ${label} in ${row.elevation}`} checked={rows.some((entry) => !entry.disabled)}
+                          onChange={(event) => updLinkedAccGroup(rows, { disabled: !event.target.checked })} />,
+                        <div key="item" style={{ minWidth: 320 }}>
+                          <AccessoryPicker rowId={row.id} selectedLabel={item ? `${item.subgroup} — ${item.materialDescription}` : row.customName ?? ""}
+                            selectedId={row.itemId}
+                            onSelect={(itemId) => updLinkedAccGroup(rows, { itemId, customName: undefined, customUnit: undefined, customBrand: undefined, manualRate: "" })}
+                            onCustom={(customName) => updLinkedAccGroup(rows, { itemId: "CUSTOM", customName, customUnit: "PCS", customBrand: "", manualRate: "" })} />
+                          {row.itemId === "CUSTOM" && <div className="accessory-custom-fields">
+                            <input aria-label={`${label} name in ${row.elevation}`} placeholder="Accessory name" value={row.customName ?? ""} onChange={(event) => updLinkedAccGroup(rows, { customName: event.target.value })} />
+                            <select aria-label={`${label} unit in ${row.elevation}`} value={row.customUnit ?? "PCS"} onChange={(event) => updLinkedAccGroup(rows, { customUnit: event.target.value as "PCS" | "SET" | "MTR" })}>
+                              <option value="PCS">PCS</option><option value="SET">SET</option><option value="MTR">MTR</option>
+                            </select>
+                          </div>}
+                        </div>,
+                        row.itemId === "CUSTOM" ? <input key="brand" aria-label={`${label} brand in ${row.elevation}`} placeholder="Brand (optional)" value={row.customBrand ?? ""}
+                          onChange={(event) => updLinkedAccGroup(rows, { customBrand: event.target.value })} style={{ width: 100 }} /> : item?.brand || "—",
+                        <input key="qty" type="number" min={0} step={item?.rateBasis === "MTR" ? "0.01" : "1"}
+                          aria-label={`Quantity for ${label} in ${row.elevation}`} value={rows.reduce((sum, entry) => sum + (entry.disabled ? 0 : entry.qty), 0)}
+                          onChange={(event) => setLinkedAccGroupQty(rows, Number(event.target.value))} style={{ width: 76 }} />,
+                        <input key="elevation" list="elev-list" aria-label={`Elevation for ${label}`} value={row.elevation}
+                          onChange={(event) => updLinkedAccGroup(rows, { elevation: event.target.value })} style={{ width: 68 }} />,
+                        <input key="rate" type="number" min={0} step="0.01" aria-label={`Rate for ${label} in ${row.elevation}`}
+                          placeholder={rates.size > 1 ? "Mixed rates" : item?.priced ? item.currentRate.toFixed(2) : "Enter rate"} value={rate}
+                          onChange={(event) => { const value = event.target.value; if (value === "" || Number.isFinite(Number(value)) && Number(value) >= 0) updLinkedAccGroup(rows, { manualRate: value }); }} style={{ width: 120 }} />,
+                        modified ? <button key="reset" type="button" onClick={() => rows.forEach(resetLinkedAcc)}>Reset</button> : "—",
+                      ];
+                    }),
+                    ...masterAccessories.map((row) => {
                     const selected = selectedMasterAccessory(row);
                     return [
+                      <span key="manual" className="hint">Manual</span>,
                       <div key="i" style={{ minWidth: 360 }}>
                         <AccessoryPicker rowId={row.id} selectedLabel={selected ? `${selected.subgroup} — ${selected.materialDescription}` : ""}
                           selectedId={row.itemId}
@@ -4150,15 +4179,16 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
                         </div>}
                       </div>,
                       row.itemId === "CUSTOM" ? <input key="brand" aria-label="Custom accessory brand" placeholder="Brand (optional)" value={row.customBrand ?? ""} onChange={(e) => updMasterAcc(row.id, { customBrand: e.target.value })} style={{ minWidth: 110 }} /> : selected?.brand || "—",
+                      <input key="q" type="number" aria-label={`Quantity (${selected?.rateBasis ?? "unit"})`} min={selected?.rateBasis === "MTR" ? 0 : 1} step={selected?.rateBasis === "MTR" ? "0.01" : "1"} value={row.qty} onChange={(e) => updMasterAcc(row.id, { qty: Math.max(selected?.rateBasis === "MTR" ? 0 : 1, +e.target.value) })} style={{ width: 78 }} />,
+                      <input key="e" list="elev-list" value={row.elevation} onChange={(e) => updMasterAcc(row.id, { elevation: e.target.value })} style={{ width: 64 }} />,
                       <div key="rate" style={{ display: "grid", gap: 2, minWidth: 130 }}>
                         <input type="number" min={0} step="0.01" aria-label={`Manual rate for ${selected?.subgroup ?? "accessory"}`} placeholder={selected?.priced ? selected.currentRate.toFixed(2) : "Enter price"} value={row.manualRate ?? ""} onChange={(e) => updMasterAcc(row.id, { manualRate: e.target.value })} style={{ width: 118 }} />
                         <small style={{ color: "var(--mut)" }}>{row.manualRate !== undefined && row.manualRate !== "" ? `Manual · ${selected?.rateBasis ?? "unit"}` : selected?.priced ? `Master ₹${selected.currentRate.toFixed(2)} / ${selected.rateBasis}` : "No master rate"}</small>
                       </div>,
-                      <input key="q" type="number" aria-label={`Quantity (${selected?.rateBasis ?? "unit"})`} min={selected?.rateBasis === "MTR" ? 0 : 1} step={selected?.rateBasis === "MTR" ? "0.01" : "1"} value={row.qty} onChange={(e) => updMasterAcc(row.id, { qty: Math.max(selected?.rateBasis === "MTR" ? 0 : 1, +e.target.value) })} style={{ width: 78 }} />,
-                      <input key="e" list="elev-list" value={row.elevation} onChange={(e) => updMasterAcc(row.id, { elevation: e.target.value })} style={{ width: 64 }} />,
                       <button key="x" className="x" onClick={() => rmMasterAcc(row.id)}>×</button>,
                     ];
-                  })} />}
+                  }),
+                  ]} />}
 
               {accessoryRows.length > 0 && <>
                 <h4>Merged accessory quantities (export preview)</h4>
@@ -4333,7 +4363,7 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
               <SecHead title="Downloads" />
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                 <button className="add" style={{ width: "auto", padding: "8px 16px" }} disabled={costing.lines.length === 0}
-                  onClick={() => exportCostingWorkbook(costing.lines, [...projectPricing.allocatedCharges, ...projectPricing.fillerAreaSlots], projectPricing, costing.unpriced)}>Costing (.xlsx)</button>
+                  onClick={() => exportCostingWorkbook(costing.lines, [...projectPricing.allocatedCharges, ...projectPricing.fillerAreaSlots], projectPricing, costing.unpriced, projectPricingInputs)}>Costing (.xlsx)</button>
                 <button className="add" style={{ width: "auto", padding: "8px 16px" }} disabled={project.length === 0}
                   onClick={() => dl("wood-bom-project.json", JSON.stringify({ format: PROJECT_FILE_FORMAT, rows: projectSetup }, null, 2), "application/json")}>Project JSON</button>
                 <button className="add" style={{ width: "auto", padding: "8px 16px" }} disabled={fullBom.length === 0}

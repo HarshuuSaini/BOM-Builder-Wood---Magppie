@@ -35,6 +35,13 @@ export type CostingExportPricing = {
   transportation: number; installation: number; loading: number;
   subtotal: number; tax: number; grandTotal: number;
 };
+export type CostingExportFactors = {
+  conversionPct: number | ""; profitPct: number | "";
+  transportation: { mode: "sqft" | "direct"; value: number | "" };
+  installation: { mode: "sqft" | "direct"; value: number | "" };
+  loading: { mode: "sqft" | "direct"; value: number | "" };
+  includeTax: boolean;
+};
 
 const COLS_FULL = [
   { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 6 }, { wch: 40 }, { wch: 18 },
@@ -416,32 +423,46 @@ export function exportCostingWorkbook(
   cabinetAreas: CostingExportArea[],
   pricing: CostingExportPricing,
   unpriced: string[],
+  factors: CostingExportFactors,
 ) {
   if (!lines.length) return;
   const workbook = XLSX.utils.book_new();
   const purchases = purchaseTotals(lines.flatMap(line => line.details));
-  const manualItems = purchases.map(item => ({ elevation: item.categories.join(", ").toUpperCase(),
+  const purchaseRowByKey = new Map(purchases.map((item, index) => [item.key, index + 2]));
+  const sourceFactor = (unit: string) => unit === "sheet" ? 32 : unit === "kg" ? 1000 : 1;
+  const purchaseRows = purchases.map((item) => {
+    const factor = sourceFactor(item.unit);
+    return { item, factor, requiredSourceQty: item.requiredQty * factor, sourceRate: item.rate / factor };
+  });
+  const manualItems = purchaseRows.map(({ item }) => ({ key: item.key, elevation: item.categories.join(", ").toUpperCase(),
     description: item.item, code: item.itemCode, rate: item.rate, unit: item.unit, qty: item.quantity }));
   const manualRows: (string | number | XLSX.CellObject)[][] = [
     ["KITCHEN COSTING - MANUAL COMPARISON"],
     ["Cabinet + filler area (sqft)", pricing.totalSqft, "Total cabinets", lines.filter((line) => !!line.code).reduce((total, line) => total + line.qty, 0)],
-    ["Whole-kitchen quantities include waste without rounding up: boards and laminates in 32 sqft sheets, adhesives in kg, lengths in metres, hardware in pieces/sets. Costing uses calculated decimal quantities. Processing uses billable sqft."],
+    ["Edit quantities, conversion factors and rates on Consolidated Items; edit project factors on Project Pricing. This comparison and its totals recalculate from those inputs."],
     ["Sr. No.", "Elevation", "Material Description", "Item code", "Rate (Rs)", "Unit of Mnt.", "Qty. Req.", "Total Rate (Rs)"],
   ];
   manualItems.sort((a, b) => a.elevation.localeCompare(b.elevation) || a.description.localeCompare(b.description))
-    .forEach((item, index) => manualRows.push([index + 1, item.elevation, item.description, item.code, item.rate, item.unit, item.qty,
-      { f: `E${index + 5}*G${index + 5}`, t: "n", v: item.rate * item.qty }]));
+    .forEach((item, index) => {
+      const row = index + 5;
+      const purchaseRow = purchaseRowByKey.get(item.key)!;
+      manualRows.push([index + 1, item.elevation, item.description, item.code,
+        { f: `'Consolidated Items'!K${purchaseRow}`, t: "n", v: item.rate }, item.unit,
+        { f: `'Consolidated Items'!H${purchaseRow}`, t: "n", v: item.qty },
+        { f: `E${row}*G${row}`, t: "n", v: item.rate * item.qty }]);
+    });
   const lastItemRow = manualRows.length;
   const summaryStart = lastItemRow + 1;
   manualRows.push(["", "", "", "", "", "", "Material / item cost", { f: `SUM(H5:H${lastItemRow})`, t: "n", v: pricing.baseCost }]);
-  const extraCosts: Array<[string, number]> = [
-    ["Conversion", pricing.conversion], ["Profit", pricing.profit],
-    ["Transportation", pricing.transportation], ["Installation", pricing.installation],
-    ["Loading / Unloading", pricing.loading], ["GST", pricing.tax],
+  const extraCosts: Array<[string, number, number]> = [
+    ["Conversion", pricing.conversion, 6], ["Profit", pricing.profit, 8],
+    ["Transportation", pricing.transportation, 11], ["Installation", pricing.installation, 14],
+    ["Loading / Unloading", pricing.loading, 17], ["GST", pricing.tax, 21],
   ];
-  extraCosts.forEach(([label, amount]) => manualRows.push(["", "", "", "", "", "", label, amount]));
+  extraCosts.forEach(([label, amount, row]) => manualRows.push(["", "", "", "", "", "", label,
+    { f: `'Project Pricing'!B${row}`, t: "n", v: amount }]));
   const totalRow = manualRows.length + 1;
-  manualRows.push(["", "", "", "", "", "", "Project total", { f: `SUM(H${summaryStart}:H${totalRow - 1})`, t: "n", v: pricing.grandTotal }]);
+  manualRows.push(["", "", "", "", "", "", "Project total", { f: `'Project Pricing'!B22`, t: "n", v: pricing.grandTotal }]);
   manualRows.push(["", "", "", "", "", "", "Cost per total sqft", { f: `IF(B2=0,0,H${totalRow}/B2)`, t: "n", v: pricing.totalSqft ? pricing.grandTotal / pricing.totalSqft : 0 }]);
   const manualSheet = XLSX.utils.aoa_to_sheet(manualRows);
   manualSheet["!cols"] = [{ wch: 9 }, { wch: 27 }, { wch: 72 }, { wch: 25 }, { wch: 18 }, { wch: 20 }, { wch: 20 }, { wch: 22 }];
@@ -457,36 +478,54 @@ export function exportCostingWorkbook(
     }
   }
   XLSX.utils.book_append_sheet(workbook, manualSheet, "Manual Comparison");
+  let nextDetailRow = 2;
+  const detailSpans = lines.map((line) => {
+    const start = nextDetailRow;
+    nextDetailRow += line.details.length;
+    return { start, end: nextDetailRow - 1 };
+  });
   const summary: Array<{
     "Cabinet / item": string; "Cabinet code": string; Qty: number | string;
     "Sqft / item": number | string; "Total item sqft": number | string;
-    "Cost / item (Rs)": number | string; "Total cost (Rs)": number;
-    "Cost / item sqft (Rs)": number | string;
+    "Cost / item (Rs)": XLSX.CellObject | string;
+    "Total cost (Rs)": XLSX.CellObject;
+    "Cost / item sqft (Rs)": XLSX.CellObject | string;
   }> = lines.map((line, index) => {
     const area = cabinetAreas[index];
+    const row = index + 2;
+    const span = detailSpans[index];
     return {
       "Cabinet / item": line.label,
       "Cabinet code": line.code ?? "",
       Qty: line.qty,
       "Sqft / item": area?.eachSqft ?? "",
       "Total item sqft": area?.sqft ?? "",
-      "Cost / item (Rs)": line.unitCost,
-      "Total cost (Rs)": line.cost,
-      "Cost / item sqft (Rs)": area?.sqft ? line.cost / area.sqft : "",
+      "Cost / item (Rs)": { f: `IF(C${row}=0,0,G${row}/C${row})`, t: "n" as const, v: line.unitCost },
+      "Total cost (Rs)": { f: span.end >= span.start ? `SUM('Cabinet Items'!O${span.start}:O${span.end})` : "0", t: "n" as const, v: line.cost },
+      "Cost / item sqft (Rs)": area?.sqft ? { f: `IF(E${row}=0,0,G${row}/E${row})`, t: "n" as const, v: line.cost / area.sqft } : "",
     };
   });
   summary.push({
     "Cabinet / item": "Project item costing total", "Cabinet code": "", Qty: "",
     "Sqft / item": "", "Total item sqft": pricing.totalSqft,
-    "Cost / item (Rs)": "", "Total cost (Rs)": pricing.baseCost,
-    "Cost / item sqft (Rs)": pricing.totalSqft ? pricing.baseCost / pricing.totalSqft : "",
+    "Cost / item (Rs)": "",
+    "Total cost (Rs)": { f: `SUM(G2:G${lines.length + 1})`, t: "n" as const, v: pricing.baseCost },
+    "Cost / item sqft (Rs)": pricing.totalSqft ? { f: `IF(E${lines.length + 2}=0,0,G${lines.length + 2}/E${lines.length + 2})`, t: "n" as const, v: pricing.baseCost / pricing.totalSqft } : "",
   });
   addSheet(workbook, summary, "Cabinet Summary", [
     { wch: 54 }, { wch: 64 }, { wch: 9 }, { wch: 17 }, { wch: 20 },
     { wch: 21 }, { wch: 21 }, { wch: 25 },
   ]);
 
-  const detailRows = lines.flatMap((line, index) => line.details.map((detail) => ({
+  let detailExcelRow = 1;
+  const detailRows = lines.flatMap((line, index) => line.details.map((detail) => {
+    detailExcelRow += 1;
+    const purchaseKey = purchaseTotals([detail])[0].key;
+    const purchaseRow = purchaseRowByKey.get(purchaseKey);
+    const group = purchases.find((item) => item.key === purchaseKey);
+    if (!purchaseRow || !group) throw new Error(`Missing purchase group for ${detail.itemCode}`);
+    const area = cabinetAreas[index]?.sqft;
+    return {
     "Cabinet / item": line.label,
     "Cabinet code": line.code ?? "",
     "Cabinet qty": line.qty,
@@ -498,41 +537,83 @@ export function exportCostingWorkbook(
     "Net qty": detail.netQty,
     "Waste %": detail.wastePct,
     "Billable qty": detail.billableQty,
-    "Allocated purchase qty": detail.allocatedBillableQty ?? detail.billableQty,
+    "Allocated purchase qty": { f: `IF('Consolidated Items'!D${purchaseRow}=0,0,K${detailExcelRow}/'Consolidated Items'!D${purchaseRow}*'Consolidated Items'!H${purchaseRow}*'Consolidated Items'!G${purchaseRow})`, t: "n" as const, v: detail.allocatedBillableQty ?? detail.billableQty },
     Basis: detail.uom,
-    "Rate (Rs / basis)": detail.rate,
-    "Amount (Rs)": detail.amount,
-    "Cost / item sqft (Rs)": cabinetAreas[index]?.sqft ? detail.amount / cabinetAreas[index].sqft : "",
-  })));
+    "Rate (Rs / basis)": { f: `'Consolidated Items'!J${purchaseRow}`, t: "n" as const, v: detail.rate },
+    "Amount (Rs)": { f: `IF('Consolidated Items'!D${purchaseRow}=0,0,K${detailExcelRow}/'Consolidated Items'!D${purchaseRow}*'Consolidated Items'!L${purchaseRow})`, t: "n" as const, v: detail.amount },
+    "Cost / item sqft (Rs)": area ? { f: `IF(D${detailExcelRow}=0,0,O${detailExcelRow}/D${detailExcelRow})`, t: "n" as const, v: detail.amount / area } : "",
+  }; }));
   addSheet(workbook, detailRows, "Cabinet Items", [
     { wch: 54 }, { wch: 64 }, { wch: 13 }, { wch: 16 }, { wch: 22 },
     { wch: 18 }, { wch: 65 }, { wch: 46 }, { wch: 13 }, { wch: 12 },
     { wch: 15 }, { wch: 11 }, { wch: 20 }, { wch: 18 }, { wch: 27 },
   ]);
 
-  addSheet(workbook, purchases.map(item => ({
-    Category: item.categories.join(", "), "Item code": item.itemCode, "Actual item": item.item,
-    "Required qty incl. waste": item.requiredQty, "Purchase qty": item.quantity, Basis: item.unit,
-    "Rate (Rs / basis)": item.rate, "Amount (Rs)": item.amount,
-  })), "Consolidated Items", [
-    { wch: 30 }, { wch: 18 }, { wch: 65 }, { wch: 24 }, { wch: 18 },
-    { wch: 11 }, { wch: 20 }, { wch: 18 },
-  ]);
+  const purchaseSheetRows: (string | number | XLSX.CellObject)[][] = [[
+    "Category", "Item code", "Actual item", "Original usage", "Required qty (editable)",
+    "Source unit", "Units per purchase", "Purchase qty", "Purchase unit", "Source rate (Rs)",
+    "Purchase rate (Rs)", "Amount (Rs)",
+  ]];
+  purchaseRows.forEach(({ item, factor, requiredSourceQty, sourceRate }, index) => {
+    const row = index + 2;
+    const sourceUnit = item.unit === "sheet" ? "sqft" : item.unit === "kg" ? "gm" : item.unit;
+    purchaseSheetRows.push([
+      item.categories.join(", "), item.itemCode, item.item, requiredSourceQty, requiredSourceQty,
+      sourceUnit, factor,
+      { f: `ROUND(E${row}/G${row},2)`, t: "n", v: item.quantity }, item.unit, sourceRate,
+      { f: `J${row}*G${row}`, t: "n", v: item.rate },
+      { f: `H${row}*K${row}`, t: "n", v: item.amount },
+    ]);
+  });
+  const purchaseSheet = XLSX.utils.aoa_to_sheet(purchaseSheetRows);
+  purchaseSheet["!cols"] = [{ wch: 30 }, { wch: 20 }, { wch: 65 }, { wch: 20 }, { wch: 24 },
+    { wch: 14 }, { wch: 22 }, { wch: 18 }, { wch: 16 }, { wch: 20 }, { wch: 22 }, { wch: 20 }];
+  purchaseSheet["!freeze"] = { xSplit: 3, ySplit: 1 };
+  for (let row = 1; row < purchaseSheetRows.length; row++) {
+    for (const col of [3, 4, 6, 7, 9, 10, 11]) {
+      purchaseSheet[XLSX.utils.encode_cell({ r: row, c: col })].z = "#,##0.00";
+    }
+    for (const col of [4, 6, 9]) {
+      purchaseSheet[XLSX.utils.encode_cell({ r: row, c: col })].s = { fill: { patternType: "solid", fgColor: { rgb: "FFF1DD" } } };
+    }
+  }
+  XLSX.utils.book_append_sheet(workbook, purchaseSheet, "Consolidated Items");
 
-  addSheet(workbook, [
-    { Factor: "Cabinet front area (sqft)", Value: pricing.cabinetSqft },
-    { Factor: "Filler front area (sqft)", Value: pricing.fillerSqft },
-    { Factor: "Total priced area (sqft)", Value: pricing.totalSqft },
-    { Factor: "Base item cost (Rs)", Value: pricing.baseCost },
-    { Factor: "Conversion (Rs)", Value: pricing.conversion },
-    { Factor: "Profit (Rs)", Value: pricing.profit },
-    { Factor: "Transportation (Rs)", Value: pricing.transportation },
-    { Factor: "Installation (Rs)", Value: pricing.installation },
-    { Factor: "Loading / Unloading (Rs)", Value: pricing.loading },
-    { Factor: "Subtotal (Rs)", Value: pricing.subtotal },
-    { Factor: "GST (Rs)", Value: pricing.tax },
-    { Factor: "Project total (Rs)", Value: pricing.grandTotal },
-  ], "Project Pricing", [{ wch: 36 }, { wch: 20 }]);
+  const calcCell = (formula: string, value: number): XLSX.CellObject => ({ f: formula, t: "n", v: value });
+  const pricingRows: (string | number | XLSX.CellObject)[][] = [
+    ["Cabinet front area (sqft)", pricing.cabinetSqft, "Editable area"],
+    ["Filler front area (sqft)", pricing.fillerSqft, "Editable area"],
+    ["Total priced area (sqft)", calcCell("SUM(B1:B2)", pricing.totalSqft), "Used for per-sqft charges"],
+    ["Material / item cost (Rs)", calcCell(`'Manual Comparison'!H${summaryStart}`, pricing.baseCost), "Sum of consolidated item costs"],
+    ["Conversion (%)", Number(factors.conversionPct || 0), "Editable percentage"],
+    ["Conversion (Rs)", calcCell("B4*B5/100", pricing.conversion)],
+    ["Profit (%)", Number(factors.profitPct || 0), "On material cost plus conversion"],
+    ["Profit (Rs)", calcCell("(B4+B6)*B7/100", pricing.profit)],
+    ["Transportation method", factors.transportation.mode, "Enter direct or sqft"],
+    ["Transportation rate / amount", Number(factors.transportation.value || 0), "Rs/sqft or direct Rs"],
+    ["Transportation (Rs)", calcCell('IF(B9="sqft",B10*B3,B10)', pricing.transportation)],
+    ["Installation method", factors.installation.mode, "Enter direct or sqft"],
+    ["Installation rate / amount", Number(factors.installation.value || 0), "Rs/sqft or direct Rs"],
+    ["Installation (Rs)", calcCell('IF(B12="sqft",B13*B3,B13)', pricing.installation)],
+    ["Loading / Unloading method", factors.loading.mode, "Enter direct or sqft"],
+    ["Loading / Unloading rate / amount", Number(factors.loading.value || 0), "Rs/sqft or direct Rs"],
+    ["Loading / Unloading (Rs)", calcCell('IF(B15="sqft",B16*B3,B16)', pricing.loading)],
+    ["Subtotal before GST (Rs)", calcCell("SUM(B4,B6,B8,B11,B14,B17)", pricing.subtotal)],
+    ["Include GST (1=yes, 0=no)", factors.includeTax ? 1 : 0, "Editable switch"],
+    ["GST rate (%)", 18, "Editable percentage"],
+    ["GST (Rs)", calcCell("B18*B19*B20/100", pricing.tax)],
+    ["Project total (Rs)", calcCell("B18+B21", pricing.grandTotal)],
+  ];
+  const pricingSheet = XLSX.utils.aoa_to_sheet(pricingRows);
+  pricingSheet["!cols"] = [{ wch: 38 }, { wch: 22 }, { wch: 38 }];
+  const editablePricingRows = new Set([1, 2, 5, 7, 9, 10, 12, 13, 15, 16, 19, 20]);
+  for (let row = 1; row <= pricingRows.length; row++) {
+    const cell = pricingSheet[`B${row}`];
+    if (cell.t === "n") cell.z = "#,##0.00";
+    if (editablePricingRows.has(row)) cell.s = { fill: { patternType: "solid", fgColor: { rgb: "FFF1DD" } } };
+  }
+  XLSX.utils.book_append_sheet(workbook, pricingSheet, "Project Pricing");
+  manualSheet.B2 = { f: "'Project Pricing'!B3", t: "n", v: pricing.totalSqft };
 
   if (unpriced.length) addSheet(workbook, unpriced.map((item) => ({
     "Unpriced item": item, Status: item.includes("(quantity pending)")
