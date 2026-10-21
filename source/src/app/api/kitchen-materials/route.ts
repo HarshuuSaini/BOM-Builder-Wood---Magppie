@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { COSTING_ITEMS } from "@/lib/costing";
 import { currentUser, userSession, setSessionMaterials } from "@/lib/user-session";
-import { KITCHEN_ZONES, HANDLE_ZONES, HANDLE_TYPES, MATERIAL_FIELDS, createsMaterialSourceCycle, validBoardSheetPrice, type KitchenMaterials, type MaterialField, type MaterialSource } from "@/lib/kitchen-materials";
+import { DRAWER_BRANDS, KITCHEN_ZONES, HANDLE_ZONES, HANDLE_TYPES, MATERIAL_FIELDS, createsMaterialSourceCycle, validBoardSheetPrice, type KitchenMaterials, type MaterialField, type MaterialSource } from "@/lib/kitchen-materials";
 
 const GROUP: Record<MaterialField, string> = {
   carcass: "Carcass/ Shelf Material", back: "Carcass Back Material", drawer: "Drawer Material",
@@ -27,6 +27,9 @@ export async function POST(request: Request) {
   if (materials._hingeChoice !== undefined && !["Hettich", "Hafele", "Blum", "Magppie"].some((brand) =>
     ["Soft Close", "Non Soft Close"].some((type) => materials._hingeChoice === `${brand} ${type}`))) {
     return NextResponse.json({ error: "Invalid kitchen hinge choice." }, { status: 400 });
+  }
+  if (materials._drawerBrand !== undefined && !DRAWER_BRANDS.some((brand) => brand === materials._drawerBrand)) {
+    return NextResponse.json({ error: "Invalid kitchen drawer brand." }, { status: 400 });
   }
   if (materials._handleDefaults !== undefined && (!materials._handleDefaults ||
     !HANDLE_ZONES.every((zone) => {

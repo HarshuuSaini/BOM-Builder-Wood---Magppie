@@ -39,7 +39,10 @@ export type LegacyPrintedProject = { legacyPages: string[] };
 
 export async function readPrintedProjectPdf(file: File): Promise<unknown | LegacyPrintedProject> {
   const pdfjs = await import("pdfjs-dist");
-  pdfjs.GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/build/pdf.worker.min.mjs", import.meta.url).toString();
+  // Next's webpack build treats `new URL(packagePath, import.meta.url)` as a
+  // module constructor rather than an asset URL. Serve the exact installed
+  // worker version from our own origin instead.
+  pdfjs.GlobalWorkerOptions.workerSrc = new URL("/api/pdf-worker", window.location.origin).toString();
   const task = pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()) });
   try {
     const pdf = await task.promise;

@@ -51,6 +51,7 @@ export function selectedBoardRate(item: { id: string; type: string; currentRate:
 }
 
 export type ZoneMaterials = Record<MaterialField, MaterialChoice>;
+export const DRAWER_BRANDS = ["Lian", "Hettich", "Blum", "Hafele", "Grass"] as const;
 export const HANDLE_ZONES = ["Base", "Wall", "Tall", "Loft"] as const;
 export type HandleZone = (typeof HANDLE_ZONES)[number];
 export const HANDLE_TYPES = ["XCJ", "PUSH", "KNOB", "HANDLE", "NONE"] as const;
@@ -70,6 +71,7 @@ export function handleSettingFor(materials: KitchenMaterials | undefined, code: 
 export type KitchenMaterials = Record<KitchenZone, ZoneMaterials> & {
   _sources?: Partial<Record<KitchenZone, MaterialSource>>;
   _hingeChoice?: string;
+  _drawerBrand?: string;
   _handleDefaults?: HandleDefaults;
 };
 

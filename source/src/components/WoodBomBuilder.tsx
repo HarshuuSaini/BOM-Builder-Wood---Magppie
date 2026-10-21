@@ -27,7 +27,8 @@ import { getPartBaseName, getPanelBaseName, normalizePartOrPanelName } from "@/l
 import { exportBomWorkbook, exportBomCsv, exportCostingWorkbook, type AccessoryExportRow, type ProjectSetupRow } from "@/lib/export";
 import { COSTING_ITEMS, DEFAULT_RATES, findCostingItem, costingItemNames, type CostingMasterItem, type CostingRates } from "@/lib/costing";
 import { MATERIAL_MASTER, laminatePrice } from "@/lib/material-master";
-import { boardPricesFromMaterials, selectedBoardRate, validBoardSheetPrice, MATERIAL_FIELDS, HANDLE_TYPES, handleSettingFor, type BoardPriceOverride, type BoardPriceOverrides, kitchenZoneForCode, type KitchenMaterials, type ZoneMaterials } from "@/lib/kitchen-materials";
+import { boardPricesFromMaterials, selectedBoardRate, validBoardSheetPrice, MATERIAL_FIELDS, HANDLE_TYPES, DRAWER_BRANDS, handleSettingFor, type BoardPriceOverride, type BoardPriceOverrides, kitchenZoneForCode, type KitchenMaterials, type ZoneMaterials } from "@/lib/kitchen-materials";
+import { materialsFromImportedCabinets } from "@/lib/imported-kitchen-materials";
 import { UserSignOut } from "@/components/UserSignOut";
 import { encodeProjectPrintData, readPrintedProjectPdf } from "@/lib/print-project";
 import type { BomReportRow } from "@/lib/types";
@@ -97,6 +98,19 @@ interface FillerRow {
   customWidth: string;
   customDepth?: string;
   elevation: string;
+}
+
+interface LinkedFillerEdit {
+  linkedLineId: number;
+  disabled?: boolean;
+  fillerType?: FillerRow["fillerType"];
+  zone?: string;
+  customShade?: string;
+  qty?: number;
+  customHeight?: string;
+  customWidth?: string;
+  customDepth?: string;
+  elevation?: string;
 }
 
 interface VisiblePanelRow extends FillerRow {
@@ -234,7 +248,7 @@ const MEMB_ADH: number | null = null;                // rate not yet supplied
 const WASTE = { carcass: 10, shutter: 20, profile: 20 };
 
 const ELEVATIONS = ["AA", "BB", "CC", "DD", "EE", "FF", "GG", "HH", "JJ", "KK"];
-const DRAWER_MODELS = ["Lian", "Hettich", "Blum", "Hafele", "Grass"];
+const DRAWER_MODELS: string[] = [...DRAWER_BRANDS];
 const HINGE_CHOICES = [
   "Hettich Soft Close", "Hettich Non Soft Close",
   "Hafele Soft Close", "Hafele Non Soft Close",
@@ -1592,14 +1606,14 @@ function buildExtrasBom(
   const emit = (kind: "Filler" | "Visible", r: FillerRow, shTypeKey: string) => {
     const zone = r.zone;
     const linkedCabinet = r.linkedLineId === undefined ? undefined : project.find((line) => line.id === r.linkedLineId);
-    const H = linkedCabinet?.m.H ?? (parseFloat(r.customHeight) || defFillerH(zone, project));
+    const H = parseFloat(r.customHeight) || linkedCabinet?.m.H || defFillerH(zone, project);
     const W = parseFloat(r.customWidth) ||
       (kind === "Filler" ? FILLER_DEF_W : defZoneDepth(zone, project) + VP_DEPTH_ADD);
     const q = r.qty || 1;
     const fin = r.customShade || globalFinish;
     const fillerType = kind === "Filler" ? r.fillerType ?? "filler" : "filler";
     const label = kind === "Visible" ? "Visible Panel" : FILLER_TYPES.find((type) => type.value === fillerType)?.label ?? "Filler";
-    const depth = linkedCabinet?.m.D ?? (parseFloat(r.customDepth ?? "") || defZoneDepth(zone, project));
+    const depth = parseFloat(r.customDepth ?? "") || linkedCabinet?.m.D || defZoneDepth(zone, project);
     const materialZone = ({ base: "Base", wall: "Wall", tall: "Tall", loft: "Loft", mid: "Mid" } as const)[zone as "base" | "wall" | "tall" | "loft" | "mid"] ?? "Base";
     const matchingLine = linkedCabinet ?? project.find((line) => line.elevation === r.elevation && (FILLER_ZKS[zone] ?? []).includes(line.m.zk));
     const zoneMaterials = materials?.[materialZone];
@@ -1721,6 +1735,9 @@ type AccessoryKind = "skirting" | "elenor" | "c-handle" | "j-handle";
 interface AccessoryRow {
   id: number;
   kind: AccessoryKind;
+  /** Stable source for an editable, automatically calculated row. */
+  automaticKey?: string;
+  disabled?: boolean;
   /** Cutting size of one accessory piece, in metres. */
   size: string;
   /** Legacy saved total length; converted to size on import. */
@@ -1735,12 +1752,26 @@ interface AccessoryRow {
 interface MasterAccessoryRow {
   id: number;
   linkedLineId?: number;
+  sourceItemId?: string;
+  disabled?: boolean;
   itemId: string;
   qty: number;
   elevation: string;
   /** Blank uses the Kitchen master rate; a non-negative value overrides this row only. */
   manualRate?: string;
   /** Project-specific item when it is not in the Kitchen master or reference catalog. */
+  customName?: string;
+  customUnit?: "PCS" | "SET" | "MTR";
+  customBrand?: string;
+}
+interface LinkedAccessoryEdit {
+  linkedLineId: number;
+  sourceItemId: string;
+  disabled?: boolean;
+  itemId?: string;
+  qty?: number;
+  elevation?: string;
+  manualRate?: string;
   customName?: string;
   customUnit?: "PCS" | "SET" | "MTR";
   customBrand?: string;
@@ -1767,8 +1798,12 @@ const MASTER_ACCESSORY_ITEMS = [
     })),
 ];
 /** Cabinet-linked accessories are derived from lines, so edits and deletion cannot leave stale rows. */
-function cabinetAccessories(project: ProjectLine[], manualRates: Record<string, string> = {}): MasterAccessoryRow[] {
+function cabinetAccessories(project: ProjectLine[], edits: LinkedAccessoryEdit[] = []): MasterAccessoryRow[] {
   return project.flatMap((line) => {
+    const applyEdit = (base: MasterAccessoryRow): MasterAccessoryRow => {
+      const edit = edits.find((candidate) => candidate.linkedLineId === line.id && candidate.sourceItemId === base.sourceItemId);
+      return edit ? { ...base, ...edit } : base;
+    };
     const bottleItem = ({ 150: "KITCHEN-076", 200: "KITCHEN-077", 300: "KITCHEN-078" } as Record<number, string>)[line.m.W];
     const itemIds = line.m.fk === "BPO"
       ? bottleItem ? [bottleItem, "KITCHEN-079"] : []
@@ -1777,18 +1812,18 @@ function cabinetAccessories(project: ProjectLine[], manualRates: Record<string, 
       : line.m.fk === "LMC" ? ["KITCHEN-069"]
       : line.m.fk === "WBP" ? ["KITCHEN-075"] : [];
     const linked = itemIds.filter((id): id is string => !!id && MASTER_ACCESSORY_ITEMS.some((item) => item.id === id))
-      .map((itemId, index) => ({ id: -(line.id * 10 + index + 1), linkedLineId: line.id, itemId, qty: line.qty, elevation: line.elevation,
-        manualRate: manualRates[`${line.id}|${itemId}`] ?? "" }));
+      .map((itemId, index) => applyEdit({ id: -(line.id * 10 + index + 1), linkedLineId: line.id, sourceItemId: itemId,
+        itemId, qty: line.qty, elevation: line.elevation, manualRate: "" }));
     const handleType = line.m.handle;
     const fronts = line.m.panels.filter((panel) => panel.pack === "Shutter Pack" && !panel.visibleSide &&
       /\bSH\b/i.test(panel.name) && !/\b(?:Fixed|Filler|Visible)\b/i.test(panel.name))
       .reduce((sum, panel) => sum + panel.qty, 0);
     if (!["PUSH", "KNOB", "HANDLE"].includes(handleType) || fronts === 0) return linked;
     const handleName = handleType === "PUSH" ? "Push to Open" : handleType === "KNOB" ? "Knob" : "Handle";
-    return [...linked, { id: -(line.id * 10 + 9), linkedLineId: line.id, itemId: "CUSTOM", qty: fronts * line.qty,
+    return [...linked, applyEdit({ id: -(line.id * 10 + 9), linkedLineId: line.id, sourceItemId: "CUSTOM", itemId: "CUSTOM", qty: fronts * line.qty,
       elevation: line.elevation, customName: handleName, customUnit: "PCS" as const,
       customBrand: handleType === "PUSH" ? line.m.handleBrand || "Hettich" : "",
-      manualRate: manualRates[`${line.id}|CUSTOM`] ?? line.m.handlePrice ?? "" }];
+      manualRate: line.m.handlePrice ?? "" })];
   });
 }
 function selectedMasterAccessory(row: MasterAccessoryRow) {
@@ -1858,10 +1893,19 @@ function calculatedAccessories(project: ProjectLine[], fillers: FillerRow[]): Ac
     const chimneyWidth = zoneFillers.reduce((total, filler) => total + (filler.fillerType === "chimney-panel" ? panelWidth(filler) : 0), 0);
     const row = (kind: AccessoryKind, offset: number, millimetres: number): AccessoryRow => ({
       id: -1000 - index * 2 - offset, kind, size: (millimetres / 1000).toFixed(3), qty: 1,
-      elevation, straight: 0, lconn: 0, driver: "",
+      elevation, straight: 0, lconn: 0, driver: "", automaticKey: `elevation:${elevation}:${kind}`,
     });
-    return [row("skirting", 1, skirtingCabinetWidths + extraSkirting), row("elenor", 2, Math.max(0, wallWidths - chimneyWidth))]
+    const profiles = [row("skirting", 1, skirtingCabinetWidths + extraSkirting), row("elenor", 2, Math.max(0, wallWidths - chimneyWidth))]
       .filter((item) => Number(item.size) > 0);
+    const handles = zoneLines.flatMap((line) => {
+      if (!FILLER_ZKS.base.includes(line.m.zk) || line.m.handle !== "XCJ") return [];
+      const handleRow = (kind: "c-handle" | "j-handle", offset: number): AccessoryRow => ({
+        id: -(line.id * 10 + offset), kind, size: (line.m.W / 1000).toFixed(3), qty: line.qty,
+        elevation: line.elevation, straight: 0, lconn: 0, driver: "", automaticKey: `cabinet:${line.id}:${kind}`,
+      });
+      return [handleRow("j-handle", 1), ...(famSetOf(line.m.zk)[line.m.fk]?.drawers ? [handleRow("c-handle", 2)] : [])];
+    });
+    return [...profiles, ...handles];
   });
 }
 
@@ -1956,6 +2000,22 @@ function buildMasterAccessoryRows(accs: MasterAccessoryRow[], so: string): Acces
       Total: row.qty, "Actual Qty": row.qty, "Zoho Item ID": item.priced ? item.id : "",
     }];
   });
+}
+
+/** Keep each cut piece editable, but purchase/export one quantity per item and elevation. */
+function mergeAccessoryExportRows(rows: AccessoryExportRow[]): AccessoryExportRow[] {
+  const grouped = new Map<string, AccessoryExportRow>();
+  for (const row of rows) {
+    const key = `${row.Elevation}\u0000${row["Zoho Item ID"] || row["Item Name"].trim().toUpperCase()}`;
+    const previous = grouped.get(key);
+    if (!previous) { grouped.set(key, { ...row }); continue; }
+    const sum = (left: number | string, right: number | string): number | string =>
+      typeof left === "number" && typeof right === "number" ? r3(left + right) : left === "" ? right : right === "" ? left : left;
+    previous.Total = sum(previous.Total, row.Total);
+    previous["Actual Qty"] = sum(previous["Actual Qty"], row["Actual Qty"]);
+    if (row.Size && row.Total !== "") previous.Size = previous.Size ? `${previous.Size} + ${row.Size}` : row.Size;
+  }
+  return [...grouped.values()];
 }
 
 /* --- Costing — rupee totals for the user; factors stay on /admin --- */
@@ -2060,14 +2120,17 @@ const DEFAULT_PROJECT_PRICING: ProjectPricingInputs = {
 type ProjectRestore = {
   project: ProjectLine[];
   fillers: FillerRow[];
+  linkedFillerEdits?: LinkedFillerEdit[];
   visiblePanels: VisiblePanelRow[];
   countertops: CountertopRow[];
   accessories: AccessoryRow[];
   masterAccessories: MasterAccessoryRow[];
+  linkedAccessoryEdits?: LinkedAccessoryEdit[];
   waste: WastePct;
   pricing: ProjectPricingInputs;
   rawSelections: Array<{ key: string; id: string; name: string; sku: string; stock_on_hand?: number }>;
   current?: { config: CabinetConfig; elevation: string; qty: number };
+  hasSavedMaterialSnapshot?: boolean;
   notice: string;
 };
 
@@ -2087,10 +2150,12 @@ function projectSetupRows(data: Omit<ProjectRestore, "notice">): ProjectSetupRow
     row("settings", { waste: data.waste, pricing: data.pricing, current: data.current }),
     ...data.project.map((line) => row("cabinet", { id: line.id, config: cabinetConfig(line.m), qty: line.qty, elevation: line.elevation })),
     ...data.fillers.map((item) => row("filler", item)),
+    ...(data.linkedFillerEdits ?? []).filter((item) => data.project.some((line) => line.id === item.linkedLineId)).map((item) => row("linked-filler-edit", item)),
     ...data.visiblePanels.map((item) => row("visible-panel", item)),
     ...data.countertops.map((item) => row("countertop", item)),
     ...data.accessories.map((item) => row("other-accessory", item)),
     ...data.masterAccessories.map((item) => row("accessory", item)),
+    ...(data.linkedAccessoryEdits ?? []).filter((item) => data.project.some((line) => line.id === item.linkedLineId)).map((item) => row("linked-accessory-edit", item)),
     ...data.rawSelections.map((item) => row("raw-selection", item)),
   ];
 }
@@ -2163,6 +2228,7 @@ function cabinetConfigWithSelectedMaterials(value: unknown, materials: KitchenMa
     shType: selected.shutter.itemId,
     visibleSideMaterialId: selected.visible.itemId,
     hingeChoice: (materials._hingeChoice ?? value.hingeChoice) as HingeChoice,
+    drawerModel: materials._drawerBrand ?? value.drawerModel,
     carcassLamFrontSheetPrice: selected.carcass.frontSheetPrice,
     carcassLamBackSheetPrice: selected.carcass.backSheetPrice,
     backLamFrontSheetPrice: selected.back.frontSheetPrice,
@@ -2207,7 +2273,34 @@ function restoreProjectSetup(rows: Record<string, unknown>[], pdfMaterials?: Kit
   const project = records.filter((record) => record.kind === "cabinet").map((record, index) => {
     if (!isRecord(record.data) || typeof record.data.qty !== "number" || record.data.qty < 1 || !Number.isFinite(record.data.qty)) throw new Error("A saved cabinet quantity is invalid.");
     const config = validatedCabinetConfig(pdfMaterials ? cabinetConfigWithSelectedMaterials(record.data.config, pdfMaterials) : record.data.config);
-    return { id: index + 1, m: buildModel(config), qty: record.data.qty, elevation: String(record.data.elevation ?? "") };
+    return { id: typeof record.data.id === "number" && Number.isFinite(record.data.id) ? record.data.id : index + 1,
+      m: buildModel(config), qty: record.data.qty, elevation: String(record.data.elevation ?? "") };
+  });
+  const linkedAccessoryEdits = records.filter((record) => record.kind === "linked-accessory-edit").map((record) => {
+    const value = record.data;
+    if (!isRecord(value) || typeof value.linkedLineId !== "number" || !Number.isFinite(value.linkedLineId) ||
+        typeof value.sourceItemId !== "string" || !project.some((line) => line.id === value.linkedLineId) ||
+        (value.qty !== undefined && (typeof value.qty !== "number" || !Number.isFinite(value.qty) || value.qty < 0)) ||
+        (value.manualRate !== undefined && !validAccessoryManualRate(value.manualRate)) ||
+        (value.itemId !== undefined && typeof value.itemId !== "string") ||
+        (value.elevation !== undefined && typeof value.elevation !== "string") ||
+        (value.disabled !== undefined && typeof value.disabled !== "boolean")) {
+      throw new Error("A saved cabinet accessory edit is invalid.");
+    }
+    return value as unknown as LinkedAccessoryEdit;
+  });
+  const linkedFillerEdits = records.filter((record) => record.kind === "linked-filler-edit").map((record) => {
+    const value = record.data;
+    if (!isRecord(value) || typeof value.linkedLineId !== "number" || !project.some((line) => line.id === value.linkedLineId) ||
+        (value.disabled !== undefined && typeof value.disabled !== "boolean") ||
+        (value.fillerType !== undefined && !FILLER_TYPES.some((type) => type.value === value.fillerType)) ||
+        (value.zone !== undefined && !FILLER_ZONES.includes(value.zone as (typeof FILLER_ZONES)[number])) ||
+        (value.qty !== undefined && (!Number.isSafeInteger(value.qty) || (value.qty as number) < 1)) ||
+        ["customShade", "customHeight", "customWidth", "customDepth", "elevation"].some((key) => value[key] !== undefined && typeof value[key] !== "string") ||
+        ["customHeight", "customWidth", "customDepth"].some((key) => value[key] !== undefined && value[key] !== "" && !(Number(value[key]) > 0))) {
+      throw new Error("A saved cabinet filler edit is invalid.");
+    }
+    return value as unknown as LinkedFillerEdit;
   });
   const values = <T extends { id: number; qty: number },>(kind: string): T[] => records.filter((record) => record.kind === kind).map((record) => {
     if (!isRecord(record.data)) throw new Error(`A ${kind} row is invalid.`);
@@ -2245,10 +2338,11 @@ function restoreProjectSetup(rows: Record<string, unknown>[], pdfMaterials?: Kit
       stock_on_hand: typeof record.data.stock_on_hand === "number" ? record.data.stock_on_hand : undefined };
   });
   return {
-    project, fillers: values<FillerRow>("filler"), visiblePanels: values<VisiblePanelRow>("visible-panel"),
+    project, fillers: values<FillerRow>("filler"), linkedFillerEdits, visiblePanels: values<VisiblePanelRow>("visible-panel"),
     countertops: values<CountertopRow>("countertop"),
     accessories: values<AccessoryRow>("other-accessory").map((row) => restoreAccessoryRow(row, Number(format.version), project)),
-    masterAccessories: values<MasterAccessoryRow>("accessory"), waste, pricing, rawSelections, current,
+    masterAccessories: values<MasterAccessoryRow>("accessory"), linkedAccessoryEdits, waste, pricing, rawSelections, current,
+    hasSavedMaterialSnapshot: true,
     notice: `Imported ${project.length} cabinet line${project.length === 1 ? "" : "s"} with ${pdfMaterials ? "the kitchen materials and laminate prices selected before entering the Builder" : "saved materials"}, hardware choices, accessories, raw selections, and pricing settings.`,
   };
 }
@@ -2384,16 +2478,15 @@ function restoreLegacyPrintedPdf(pages: string[], pdfMaterials?: KitchenMaterial
   return restored;
 }
 
-async function readProjectFile(file: File, pdfMaterials?: KitchenMaterials, requireSavedPdfMaterials = false): Promise<ProjectRestore> {
+async function readProjectFile(file: File, pdfMaterials?: KitchenMaterials): Promise<ProjectRestore> {
   if (file.size > 10_000_000) throw new Error("The selected file is too large (maximum 10 MB).");
   if (file.name.toLowerCase().endsWith(".pdf")) {
     const data = await readPrintedProjectPdf(file);
     if (isRecord(data) && Array.isArray(data.legacyPages)) {
-      if (requireSavedPdfMaterials) throw new Error("This older PDF does not contain per-cabinet saved materials. Use Import printed PDF to apply the current kitchen selections instead.");
       return restoreLegacyPrintedPdf(data.legacyPages as string[], pdfMaterials);
     }
     if (!Array.isArray(data)) throw new Error("This PDF does not contain valid project rows.");
-    return restoreProjectSetup(data as Record<string, unknown>[], pdfMaterials);
+    return restoreProjectSetup(data as Record<string, unknown>[]);
   }
   if (file.name.toLowerCase().endsWith(".json")) {
     const data: unknown = JSON.parse(await file.text());
@@ -2819,10 +2912,10 @@ function toReportRows(rows: FullBomRow[]): BomReportRow[] {
 /*  Component                                                          */
 /* ------------------------------------------------------------------ */
 
-export function WoodBomBuilder({ soMode = false, planningMode = false, materials }: { soMode?: boolean; planningMode?: boolean; materials?: KitchenMaterials } = {}) {
+export function WoodBomBuilder({ soMode = false, planningMode = false, materials: selectedMaterials }: { soMode?: boolean; planningMode?: boolean; materials?: KitchenMaterials } = {}) {
   const railRef = useRef<HTMLElement>(null);
   const pdfImportRef = useRef<HTMLInputElement>(null);
-  const savedMaterialsPdfRef = useRef<HTMLInputElement>(null);
+  const [materials, setMaterials] = useState(selectedMaterials);
   const [zk, setZk] = useState("BC");
   const [fk, setFk] = useState("SH");
   const [vid, setVid] = useState("single");
@@ -2851,7 +2944,7 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
   const [hingeChoice, setHingeChoice] = useState<HingeChoice>((materials?._hingeChoice as HingeChoice | undefined) ?? "Hettich Soft Close");
   const [neon] = useState("NEON50");
   const [hingeLocked, setHingeLocked] = useState(false);
-  const [drawerModel, setDrawerModel] = useState("Hettich");
+  const [drawerModel, setDrawerModel] = useState(materials?._drawerBrand ?? "Hettich");
   const [drawerLocked, setDrawerLocked] = useState(false);
   const [finish, setFinish] = useState((boardFinishesData as string[])[0] ?? "White");
   const [elevation, setElevation] = useState("AA");
@@ -2884,21 +2977,28 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
 
   /* --- new sections: fillers / visible panels / countertop / accessories --- */
   const [fillers, setFillers] = useState<FillerRow[]>([]);
+  const [linkedFillerEdits, setLinkedFillerEdits] = useState<LinkedFillerEdit[]>([]);
   const [visiblePanels, setVisiblePanels] = useState<VisiblePanelRow[]>([]);
   const [countertops, setCountertops] = useState<CountertopRow[]>([]);
   const [accessories, setAccessories] = useState<AccessoryRow[]>([]);
   const [masterAccessories, setMasterAccessories] = useState<MasterAccessoryRow[]>([]);
-  const [linkedAccessoryRates, setLinkedAccessoryRates] = useState<Record<string, string>>({});
-  const linkedFillers = useMemo(() => cabinetFillers(project), [project]);
-  const allFillers = useMemo(() => [...fillers, ...linkedFillers], [fillers, linkedFillers]);
+  const [linkedAccessoryEdits, setLinkedAccessoryEdits] = useState<LinkedAccessoryEdit[]>([]);
+  const linkedFillers = useMemo(() => cabinetFillers(project).map((filler) => ({
+    ...filler, ...linkedFillerEdits.find((edit) => edit.linkedLineId === filler.linkedLineId),
+  })), [project, linkedFillerEdits]);
+  const allFillers = useMemo(() => [...fillers, ...linkedFillers.filter((filler) => !filler.disabled)], [fillers, linkedFillers]);
   const automaticAccessories = useMemo(() => calculatedAccessories(project, allFillers), [project, allFillers]);
-  const allAccessories = useMemo(() => [
-    ...accessories,
-    ...automaticAccessories.filter((automatic) => !accessories.some((manual) => manual.kind === automatic.kind &&
-      (!manual.elevation || manual.elevation === automatic.elevation))),
-  ], [accessories, automaticAccessories]);
-  const linkedAccessories = useMemo(() => cabinetAccessories(project, linkedAccessoryRates), [project, linkedAccessoryRates]);
-  const allMasterAccessories = useMemo(() => [...masterAccessories, ...linkedAccessories], [masterAccessories, linkedAccessories]);
+  const allAccessories = useMemo(() => {
+    const manual = accessories.filter((row) => !row.automaticKey);
+    const edited = new Map(accessories.filter((row) => row.automaticKey).map((row) => [row.automaticKey, row]));
+    return [...manual, ...automaticAccessories.flatMap((automatic) => {
+      const override = edited.get(automatic.automaticKey);
+      if (override?.disabled) return [];
+      return [{ ...automatic, ...override }];
+    })];
+  }, [accessories, automaticAccessories]);
+  const linkedAccessories = useMemo(() => cabinetAccessories(project, linkedAccessoryEdits), [project, linkedAccessoryEdits]);
+  const allMasterAccessories = useMemo(() => [...masterAccessories, ...linkedAccessories.filter((row) => !row.disabled)], [masterAccessories, linkedAccessories]);
   const [waste, setWaste] = useState({ ...WASTE });
   const [boardSheetInputs, setBoardSheetInputs] = useState<Record<string, string>>({});
   const [projectPricingInputs, setProjectPricingInputs] = useState<ProjectPricingInputs>(DEFAULT_PROJECT_PRICING);
@@ -2917,6 +3017,14 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
   const addFiller = () => setFillers((c) => [...c, { id: nextIdOf(c), fillerType: "filler", zone: "base", customShade: "", qty: 1, customHeight: "", customWidth: "", customDepth: "", elevation }]);
   const updFiller = (id: number, p: Partial<FillerRow>) => setFillers((c) => c.map((r) => r.id === id ? { ...r, ...p } : r));
   const rmFiller = (id: number) => setFillers((c) => c.filter((r) => r.id !== id));
+  const updLinkedFiller = (source: FillerRow, change: Partial<LinkedFillerEdit>) => setLinkedFillerEdits((current) => {
+    if (source.linkedLineId === undefined) return current;
+    const existing = current.find((row) => row.linkedLineId === source.linkedLineId);
+    return existing
+      ? current.map((row) => row === existing ? { ...row, ...change } : row)
+      : [...current, { linkedLineId: source.linkedLineId, ...change }];
+  });
+  const resetLinkedFiller = (source: FillerRow) => setLinkedFillerEdits((current) => current.filter((row) => row.linkedLineId !== source.linkedLineId));
   const addVp = () => setVisiblePanels((c) => [...c, { id: nextIdOf(c), zone: "base", customShade: "", qty: 1, customHeight: "", customWidth: "", elevation: "", shutterType: "" }]);
   const updVp = (id: number, p: Partial<VisiblePanelRow>) => setVisiblePanels((c) => c.map((r) => r.id === id ? { ...r, ...p } : r));
   const rmVp = (id: number) => setVisiblePanels((c) => c.filter((r) => r.id !== id));
@@ -2925,9 +3033,27 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
   const rmCt = (id: number) => setCountertops((c) => c.filter((r) => r.id !== id));
   const addAcc = () => setAccessories((c) => [...c, { id: nextIdOf(c), kind: "c-handle", size: "", qty: 1, elevation: "", straight: 0, lconn: 0, driver: "" }]);
   const updAcc = (id: number, p: Partial<AccessoryRow>) => setAccessories((c) => c.map((r) => r.id === id ? { ...r, ...p } : r));
+  const updAutomaticAcc = (source: AccessoryRow, change: Partial<AccessoryRow>) => setAccessories((current) => {
+    const existing = current.find((row) => row.automaticKey === source.automaticKey);
+    return existing
+      ? current.map((row) => row.id === existing.id ? { ...row, ...change } : row)
+      : [...current, { ...source, ...change, id: nextIdOf(current) }];
+  });
+  const resetAutomaticAcc = (source: AccessoryRow) => setAccessories((current) => current.filter((row) => row.automaticKey !== source.automaticKey));
   const rmAcc = (id: number) => setAccessories((c) => c.filter((r) => r.id !== id));
   const addMasterAcc = () => setMasterAccessories((c) => [...c, { id: nextIdOf(c), itemId: MASTER_ACCESSORY_ITEMS[0]?.id ?? "", qty: 1, elevation: "", manualRate: "" }]);
   const updMasterAcc = (id: number, p: Partial<MasterAccessoryRow>) => setMasterAccessories((c) => c.map((r) => r.id === id ? { ...r, ...p } : r));
+  const updLinkedAcc = (source: MasterAccessoryRow, change: Partial<LinkedAccessoryEdit>) => setLinkedAccessoryEdits((current) => {
+    const linkedLineId = source.linkedLineId;
+    const sourceItemId = source.sourceItemId;
+    if (linkedLineId === undefined || !sourceItemId) return current;
+    const existing = current.find((row) => row.linkedLineId === linkedLineId && row.sourceItemId === sourceItemId);
+    return existing
+      ? current.map((row) => row === existing ? { ...row, ...change } : row)
+      : [...current, { linkedLineId, sourceItemId, ...change }];
+  });
+  const resetLinkedAcc = (source: MasterAccessoryRow) => setLinkedAccessoryEdits((current) =>
+    current.filter((row) => row.linkedLineId !== source.linkedLineId || row.sourceItemId !== source.sourceItemId));
   const rmMasterAcc = (id: number) => setMasterAccessories((c) => c.filter((r) => r.id !== id));
 
   /* --- raw material selection + stock check (Zoho) --- */
@@ -3071,17 +3197,37 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
   const delLine = (id: number) => {
     if (editingLineId === id) { setEditingLineId(null); setShelfOverride(null); }
     setProject((p) => p.filter((x) => x.id !== id));
+    setLinkedFillerEdits((current) => current.filter((row) => row.linkedLineId !== id));
+    setLinkedAccessoryEdits((current) => current.filter((row) => row.linkedLineId !== id));
     setSelectedProjectLineIds((current) => current.filter((selectedId) => selectedId !== id));
   };
 
-  const importFile = async (file: File, pdfSource: "current" | "saved" = "current") => {
+  const importFile = async (file: File) => {
     setImportError(""); setImportMessage("");
     try {
-      const restored = await readProjectFile(file, pdfSource === "saved" ? undefined : materials, pdfSource === "saved");
+      const restored = await readProjectFile(file, materials);
       if (project.length > 0 && !window.confirm("Replace the current project with the imported file?")) return;
+      if (file.name.toLowerCase().endsWith(".pdf") && restored.hasSavedMaterialSnapshot && restored.project.length) {
+        const imported = materialsFromImportedCabinets(restored.project.map((line) => cabinetConfig(line.m)), materials);
+        const response = await fetch("/api/kitchen-materials", {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(imported.materials),
+        });
+        if (!response.ok) {
+          const result = await response.json().catch(() => ({}));
+          throw new Error(result.error ?? "Could not save the PDF materials to the material selection page.");
+        }
+        window.sessionStorage.removeItem(MATERIAL_EDIT_DRAFT_KEY);
+        setMaterials(imported.materials);
+        restored.notice += " The PDF board choices, prices, hinges, drawer brand, and handles are now filled in on Material Selection.";
+        if (imported.conflictingZones.length) restored.notice += ` Cabinets in ${imported.conflictingZones.join(", ")} have different materials within the same zone. Their individual BOM choices were kept; Material Selection shows the first cabinet in each zone.`;
+        if (imported.conflictingHandleZones.length) restored.notice += ` Cabinets in ${imported.conflictingHandleZones.join(", ")} have different handle settings within the same zone. Their individual BOM choices were kept; Material Selection shows the first cabinet in each zone.`;
+        if (imported.conflictingHinges) restored.notice += " The PDF contains different hinge settings. Individual cabinet BOM choices were kept; Material Selection shows the first cabinet's hinges.";
+        if (imported.conflictingDrawerBrands) restored.notice += " The PDF contains different drawer brands. Individual cabinet BOM choices were kept; Material Selection shows the first cabinet's drawer brand.";
+      }
       setProject(restored.project);
+      setLinkedFillerEdits(restored.linkedFillerEdits ?? []);
       setSelectedProjectLineIds([]);
-      setLinkedAccessoryRates({});
+      setLinkedAccessoryEdits(restored.linkedAccessoryEdits ?? []);
       setBoardSheetInputs({});
       setFillers(restored.fillers); setVisiblePanels(restored.visiblePanels);
       setCountertops(restored.countertops); setAccessories(restored.accessories);
@@ -3128,20 +3274,20 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
     () => [...buildFullBomData(project, soMode ? "SO" : "", finish, waste), ...extras.rows],
     [project, soMode, finish, waste, extras],
   );
-  const accessoryRows = useMemo(() => [
+  const accessoryRows = useMemo(() => mergeAccessoryExportRows([
     ...buildAccessoryRows(allAccessories, project, soMode ? "SO" : ""),
     ...buildMasterAccessoryRows(allMasterAccessories, soMode ? "SO" : ""),
-  ], [allAccessories, allMasterAccessories, project, soMode]);
+  ]), [allAccessories, allMasterAccessories, project, soMode]);
   const rawSelections = useMemo(() => Object.entries(rawMap).flatMap(([key, state]) => {
     if (!state.sel) return [];
     const item = state.items.find((candidate) => candidate.item_id === state.sel);
     return [{ key, id: state.sel, name: item?.name ?? "", sku: item?.sku ?? "", stock_on_hand: item?.stock_on_hand }];
   }), [rawMap]);
   const projectSetup = useMemo(() => projectSetupRows({
-    project, fillers, visiblePanels, countertops, accessories, masterAccessories,
+    project, fillers, linkedFillerEdits, visiblePanels, countertops, accessories, masterAccessories, linkedAccessoryEdits,
     waste, pricing: projectPricingInputs, rawSelections,
     current: W > 0 && H > 0 && D > 0 ? { config: cabinetConfig(m), elevation, qty } : undefined,
-  }), [project, fillers, visiblePanels, countertops, accessories, masterAccessories, waste, projectPricingInputs, rawSelections, W, H, D, m, elevation, qty]);
+  }), [project, fillers, linkedFillerEdits, visiblePanels, countertops, accessories, masterAccessories, linkedAccessoryEdits, waste, projectPricingInputs, rawSelections, W, H, D, m, elevation, qty]);
   useEffect(() => {
     const saved = window.sessionStorage.getItem(MATERIAL_EDIT_DRAFT_KEY);
     if (!saved || !materials) return;
@@ -3150,8 +3296,9 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
       if (!Array.isArray(draft.rows)) throw new Error("Saved kitchen is incomplete.");
       const restored = restoreProjectSetup(draft.rows, materials);
       setProject(restored.project);
+      setLinkedFillerEdits(restored.linkedFillerEdits ?? []);
       setSelectedProjectLineIds([]);
-      setLinkedAccessoryRates({});
+      setLinkedAccessoryEdits(restored.linkedAccessoryEdits ?? []);
       setFillers(restored.fillers); setVisiblePanels(restored.visiblePanels);
       setCountertops(restored.countertops); setAccessories(restored.accessories);
       setMasterAccessories(restored.masterAccessories);
@@ -3470,12 +3617,6 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
             event.target.value = "";
           }} />
           <button type="button" className="add" onClick={() => pdfImportRef.current?.click()}>Import printed PDF</button>
-          <input ref={savedMaterialsPdfRef} type="file" accept=".pdf,application/pdf" aria-label="Import PDF with saved materials" style={{ display: "none" }} onChange={(event) => {
-            const file = event.target.files?.[0];
-            if (file) void importFile(file, "saved");
-            event.target.value = "";
-          }} />
-          <button type="button" className="add" onClick={() => savedMaterialsPdfRef.current?.click()}>Import PDF with saved materials</button>
           <button type="button" className="add" disabled={project.length === 0} onClick={() => {
             setTab("totals");
             setSelectedElevation(null);
@@ -3782,11 +3923,39 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
               {/* ---- Fillers ---- */}
               <SecHead title="Filler / Other Panels" onAdd={addFiller} />
               {linkedFillers.length > 0 && <>
-                <p className="hint">These fillers follow their cabinets. Edit the cabinet to change width, height, or quantity.</p>
-                <Tbl head={["Cabinet", "Height (mm)", "Width (mm)", "Qty"]} num={[1, 2, 3]}
+                <p className="hint">Cabinet fillers start with cabinet dimensions. Edit them here for this project, or reset to the cabinet defaults.</p>
+                <Tbl head={["Use", "Cabinet", "Type", "Qty", "Shade", "Width (mm)", "Height (mm)", ...(linkedFillers.some((row) => row.fillerType === "cover-panel") ? ["Depth (mm)"] : []), "Elevation", ""]} num={[3]}
                   rows={linkedFillers.map((filler) => {
                     const line = project.find((candidate) => candidate.id === filler.linkedLineId);
-                    return [line?.m.code ?? "—", filler.customHeight, filler.customWidth, filler.qty];
+                    const changed = linkedFillerEdits.some((edit) => edit.linkedLineId === filler.linkedLineId);
+                    return [
+                      <input key="use" type="checkbox" aria-label={`Include filler for ${line?.m.code ?? "cabinet"}`} checked={!filler.disabled}
+                        onChange={(event) => updLinkedFiller(filler, { disabled: !event.target.checked })} />,
+                      line?.m.code ?? "—",
+                      <select key="type" aria-label={`Filler type for ${line?.m.code ?? "cabinet"}`} value={filler.fillerType ?? "filler"}
+                        onChange={(event) => {
+                          const fillerType = event.target.value as FillerRow["fillerType"];
+                          updLinkedFiller(filler, { fillerType, zone: fillerType === "chimney-panel" ? "wall" : fillerType === "dishwasher-panel" ? "base" : cabinetFillers(project).find((row) => row.linkedLineId === filler.linkedLineId)?.zone ?? filler.zone });
+                        }}>
+                        {FILLER_TYPES.map((type) => <option key={type.value} value={type.value}>{type.label}</option>)}
+                      </select>,
+                      <input key="qty" type="number" min={1} step={1} aria-label={`Filler quantity for ${line?.m.code ?? "cabinet"}`} value={filler.qty}
+                        onChange={(event) => updLinkedFiller(filler, { qty: Math.max(1, Math.trunc(Number(event.target.value) || 1)) })} style={{ width: 60 }} />,
+                      <select key="shade" aria-label={`Filler shade for ${line?.m.code ?? "cabinet"}`} value={filler.customShade}
+                        onChange={(event) => updLinkedFiller(filler, { customShade: event.target.value })}>
+                        {(boardFinishesData as string[]).map((shade) => <option key={shade}>{shade}</option>)}
+                      </select>,
+                      <input key="width" type="number" min={1} aria-label={`Filler width for ${line?.m.code ?? "cabinet"}`} value={filler.customWidth}
+                        onChange={(event) => updLinkedFiller(filler, { customWidth: event.target.value })} style={{ width: 84 }} />,
+                      <input key="height" type="number" min={1} aria-label={`Filler height for ${line?.m.code ?? "cabinet"}`} value={filler.customHeight}
+                        onChange={(event) => updLinkedFiller(filler, { customHeight: event.target.value })} style={{ width: 84 }} />,
+                      ...(linkedFillers.some((row) => row.fillerType === "cover-panel") ? [filler.fillerType === "cover-panel" ?
+                        <input key="depth" type="number" min={1} aria-label={`Filler depth for ${line?.m.code ?? "cabinet"}`} value={filler.customDepth ?? ""}
+                          onChange={(event) => updLinkedFiller(filler, { customDepth: event.target.value })} style={{ width: 84 }} /> : null] : []),
+                      <input key="elevation" list="elev-list" aria-label={`Filler elevation for ${line?.m.code ?? "cabinet"}`} value={filler.elevation}
+                        onChange={(event) => updLinkedFiller(filler, { elevation: event.target.value })} style={{ width: 65 }} />,
+                      changed ? <button key="reset" type="button" onClick={() => resetLinkedFiller(filler)}>Reset</button> : "—",
+                    ];
                   })} />
               </>}
               {fillers.length === 0 ? <div className="empty">No additional stand-alone fillers. A filler is a shutter-type panel with {BAND_T}mm band — default width {FILLER_DEF_W}mm.</div> :
@@ -3874,14 +4043,41 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
 
               {/* ---- Other Accessories ---- */}
               <SecHead title="Other Accessories" onAdd={addAcc} />
-              <p className="hint">PVC skirting uses base and tall cabinet widths plus linked base fillers and dishwasher panels. LED profile light uses wall cabinet widths minus chimney panels. Manual rows of the same type override the calculated length.</p>
-              {automaticAccessories.length > 0 && <Tbl head={["Calculated accessory", "Elevation", "Total cut length (m)", "Source"]} num={[2]}
-                rows={automaticAccessories.map((item) => [ACC_LABEL[item.kind], item.elevation || "—", accessoryMeters(item).toFixed(3),
-                  accessories.some((manual) => manual.kind === item.kind && (!manual.elevation || manual.elevation === item.elevation))
-                    ? "Manual override in use" : "Automatically in BOM and costing"])} />}
-              {accessories.length === 0 ? <div className="empty">PVC skirting, LED profile light, C and J handles. Enter each cutting size in metres and a whole-number quantity. Total length is size × quantity.</div> : <>
+              <p className="hint">Calculated rows are defaults. Edit their cutting size, quantity, or other fields for this project; Reset restores the calculated values. Gola base cabinets get a J handle, and drawer-bearing base cabinets also get a C handle, each cut to cabinet width.</p>
+              {automaticAccessories.length > 0 && <Tbl head={["Use", "Calculated accessory", "Cut size (m)", "Qty (pcs)", "Total (m)", "Elevation", "Straight", "L-conn", "Driver", "Source", ""]} num={[3, 4]}
+                rows={automaticAccessories.map((source) => {
+                  const override = accessories.find((row) => row.automaticKey === source.automaticKey);
+                  const item = { ...source, ...override };
+                  const disabled = !!override?.disabled;
+                  const cabinet = project.find((line) => source.automaticKey?.startsWith(`cabinet:${line.id}:`));
+                  return [
+                    <input key="use" type="checkbox" aria-label={`Include ${ACC_LABEL[source.kind]} for ${cabinet?.m.code ?? source.elevation}`} checked={!override?.disabled}
+                      onChange={(event) => updAutomaticAcc(source, { disabled: !event.target.checked })} />,
+                    <select key="kind" value={item.kind} disabled={disabled} aria-label={`Accessory type for ${cabinet?.m.code ?? source.elevation}`}
+                      onChange={(event) => updAutomaticAcc(source, { kind: event.target.value as AccessoryKind })}>
+                      {(Object.keys(ACC_LABEL) as AccessoryKind[]).map((kind) => <option key={kind} value={kind}>{ACC_LABEL[kind]}</option>)}</select>,
+                    <input key="size" type="number" min={0} step="0.001" value={item.size} disabled={disabled} aria-label={`Cut size for ${ACC_LABEL[source.kind]} ${cabinet?.m.code ?? source.elevation}`}
+                      onChange={(event) => updAutomaticAcc(source, { size: event.target.value })} style={{ width: 90 }} />,
+                    <input key="qty" type="number" min={1} step={1} value={item.qty} disabled={disabled} aria-label={`Quantity for ${ACC_LABEL[source.kind]} ${cabinet?.m.code ?? source.elevation}`}
+                      onChange={(event) => updAutomaticAcc(source, { qty: Math.max(1, Math.trunc(Number(event.target.value) || 1)) })} style={{ width: 58 }} />,
+                    accessoryMeters(item).toFixed(3),
+                    <input key="elev" list="elev-list" value={item.elevation} disabled={disabled} aria-label={`Elevation for ${ACC_LABEL[source.kind]} ${cabinet?.m.code ?? source.elevation}`}
+                      onChange={(event) => updAutomaticAcc(source, { elevation: event.target.value })} style={{ width: 64 }} />,
+                    item.kind === "skirting" ? <input key="straight" type="number" min={0} step={1} value={item.straight} disabled={disabled} aria-label={`Straight connectors for ${source.elevation}`}
+                      onChange={(event) => updAutomaticAcc(source, { straight: Math.max(0, Math.trunc(Number(event.target.value) || 0)) })} style={{ width: 58 }} /> : "—",
+                    item.kind === "skirting" ? <input key="lconn" type="number" min={0} step={1} value={item.lconn} disabled={disabled} aria-label={`L connectors for ${source.elevation}`}
+                      onChange={(event) => updAutomaticAcc(source, { lconn: Math.max(0, Math.trunc(Number(event.target.value) || 0)) })} style={{ width: 58 }} /> : "—",
+                    item.kind === "elenor" ? <select key="driver" value={selectedDriver(item.driver)?.id ?? ""} disabled={disabled} aria-label={`Driver for ${source.elevation}`}
+                      onChange={(event) => updAutomaticAcc(source, { driver: event.target.value })}>
+                      <option value="">— no driver —</option>{DRIVER_ITEMS.map((driver) => <option key={driver.id} value={driver.id}>{driver.subgroup}</option>)}
+                    </select> : "—",
+                    cabinet?.m.code ?? "Cabinet widths",
+                    override && <button key="reset" type="button" onClick={() => resetAutomaticAcc(source)}>Reset</button>,
+                  ];
+                })} />}
+              {accessories.filter((row) => !row.automaticKey).length === 0 ? <div className="empty">Add a separate manual accessory row if needed. Calculated rows above already appear in the BOM and costing.</div> : <>
                 <Tbl head={["Accessory", "Cut size (m)", "Qty (pcs)", "Total (m)", "Elevation", "Straight", "L-conn", "Driver", ""]} num={[2, 3]}
-                  rows={accessories.map((a) => [
+                  rows={accessories.filter((row) => !row.automaticKey).map((a) => [
                     <select key="k" value={a.kind} onChange={(e) => updAcc(a.id, { kind: e.target.value as AccessoryKind, size: "", lengthMeters: undefined, qty: 1 })}>
                       {(Object.keys(ACC_LABEL) as AccessoryKind[]).map((k) => <option key={k} value={k}>{ACC_LABEL[k]}</option>)}</select>,
                     <input key="s" aria-label={`${ACC_LABEL[a.kind]} cutting size (metres)`} type="number" min={0} step="0.001" value={a.size}
@@ -3902,15 +4098,38 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
               {/* ---- Accessories from the priced KITCHEN master and reference catalog ---- */}
               <SecHead title="Accessories" onAdd={addMasterAcc} />
               {linkedAccessories.length > 0 && <>
-                <p className="hint">Automatically included from cabinet configuration. Change or remove the cabinet to update these items.</p>
-                <Tbl head={["Accessory item", "Cabinet", "Qty", "Elevation", "Rate override (Rs/unit)"]} num={[2, 4]}
+                <p className="hint">Suggested from cabinet configuration. You can change the item, quantity, elevation or rate, exclude it, or reset it to the calculated default.</p>
+                <Tbl head={["Use", "Accessory item", "Cabinet", "Qty", "Elevation", "Rate (Rs/unit)", ""]} num={[3, 5]}
                   rows={linkedAccessories.map((row) => {
                     const item = selectedMasterAccessory(row);
                     const line = project.find((candidate) => candidate.id === row.linkedLineId);
-                    return [item?.materialDescription ?? row.itemId, line?.m.code ?? "—", row.qty, row.elevation,
+                    const modified = linkedAccessoryEdits.some((edit) => edit.linkedLineId === row.linkedLineId && edit.sourceItemId === row.sourceItemId);
+                    return [
+                      <input key="use" type="checkbox" aria-label={`Include ${item?.subgroup ?? row.itemId} for ${line?.m.code ?? "cabinet"}`} checked={!row.disabled}
+                        onChange={(event) => updLinkedAcc(row, { disabled: !event.target.checked })} />,
+                      <div key="item" style={{ minWidth: 320 }}>
+                        <AccessoryPicker rowId={row.id} selectedLabel={item ? `${item.subgroup} — ${item.materialDescription}` : row.customName ?? ""}
+                          selectedId={row.itemId}
+                          onSelect={(itemId) => updLinkedAcc(row, { itemId, customName: undefined, customUnit: undefined, customBrand: undefined, manualRate: "" })}
+                          onCustom={(customName) => updLinkedAcc(row, { itemId: "CUSTOM", customName, customUnit: "PCS", customBrand: "", manualRate: "" })} />
+                        {row.itemId === "CUSTOM" && <div className="accessory-custom-fields">
+                          <input aria-label="Linked custom accessory name" placeholder="Accessory name" value={row.customName ?? ""} onChange={(event) => updLinkedAcc(row, { customName: event.target.value })} />
+                          <select aria-label="Linked custom accessory unit" value={row.customUnit ?? "PCS"} onChange={(event) => updLinkedAcc(row, { customUnit: event.target.value as "PCS" | "SET" | "MTR" })}>
+                            <option value="PCS">PCS</option><option value="SET">SET</option><option value="MTR">MTR</option>
+                          </select>
+                        </div>}
+                      </div>,
+                      line?.m.code ?? "—",
+                      <input key="qty" type="number" min={item?.rateBasis === "MTR" ? 0 : 1} step={item?.rateBasis === "MTR" ? "0.01" : "1"}
+                        aria-label={`Quantity for ${item?.subgroup ?? row.itemId}`} value={row.qty}
+                        onChange={(event) => { const value = Number(event.target.value); if (Number.isFinite(value) && value >= (item?.rateBasis === "MTR" ? 0 : 1)) updLinkedAcc(row, { qty: item?.rateBasis === "MTR" ? value : Math.trunc(value) }); }} style={{ width: 76 }} />,
+                      <input key="elevation" list="elev-list" aria-label={`Elevation for ${item?.subgroup ?? row.itemId}`} value={row.elevation}
+                        onChange={(event) => updLinkedAcc(row, { elevation: event.target.value })} style={{ width: 68 }} />,
                       <input key="rate" type="number" min={0} step="0.01" aria-label={`Rate for ${item?.subgroup ?? row.itemId}`}
                         placeholder={item?.priced ? item.currentRate.toFixed(2) : "Enter rate"} value={row.manualRate ?? ""}
-                        onChange={(event) => { const value = event.target.value; if (value === "" || Number.isFinite(Number(value)) && Number(value) >= 0) setLinkedAccessoryRates((current) => ({ ...current, [`${row.linkedLineId}|${row.itemId}`]: value })); }} style={{ width: 120 }} />];
+                        onChange={(event) => { const value = event.target.value; if (value === "" || Number.isFinite(Number(value)) && Number(value) >= 0) updLinkedAcc(row, { manualRate: value }); }} style={{ width: 120 }} />,
+                      modified ? <button key="reset" type="button" onClick={() => resetLinkedAcc(row)}>Reset</button> : "—",
+                    ];
                   })} />
               </>}
               {masterAccessories.length === 0 ? <div className="empty">No accessories selected. Priced Kitchen-master items and the wider reference accessory catalog are available.</div> :
@@ -3942,9 +4161,10 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
                   })} />}
 
               {accessoryRows.length > 0 && <>
-                <h4>Accessory lines (export preview)</h4>
-                <Tbl head={["Accessory", "Item", "Size", "Total", "Actual Qty"]} num={[3, 4]}
-                  rows={accessoryRows.map((r) => [r.Accessory, r["Item Name"], r.Size, r.Total, r["Actual Qty"]])} />
+                <h4>Merged accessory quantities (export preview)</h4>
+                <p className="hint">Matching items combine within each elevation. Individual cutting sizes remain editable in the rows above.</p>
+                <Tbl head={["Elevation", "Accessory", "Item", "Cut sizes", "Total", "Actual Qty"]} num={[4, 5]}
+                  rows={accessoryRows.map((r) => [r.Elevation, r.Accessory, r["Item Name"], r.Size, r.Total, r["Actual Qty"]])} />
               </>}
 
               {/* ---- Costing with an auditable per-cabinet breakdown ---- */}
@@ -4132,7 +4352,7 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
                   if (file) void importFile(file);
                   event.target.value = "";
                 }} />
-                <Hint>Import replaces the current project. This standard PDF import uses the kitchen materials selected before entering the Builder; use “Import PDF with saved materials” above to restore the exact material choices and prices stored in a newer exported PDF. Excel BOM and JSON files restore their saved choices.</Hint>
+                <Hint>Import replaces the current project. A printed PDF with Project restore data restores its exact cabinet materials and fills those choices on Material Selection. Older PDFs without restore data use the current kitchen selections. Excel BOM and JSON files restore their saved choices.</Hint>
                 {importMessage && <p role="status" style={{ color: "var(--acc)" }}>{importMessage}</p>}
                 {importError && <p role="alert" style={{ color: "var(--flag)" }}>{importError}</p>}
               </div>
@@ -4254,7 +4474,7 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
       </div>}
       <section className="print-data" aria-label="Project restore data">
         <h2>Project restore data</h2>
-        <p>Keep this final page when saving or printing to PDF. It lets the Builder restore cabinet and project details. Use “Import PDF with saved materials” to restore the material choices in this PDF, or the standard import to apply the current kitchen selection.</p>
+        <p>Keep this final page when saving or printing to PDF. It lets the Builder restore cabinet and project details, including the saved material choices and prices, when the PDF is imported.</p>
         {printRestoreLines.map((line) => <div className="print-data-line" key={line.slice(0, 11)}>{line}</div>)}
       </section>
     </div>
