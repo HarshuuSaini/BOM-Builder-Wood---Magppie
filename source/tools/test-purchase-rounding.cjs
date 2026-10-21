@@ -192,12 +192,15 @@ XLSX.writeFile = value => { workbook = value; };
 require('../src/lib/export.ts').exportCostingWorkbook(full.lines, [], {
   cabinetSqft: 0, fillerSqft: 0, totalSqft: 0, baseCost: full.total, conversion: 0, profit: 0,
   transportation: 0, installation: 0, loading: 0, subtotal: full.total, tax: 0, grandTotal: full.total,
-}, full.unpriced);
+}, full.unpriced, {
+  conversionPct: 0, profitPct: 0, transportation: { mode: 'direct', value: 0 },
+  installation: { mode: 'direct', value: 0 }, loading: { mode: 'direct', value: 0 }, includeTax: false,
+});
 const exported = XLSX.utils.sheet_to_json(workbook.Sheets['Consolidated Items']);
 assert(exported.some(p => !Number.isInteger(p['Purchase qty'])));
 for (const p of exported) {
-  near(p['Purchase qty'], Math.round((p['Required qty incl. waste'] + Number.EPSILON) * 100) / 100);
-  near(p['Amount (Rs)'], p['Purchase qty'] * p['Rate (Rs / basis)']);
+  near(p['Purchase qty'], Math.round((p['Required qty (editable)'] / p['Units per purchase'] + Number.EPSILON) * 100) / 100);
+  near(p['Amount (Rs)'], p['Purchase qty'] * p['Purchase rate (Rs)']);
 }
 assert.equal(workbook.Sheets['Consolidated Items'].E2.z, '#,##0.00');
 assert.equal(workbook.Sheets['Manual Comparison'].G5.z, '#,##0.00');

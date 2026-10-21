@@ -2866,6 +2866,7 @@ function computeCosting(
     lines.push({ label: `${accessory.elevation ? `${accessory.elevation} · ` : ""}${ACC_LABEL[accessory.kind]}`, qty, unitCost: qty ? cost / qty : cost, cost, details });
   });
 
+  const accessoryCostLines = new Map<string, LineCost>();
   masterAccessories.forEach((row) => {
     const item = selectedMasterAccessory(row);
     if (!item) return;
@@ -2873,18 +2874,35 @@ function computeCosting(
     const manualRate = row.manualRate?.trim() ?? "";
     const hasManualRate = manualRate !== "";
     const rate = hasManualRate ? Number(manualRate) : item.currentRate;
-    if ((hasManualRate && (!Number.isFinite(rate) || rate < 0)) || (!hasManualRate && (!item.priced || !Number.isFinite(rate) || rate <= 0))) {
-      unpriced.add(`${item.materialDescription} (reference accessory)`);
-      lines.push({ label: `${row.elevation ? `${row.elevation} · ` : ""}${item.materialDescription}`, qty, unitCost: 0, cost: 0, details: [{ category: "Accessory", itemCode: item.id, item: item.materialDescription, specification: `${item.subgroup} · RATE REQUIRED`, netQty: qty, wastePct: 0, billableQty: qty, uom: item.rateBasis === "SET" ? "set" : item.rateBasis === "MTR" ? "RMT" : "nos", rate: 0, amount: 0 }] });
+    const itemCode = row.itemId === "CUSTOM" ? "CUSTOM-ACCESSORY" : item.id;
+    const invalidRate = (hasManualRate && (!Number.isFinite(rate) || rate < 0)) || (!hasManualRate && (!item.priced || !Number.isFinite(rate) || rate <= 0));
+    const uom: CostDetail["uom"] = item.rateBasis === "SET" ? "set" : item.rateBasis === "MTR" ? "RMT" : "nos";
+    const effectiveRate = invalidRate ? 0 : rate;
+    const key = JSON.stringify([row.elevation, itemCode, item.materialDescription, uom, effectiveRate, invalidRate]);
+    const previous = accessoryCostLines.get(key);
+    if (previous) {
+      previous.qty += qty;
+      previous.details[0].netQty += qty;
+      previous.details[0].billableQty += qty;
+      previous.details[0].amount += qty * effectiveRate;
+      previous.cost += qty * effectiveRate;
       return;
     }
-    const uom: CostDetail["uom"] = item.rateBasis === "SET" ? "set" : item.rateBasis === "MTR" ? "RMT" : "nos";
+    if (invalidRate) {
+      unpriced.add(`${item.materialDescription} (reference accessory)`);
+      const line: LineCost = { label: `${row.elevation ? `${row.elevation} · ` : ""}${item.materialDescription}`, qty, unitCost: 0, cost: 0, details: [{ category: "Accessory", itemCode, item: item.materialDescription, specification: `${item.subgroup} · RATE REQUIRED`, netQty: qty, wastePct: 0, billableQty: qty, uom, rate: 0, amount: 0 }] };
+      accessoryCostLines.set(key, line);
+      lines.push(line);
+      return;
+    }
     const amount = qty * rate;
-    lines.push({
+    const line: LineCost = {
       label: `${row.elevation ? `${row.elevation} · ` : ""}${item.subgroup}`,
       qty, unitCost: rate, cost: amount,
-      details: [{ category: "Accessory", itemCode: item.id, item: item.materialDescription, specification: `${item.subgroup}${item.brand ? ` · ${item.brand}` : ""}${hasManualRate ? " · manual rate" : " · Kitchen master rate"}`, netQty: qty, wastePct: 0, billableQty: qty, uom, rate, amount }],
-    });
+      details: [{ category: "Accessory", itemCode, item: item.materialDescription, specification: `${item.subgroup}${item.brand ? ` · ${item.brand}` : ""}${hasManualRate ? " · manual rate" : " · Kitchen master rate"}`, netQty: qty, wastePct: 0, billableQty: qty, uom, rate, amount }],
+    };
+    accessoryCostLines.set(key, line);
+    lines.push(line);
   });
 
   for (const line of lines) for (const detail of line.details) {
@@ -4190,13 +4208,6 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
                   }),
                   ]} />}
 
-              {accessoryRows.length > 0 && <>
-                <h4>Merged accessory quantities (export preview)</h4>
-                <p className="hint">Matching items combine within each elevation. Individual cutting sizes remain editable in the rows above.</p>
-                <Tbl head={["Elevation", "Accessory", "Item", "Cut sizes", "Total", "Actual Qty"]} num={[4, 5]}
-                  rows={accessoryRows.map((r) => [r.Elevation, r.Accessory, r["Item Name"], r.Size, r.Total, r["Actual Qty"]])} />
-              </>}
-
               {/* ---- Costing with an auditable per-cabinet breakdown ---- */}
               <SecHead title="Costing (Rs)" />
               {costing.purchases.length > 0 && <details open style={{ marginBottom: 16 }}>
@@ -4211,7 +4222,7 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
                   selected={projectLineFilters.Cabinet ?? []}
                   onChange={(values) => setProjectLineFilters((current) => ({ ...current, Cabinet: values }))}
                   sortDirection={projectLineSort?.column === "Cabinet" ? projectLineSort.direction : null}
-                  onSort={(direction) => setProjectLineSort({ column: "Cabinet", direction })} />, "Qty", "Per cabinet (Rs)", "Total (Rs)"]} num={[1, 2, 3]}
+                  onSort={(direction) => setProjectLineSort({ column: "Cabinet", direction })} />, "Qty", "Per item (Rs)", "Total (Rs)"]} num={[1, 2, 3]}
                   rows={[
                     ...shownCosting.lines.filter((c) => !c.code || matchingCabinetCodes.has(c.code))
                       .sort((a, b) => a.code && b.code && projectLineSort?.column === "Cabinet"
