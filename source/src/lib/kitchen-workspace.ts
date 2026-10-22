@@ -1,5 +1,6 @@
 import type { KitchenMaterials } from "@/lib/kitchen-materials";
 import type { ProjectSetupRow } from "@/lib/export";
+import type { ManualCostingImport } from "@/lib/manual-costing-import";
 
 export const KITCHEN_WORKSPACE_KEY = "wood-bom-kitchen-workspace-v1";
 export const ACTIVE_KITCHEN_KEY = "wood-bom-active-kitchen-v1";
@@ -44,6 +45,7 @@ export type KitchenWorkspaceEntry = {
   materials?: KitchenMaterials;
   boardSheetInputs?: Record<string, string>;
   costing?: KitchenCostingSnapshot;
+  manualCosting?: ManualCostingImport;
 };
 
 export function readKitchenWorkspace(): KitchenWorkspaceEntry[] {

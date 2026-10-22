@@ -34,6 +34,7 @@ import { encodeProjectPrintData, readPrintedProjectPdf } from "@/lib/print-proje
 import type { BomReportRow } from "@/lib/types";
 import { allocatePurchaseCosts, roundQuantity, sheetQuantityInput, type PurchaseTotal } from "@/lib/purchase-rounding";
 import { activeKitchenId, kitchenNameFromPdfFilename, readKitchenWorkspace, setActiveKitchenId, writeKitchenWorkspace, type KitchenWorkspaceEntry, type KitchenCostingSnapshot } from "@/lib/kitchen-workspace";
+import { parseManualCosting, type ManualCostingImport } from "@/lib/manual-costing-import";
 
 /* ------------------------------------------------------------------ */
 /*  Types & Interfaces  (identical shapes to stone)                    */
@@ -137,6 +138,12 @@ function counterPlyAreaSqft(row: CountertopRow): number {
   const length = Number(row.length);
   const thickness = Number(row.thickness);
   return length > 0 && thickness > 0 ? length * thickness * Math.max(1, row.qty || 1) / 92903 : 0;
+}
+
+function counterPlyCostSqft(row: CountertopRow): number {
+  const length = Number(row.length);
+  const depth = Number(row.depth);
+  return length > 0 && depth > 0 ? length * depth * Math.max(1, row.qty || 1) / 92903 : 0;
 }
 
 type CarcassModel = {
@@ -2889,7 +2896,7 @@ function computeCosting(
 
   countertops.forEach((countertop) => {
     const length = Number(countertop.length);
-    const depth = Number(countertop.depth || 600);
+    const depth = Number(countertop.depth);
     const selected = countertopMaterialItem(countertop, countertopShType);
     const thickness = Number(countertop.thickness);
     if (!(length > 0 && depth > 0 && thickness > 0)) {
@@ -2897,7 +2904,7 @@ function computeCosting(
       return;
     }
     const qty = Math.max(1, countertop.qty || 1);
-    const netQty = counterPlyAreaSqft(countertop);
+    const netQty = counterPlyCostSqft(countertop);
     const rate = selected?.currentRate ?? Number(countertop.ratePerSqft);
     const material = selected?.materialDescription ?? (countertop.material.trim() || "Unspecified material");
     const label = `Counter Ply ${material} ${thickness}mm ${length}x${depth}`;
@@ -3074,8 +3081,7 @@ function kitchenCostingSnapshot(restored: ProjectRestore, materials: KitchenMate
   }, 0);
   const counterArea = restored.countertops.reduce((sum, row) => {
     const length = Number(row.length);
-    const depth = Number(row.depth || 600);
-    return sum + (length > 0 && depth > 0 ? counterPlyAreaSqft(row) : 0);
+    return sum + (length > 0 ? counterPlyAreaSqft(row) : 0);
   }, 0);
   const areaSqft = cabinetArea + fillerArea + counterArea;
   const factor = restored.pricing;
@@ -3121,12 +3127,14 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
   const railRef = useRef<HTMLElement>(null);
   const pdfImportRef = useRef<HTMLInputElement>(null);
   const bulkPdfImportRef = useRef<HTMLInputElement>(null);
+  const manualCostingImportRef = useRef<HTMLInputElement>(null);
   const materialDraftLoadedRef = useRef(false);
   const workspaceLoadedRef = useRef(false);
   const [materials, setMaterials] = useState(selectedMaterials);
   const [kitchens, setKitchens] = useState<KitchenWorkspaceEntry[]>([]);
   const [activeKitchen, setActiveKitchen] = useState("");
   const [kitchenName, setKitchenName] = useState("");
+  const [manualCosting, setManualCosting] = useState<ManualCostingImport | null>(null);
   const [kitchenNameDraft, setKitchenNameDraft] = useState("");
   useEffect(() => { setKitchenNameDraft(kitchenName); }, [kitchenName]);
   const [kitchenBusy, setKitchenBusy] = useState(false);
@@ -3588,6 +3596,7 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
     const selected = stored.find((entry) => entry.id === id) ?? stored[0];
     setActiveKitchenId(selected.id);
     setKitchens(stored); setActiveKitchen(selected.id); setKitchenName(selected.name);
+    setManualCosting(selected.manualCosting ?? null);
     if (!materialDraftLoadedRef.current) {
       try {
         if (selected.rows.length) applyRestoredKitchen(restoreProjectSetup(selected.rows), selected.boardSheetInputs ?? {});
@@ -3695,7 +3704,7 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
   const saveActiveKitchen = () => {
     const stored = readKitchenWorkspace();
     const updated = stored.map((entry) => entry.id === activeKitchen ? { ...entry, name: kitchenName,
-      rows: projectSetup, materials, boardSheetInputs, costing: currentCostingSnapshot } : entry);
+      rows: projectSetup, materials, boardSheetInputs, costing: currentCostingSnapshot, manualCosting: manualCosting ?? undefined } : entry);
     writeKitchenWorkspace(updated);
     setKitchens(updated);
     return updated;
@@ -3724,6 +3733,7 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
         setWaste({ ...WASTE }); setProjectPricingInputs(DEFAULT_PROJECT_PRICING); setEditingLineId(null);
       }
       setMaterials(selected.materials ?? materials);
+      setManualCosting(selected.manualCosting ?? null);
       setActiveKitchenId(id); setActiveKitchen(id); setKitchenName(selected.name);
       setImportMessage(`Showing ${selected.name.trim() || selected.sourceName || "unnamed kitchen"}.`);
       return true;
@@ -3775,6 +3785,25 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
       if (new Set(populated.map((entry) => entry.name.trim().toLowerCase())).size !== populated.length) throw new Error("Give each kitchen a different name before downloading bulk costing.");
       exportBulkCostingWorkbook(populated.map((entry) => ({ name: entry.name.trim(), ...entry.costing! })));
     } catch (error) { setImportError(error instanceof Error ? error.message : "Could not download bulk costing."); }
+  };
+  const updateManualCosting = (value: ManualCostingImport | null) => {
+    setManualCosting(value);
+    const updated = readKitchenWorkspace().map((entry) => entry.id === activeKitchen
+      ? { ...entry, manualCosting: value ?? undefined } : entry);
+    writeKitchenWorkspace(updated);
+    setKitchens(updated);
+  };
+  const importManualCosting = async (file: File) => {
+    setImportError(""); setImportMessage("");
+    try {
+      if (!/\.(xlsx|xls)$/i.test(file.name)) throw new Error("Select an Excel costing file (.xls or .xlsx).");
+      if (file.size > 10_000_000) throw new Error("The costing file is too large (maximum 10 MB).");
+      const imported = parseManualCosting(await file.arrayBuffer(), file.name);
+      updateManualCosting(imported);
+      setImportMessage(`Imported ${imported.rows.length} manual costing items from ${file.name}. Quantities are shown per kitchen (${imported.sets} set${imported.sets === 1 ? "" : "s"} in the source). The BOM calculation was not changed.`);
+      setTab("totals");
+      requestAnimationFrame(() => requestAnimationFrame(() => document.getElementById("imported-manual-costing")?.scrollIntoView({ behavior: "smooth", block: "start" })));
+    } catch (error) { setImportError(error instanceof Error ? error.message : "Could not import the costing workbook."); }
   };
   const elevations = useMemo(() => [...new Set([
     ...project.map((line) => line.elevation),
@@ -4007,6 +4036,12 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
             event.target.value = "";
           }} />
           <button type="button" className="add" disabled={kitchenBusy} onClick={() => bulkPdfImportRef.current?.click()}>{kitchenBusy ? "Importing…" : "Import multiple kitchen PDFs"}</button>
+          <input ref={manualCostingImportRef} type="file" accept=".xls,.xlsx" aria-label="Import manual costing Excel" style={{ display: "none" }} onChange={(event) => {
+            const file = event.target.files?.[0];
+            if (file) void importManualCosting(file);
+            event.target.value = "";
+          }} />
+          <button type="button" className="add" onClick={() => manualCostingImportRef.current?.click()}>Import costing Excel</button>
           <button type="button" className="add" disabled={project.length === 0 || !kitchenName.trim()} onClick={() => {
             setTab("totals");
             setSelectedElevation(null);
@@ -4441,7 +4476,7 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
               {/* ---- Counter Ply ---- */}
               <SecHead title="Counter Ply" onAdd={addCt} />
               {countertops.length === 0 ? <div className="empty">No Counter Ply. Add a single-sheet top; its board follows the shutter material by default, or choose from Countertop Base PLY, carcass and shutter materials.</div> : <>
-                <p className="hint">Same as shutter follows the sole solid-shutter board in the project; if several are used, it follows the current configuration. Catalog rates are per square foot.</p>
+                <p className="hint">Costing area uses length × depth ÷ 92903, multiplied by quantity; the purchase quantity divides this area by 32 sqft per sheet. Visible sqft uses length × entered thickness ÷ 92903. Rates shown here are per sqft.</p>
                 <Tbl head={["Length (mm)", "Depth (mm)", "Thk (mm)", "Material", "Rate (Rs/sqft)", "Qty", ""]} num={[4, 5]}
                   rows={countertops.map((c) => [
                     <input key="l" type="number" value={c.length} onChange={(e) => updCt(c.id, { length: e.target.value })} style={{ width: 90 }} />,
@@ -4658,6 +4693,28 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
 
               {/* ---- Costing with an auditable per-cabinet breakdown ---- */}
               <SecHead title="Costing (Rs)" />
+              {manualCosting && <details id="imported-manual-costing" open style={{ marginBottom: 16 }}>
+                <summary style={{ cursor: "pointer", fontWeight: 650 }}>Imported manual costing · {manualCosting.sourceName}</summary>
+                <p className="hint">Editable reference for this kitchen. Source covers {manualCosting.sets} set{manualCosting.sets === 1 ? "" : "s"}; quantities below are per kitchen. These rows do not overwrite BOM-calculated costs.</p>
+                {manualCosting.areaSqft !== undefined && <label style={{ display: "block", marginBottom: 8 }}>Manual area (sqft) <input type="number" min={0} step="any" value={manualCosting.areaSqft} onChange={(event) => updateManualCosting({ ...manualCosting, areaSqft: Math.max(0, Number(event.target.value)) })} style={{ width: 110, marginLeft: 8 }} /></label>}
+                <Tbl head={["Category", "Manual item", "Brand / code", "Unit", "Qty / kitchen", "Rate (Rs)", "Amount (Rs)", ""]} num={[4, 5, 6]}
+                  rows={manualCosting.rows.map((row) => [
+                    <input key="category" value={row.category} aria-label={`Category for manual item ${row.id}`} onChange={(event) => updateManualCosting({ ...manualCosting, rows: manualCosting.rows.map((item) => item.id === row.id ? { ...item, category: event.target.value } : item) })} style={{ minWidth: 120 }} />,
+                    <input key="item" value={row.item} aria-label={`Manual item ${row.id}`} onChange={(event) => updateManualCosting({ ...manualCosting, rows: manualCosting.rows.map((item) => item.id === row.id ? { ...item, item: event.target.value } : item) })} style={{ minWidth: 260 }} />,
+                    <input key="brand" value={row.brand || row.itemCode} aria-label={`Brand or code for manual item ${row.id}`} onChange={(event) => updateManualCosting({ ...manualCosting, rows: manualCosting.rows.map((item) => item.id === row.id ? { ...item, brand: event.target.value, itemCode: "" } : item) })} style={{ minWidth: 100 }} />,
+                    <input key="unit" value={row.unit} aria-label={`Unit for manual item ${row.id}`} onChange={(event) => updateManualCosting({ ...manualCosting, rows: manualCosting.rows.map((item) => item.id === row.id ? { ...item, unit: event.target.value } : item) })} style={{ width: 66 }} />,
+                    <input key="qty" type="number" min={0} step="any" value={row.quantity} aria-label={`Quantity for manual item ${row.id}`} onChange={(event) => updateManualCosting({ ...manualCosting, rows: manualCosting.rows.map((item) => item.id === row.id ? { ...item, quantity: Math.max(0, Number(event.target.value)) } : item) })} style={{ width: 90 }} />,
+                    <input key="rate" type="number" min={0} step="any" value={row.rate} aria-label={`Rate for manual item ${row.id}`} onChange={(event) => updateManualCosting({ ...manualCosting, rows: manualCosting.rows.map((item) => item.id === row.id ? { ...item, rate: Math.max(0, Number(event.target.value)) } : item) })} style={{ width: 90 }} />,
+                    (row.quantity * row.rate).toFixed(2),
+                    <button key="remove" type="button" className="x" aria-label={`Remove manual item ${row.id}`} onClick={() => updateManualCosting({ ...manualCosting, rows: manualCosting.rows.filter((item) => item.id !== row.id) })}>×</button>,
+                  ])} />
+                {(manualCosting.extraCharges ?? []).length > 0 && <Tbl head={["Other manual charge", "Amount (Rs)"]} num={[1]}
+                  rows={(manualCosting.extraCharges ?? []).map((charge) => [charge.label,
+                    <input key={charge.id} type="number" min={0} step="any" aria-label={`${charge.label} manual amount`} value={charge.amount} onChange={(event) => updateManualCosting({ ...manualCosting,
+                      extraCharges: (manualCosting.extraCharges ?? []).map((item) => item.id === charge.id ? { ...item, amount: Math.max(0, Number(event.target.value)) } : item) })} style={{ width: 120 }} />])} />}
+                <p style={{ fontWeight: 700 }}>Manual item total: ₹{manualCosting.rows.reduce((sum, row) => sum + row.quantity * row.rate, 0).toFixed(2)} · Manual including listed charges: ₹{(manualCosting.rows.reduce((sum, row) => sum + row.quantity * row.rate, 0) + (manualCosting.extraCharges ?? []).reduce((sum, charge) => sum + charge.amount, 0)).toFixed(2)} · Software material total: ₹{costing.total.toFixed(2)}</p>
+                <button type="button" className="x" onClick={() => { if (window.confirm("Remove this imported manual costing from the kitchen?")) updateManualCosting(null); }}>Remove imported costing</button>
+              </details>}
               {costing.purchases.length > 0 && <details open style={{ marginBottom: 16 }}>
                 <summary style={{ cursor: "pointer", fontWeight: 650 }}>Whole-kitchen purchase quantities</summary>
                 <p style={{ color: "var(--mut)", fontSize: 12 }}>Same items are combined across all cabinets and panels after wastage, then quantities are rounded to two decimal places for purchasing and costing—not up to whole units. Boards and laminates use 32 sqft sheets; adhesives use kg. Different quoted rates remain separate. Processing remains charged on billable sqft.</p>
