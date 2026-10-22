@@ -81,13 +81,13 @@ const originalWrite = XLSX.writeFile;
 XLSX.writeFile = result => { workbook = result; };
 try {
   exportCostingWorkbook(costing.lines, [], {
-    cabinetSqft: 0, fillerSqft: 0, totalSqft: 0, baseCost: costing.total,
+    cabinetSqft: 0, fillerSqft: 0, counterPlySqft: 0, totalSqft: 0, baseCost: costing.total,
     conversion: 0, profit: 0, transportation: 0, installation: 0,
     loading: 0, subtotal: costing.total, tax: 0, grandTotal: costing.total,
   }, costing.unpriced, {
     conversionPct: 0, profitPct: 0, transportation: { mode: 'direct', value: 0 },
     installation: { mode: 'direct', value: 0 }, loading: { mode: 'direct', value: 0 }, includeTax: false,
-  });
+  }, 'Test kitchen');
 } finally {
   XLSX.writeFile = originalWrite;
 }

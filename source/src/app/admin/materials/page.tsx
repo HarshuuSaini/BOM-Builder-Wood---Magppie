@@ -32,9 +32,23 @@ const initialChoices: ZoneMaterialChoices = {
   drawer: choice("KITCHEN-029"), shutter: choice("KITCHEN-014"), visible: choice("KITCHEN-014"),
 };
 const copyChoices = (source: ZoneMaterialChoices): ZoneMaterialChoices => ({
-  carcass: { ...source.carcass }, back: { ...source.back },
-  drawer: { ...source.drawer }, shutter: { ...source.shutter }, visible: { ...source.visible },
+  carcass: { ...source.carcass, backSheetPrice: source.carcass.frontSheetPrice },
+  back: { ...source.back, backSheetPrice: source.back.frontSheetPrice },
+  drawer: { ...source.drawer, backSheetPrice: source.drawer.frontSheetPrice },
+  shutter: { ...source.shutter },
+  visible: { ...source.visible },
 });
+const updateChoices = (source: ZoneMaterialChoices, key: MaterialKey, change: Partial<MaterialChoice>): ZoneMaterialChoices => {
+  const next = copyChoices(source);
+  next[key] = { ...next[key], ...change };
+  if (change.frontSheetPrice !== undefined) {
+    if (key !== "shutter" && key !== "visible") next[key].backSheetPrice = change.frontSheetPrice;
+    if (key === "carcass") for (const target of ["back", "drawer"] as const) {
+      next[target] = { ...next[target], frontSheetPrice: change.frontSheetPrice, backSheetPrice: change.frontSheetPrice };
+    }
+  }
+  return next;
+};
 const inputStyle: React.CSSProperties = { padding: "8px 10px", border: "1px solid #C9D1CC", borderRadius: 4, font: "inherit", background: "#fff", width: "100%", boxSizing: "border-box" };
 const fieldRowStyle: React.CSSProperties = { display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(min(100%,250px),1fr))", gap: 12, alignItems: "start" };
 const cabinetRowStyle: React.CSSProperties = { display: "grid", gridTemplateColumns: "minmax(160px,185px) minmax(0,1fr)", gap: 16, alignItems: "start" };
@@ -56,11 +70,9 @@ export default function MaterialMasterAdminPage() {
     if (source === "All") return allChoices;
     return source === "Own" ? zoneChoices[zone] ?? initialChoices : effectiveChoices(source, seen);
   };
-  const changeAllChoice = (key: MaterialKey, change: Partial<MaterialChoice>) => setAllChoices((old) => ({
-    ...old, [key]: { ...old[key], ...change },
-  }));
+  const changeAllChoice = (key: MaterialKey, change: Partial<MaterialChoice>) => setAllChoices((old) => updateChoices(old, key, change));
   const changeZoneChoice = (zone: string, key: MaterialKey, change: Partial<MaterialChoice>) => setZoneChoices((old) => ({
-    ...old, [zone]: { ...(old[zone] ?? initialChoices), [key]: { ...(old[zone] ?? initialChoices)[key], ...change } },
+    ...old, [zone]: updateChoices(old[zone] ?? initialChoices, key, change),
   }));
   const changeSource = (zone: KitchenZone, source: MaterialSource) => {
     if (source !== "Own" && source !== "All" && createsMaterialSourceCycle(zone, source, sources)) {
@@ -115,18 +127,16 @@ export default function MaterialMasterAdminPage() {
                 style={inputStyle} disabled={disabled} value={selected.boardSheetPrice ?? Number(((chosen?.currentRate ?? 0) * 32).toFixed(6))}
                 onChange={(event) => onChange(key, { boardSheetPrice: event.target.value })} />
             </label>}
-            {isPostlam && <>
-              <label style={{ display: "grid", gap: 5 }}>Front-side laminate · ₹ per 32 sqft sheet
-                <input aria-label={`${sectionName} ${name} front laminate sheet price`} type="number" min="0" step="0.01" inputMode="decimal"
-                  style={inputStyle} disabled={disabled} value={selected.frontSheetPrice}
-                  onChange={(event) => onChange(key, { frontSheetPrice: event.target.value })} />
-              </label>
-              <label style={{ display: "grid", gap: 5 }}>Back-side laminate · ₹ per 32 sqft sheet
-                <input aria-label={`${sectionName} ${name} back laminate sheet price`} type="number" min="0" step="0.01" inputMode="decimal"
-                  style={inputStyle} disabled={disabled} value={selected.backSheetPrice}
-                  onChange={(event) => onChange(key, { backSheetPrice: event.target.value })} />
-              </label>
-            </>}
+            {isPostlam && <label style={{ display: "grid", gap: 5 }}>{key === "shutter" || key === "visible" ? "Front laminate" : "Laminate (both faces)"} · ₹ per 32 sqft sheet
+              <input aria-label={`${sectionName} ${name} ${key === "shutter" || key === "visible" ? "front laminate" : "laminate"} sheet price`} type="number" min="0" step="0.01" inputMode="decimal"
+                style={inputStyle} disabled={disabled} value={selected.frontSheetPrice}
+                onChange={(event) => onChange(key, { frontSheetPrice: event.target.value })} />
+            </label>}
+            {isPostlam && (key === "shutter" || key === "visible") && <label style={{ display: "grid", gap: 5 }}>Back laminate · ₹ per 32 sqft sheet
+              <input aria-label={`${sectionName} ${name} back laminate sheet price`} type="number" min="0" step="0.01" inputMode="decimal"
+                style={inputStyle} disabled={disabled} value={selected.backSheetPrice}
+                onChange={(event) => onChange(key, { backSheetPrice: event.target.value })} />
+            </label>}
           </div>
         </div>;
       })}

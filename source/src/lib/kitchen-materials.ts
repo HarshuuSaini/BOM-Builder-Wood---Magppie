@@ -64,9 +64,11 @@ export function handleZoneForCode(code: string, family?: string): HandleZone {
   return zone === "Sink" ? "Base" : zone === "Mid" ? "Wall" : zone;
 }
 export function handleSettingFor(materials: KitchenMaterials | undefined, code: string, family?: string): HandleSetting {
-  const saved = materials?._handleDefaults?.[handleZoneForCode(code, family)];
-  if (typeof saved === "string") return { type: saved === "XCJ" ? "XCJ" : "NONE", price: "", brand: "" };
-  return saved ?? { type: "NONE", price: "", brand: "" };
+  const zone = handleZoneForCode(code, family);
+  const saved = materials?._handleDefaults?.[zone];
+  if (typeof saved === "string") return { type: saved === "XCJ" && zone !== "Wall" && zone !== "Loft" ? "XCJ" : "NONE", price: "", brand: "" };
+  if (saved?.type === "XCJ" && (zone === "Wall" || zone === "Loft")) return { ...saved, type: "NONE" };
+  return saved ?? { type: zone === "Base" || zone === "Tall" ? "XCJ" : "NONE", price: "", brand: "" };
 }
 export type KitchenMaterials = Record<KitchenZone, ZoneMaterials> & {
   _sources?: Partial<Record<KitchenZone, MaterialSource>>;

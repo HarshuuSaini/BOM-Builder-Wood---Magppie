@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { UserSignOut } from "@/components/UserSignOut";
 import { DRAWER_BRANDS, KITCHEN_ZONES, HANDLE_ZONES, DEFAULT_MATERIAL_SOURCES, MATERIAL_FIELDS, createsMaterialSourceCycle, handleSettingFor, type HandleSetting, type HandleZone, type KitchenMaterials, type KitchenZone, type MaterialSource, type MaterialChoice, type MaterialField, type ZoneMaterials } from "@/lib/kitchen-materials";
+import { activeKitchenId, readKitchenWorkspace, setActiveKitchenId, writeKitchenWorkspace, type KitchenWorkspaceEntry } from "@/lib/kitchen-workspace";
 
 type Option = { id: string; group: string; subgroup: string; thicknessMm: number | null; type: string; boardSheetPrice: string };
 const GROUPS: Record<MaterialField, { label: string; group: string }> = {
@@ -22,7 +23,9 @@ function defaultZone(): ZoneMaterials {
   return Object.fromEntries(MATERIAL_FIELDS.map((field) => [field, { itemId: DEFAULT_IDS[field], frontSheetPrice: "550", backSheetPrice: "550" }])) as ZoneMaterials;
 }
 function copyZone(zone: ZoneMaterials): ZoneMaterials {
-  return Object.fromEntries(MATERIAL_FIELDS.map((field) => [field, { ...zone[field] }])) as ZoneMaterials;
+  return Object.fromEntries(MATERIAL_FIELDS.map((field) => [field, {
+    ...zone[field], backSheetPrice: field === "shutter" || field === "visible" ? zone[field].backSheetPrice : zone[field].frontSheetPrice,
+  }])) as ZoneMaterials;
 }
 function defaultMaterials(): KitchenMaterials {
   return Object.fromEntries(KITCHEN_ZONES.map((zone) => [zone, defaultZone()])) as unknown as KitchenMaterials;
@@ -37,11 +40,17 @@ const SYNC_TARGETS: Partial<Record<MaterialField, MaterialField[]>> = {
   shutter: ["visible"],
 };
 
-function updateMaterialChoices(choices: ZoneMaterials, field: MaterialField, change: Partial<MaterialChoice>, options: Option[]) {
+export function updateMaterialChoices(choices: ZoneMaterials, field: MaterialField, change: Partial<MaterialChoice>, options: Option[]) {
   const next = copyZone(choices);
   next[field] = { ...next[field], ...change };
+  if (change.frontSheetPrice !== undefined && field !== "shutter" && field !== "visible") next[field].backSheetPrice = change.frontSheetPrice;
+  if (field === "carcass" && change.frontSheetPrice !== undefined) {
+    for (const target of ["back", "drawer"] as const) {
+      next[target] = { ...next[target], frontSheetPrice: change.frontSheetPrice, backSheetPrice: change.frontSheetPrice };
+    }
+  }
   // Back and drawer boards follow a carcass subgroup change, but their 8/16 mm
-  // board and laminate prices belong to their own material selections.
+  // raw-board prices belong to their own material selections.
   if (field === "carcass" && change.itemId === undefined) return { choices: next, unmatched: [] as MaterialField[] };
   const unmatched: MaterialField[] = [];
   for (const target of SYNC_TARGETS[field] ?? []) {
@@ -103,6 +112,35 @@ export function MaterialSelection({ options, initial }: { options: Option[]; ini
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [syncWarning, setSyncWarning] = useState("");
+  const [kitchens, setKitchens] = useState<KitchenWorkspaceEntry[]>([]);
+  const [activeKitchen, setActiveKitchen] = useState("");
+  const [kitchenName, setKitchenName] = useState("");
+  const [kitchenNameDraft, setKitchenNameDraft] = useState("");
+  useEffect(() => { setKitchenNameDraft(kitchenName); }, [kitchenName]);
+
+  const loadKitchenMaterials = (selected: KitchenMaterials) => {
+    setHingeBrand(selected._hingeChoice?.split(" ")[0] ?? "Hettich");
+    setHingeType(selected._hingeChoice?.endsWith("Non Soft Close") ? "Non Soft Close" : "Soft Close");
+    setDrawerBrand(selected._drawerBrand ?? "Hettich");
+    setHandleDefaults(Object.fromEntries(HANDLE_ZONES.map((zone) => [zone, handleSettingFor(selected, zone)])) as Record<HandleZone, HandleSetting>);
+    setAll(normalizeVisible(selected.Base ?? defaultZone()));
+    setZones(Object.fromEntries(KITCHEN_ZONES.map((zone) => [zone, normalizeVisible(selected[zone] ?? selected.Base ?? defaultZone())])) as unknown as KitchenMaterials);
+    setSources(Object.fromEntries(KITCHEN_ZONES.map((zone) => [zone, selected._sources?.[zone] ?? "Own"])) as Record<KitchenZone, MaterialSource>);
+  };
+  useEffect(() => {
+    const entries = readKitchenWorkspace();
+    if (!entries.length) {
+      const first: KitchenWorkspaceEntry = { id: crypto.randomUUID(), name: "", rows: [], materials: initial };
+      writeKitchenWorkspace([first]); setActiveKitchenId(first.id);
+      setKitchens([first]); setActiveKitchen(first.id);
+      return;
+    }
+    const selected = entries.find((entry) => entry.id === activeKitchenId()) ?? entries[0];
+    setKitchens(entries); setActiveKitchen(selected.id); setKitchenName(selected.name);
+    if (selected.materials) loadKitchenMaterials(selected.materials);
+  // Read the active kitchen once when this page opens.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const effective = (zone: KitchenZone, seen = new Set<KitchenZone>()): ZoneMaterials => {
     if (seen.has(zone)) return zones[zone];
@@ -179,29 +217,53 @@ export function MaterialSelection({ options, initial }: { options: Option[]; ini
               style={{ border: 0, background: "none", padding: "7px 0 0", color: "#17645b", cursor: "pointer", textAlign: "left" }}>
               Use this board’s master price: ₹{selectedOption.boardSheetPrice} / sheet
             </button>}
-          {postlam && <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
-            <label style={{ display: "grid", gap: 4 }}>Front laminate · ₹ / 32 sqft sheet
-              <input type="number" min="0" max="1000000" step="0.01" inputMode="decimal" value={selected.frontSheetPrice} disabled={disabled}
-                onChange={(event) => update(section, field, { frontSheetPrice: event.target.value })} style={fieldStyle} />
-            </label>
-            <label style={{ display: "grid", gap: 4 }}>Back laminate · ₹ / 32 sqft sheet
-              <input type="number" min="0" max="1000000" step="0.01" inputMode="decimal" value={selected.backSheetPrice} disabled={disabled}
-                onChange={(event) => update(section, field, { backSheetPrice: event.target.value })} style={fieldStyle} />
-            </label>
-          </div>}
+          {postlam && <label style={{ display: "grid", gap: 4, marginTop: 12 }}>{field === "shutter" || field === "visible" ? "Front laminate" : "Laminate (both faces)"} · ₹ / 32 sqft sheet
+            <input aria-label={`${section} ${meta.label} ${field === "shutter" || field === "visible" ? "front laminate" : "laminate"} sheet price`} type="number" min="0" max="1000000" step="0.01" inputMode="decimal" value={selected.frontSheetPrice} disabled={disabled}
+              onChange={(event) => update(section, field, { frontSheetPrice: event.target.value })} style={fieldStyle} />
+          </label>}
+          {postlam && (field === "shutter" || field === "visible") && <label style={{ display: "grid", gap: 4, marginTop: 12 }}>Back laminate · ₹ / 32 sqft sheet
+            <input aria-label={`${section} ${meta.label} back laminate sheet price`} type="number" min="0" max="1000000" step="0.01" inputMode="decimal" value={selected.backSheetPrice} disabled={disabled}
+              onChange={(event) => update(section, field, { backSheetPrice: event.target.value })} style={fieldStyle} />
+          </label>}
         </div>;
       })}
     </div>;
   }
 
+  const selectedMaterials = () => {
+    const selected = Object.fromEntries(KITCHEN_ZONES.map((zone) => [zone, copyZone(effective(zone))])) as unknown as KitchenMaterials;
+    selected._sources = { ...sources };
+    selected._hingeChoice = `${hingeBrand} ${hingeType}`;
+    selected._drawerBrand = drawerBrand;
+    selected._handleDefaults = { ...handleDefaults };
+    return selected;
+  };
+  const saveKitchenSelection = () => {
+    const selected = selectedMaterials();
+    if (activeKitchen) {
+      const entries = readKitchenWorkspace().map((entry) => entry.id === activeKitchen
+        ? { ...entry, name: kitchenName, materials: selected } : entry);
+      writeKitchenWorkspace(entries); setKitchens(entries);
+    }
+    return selected;
+  };
+  const switchKitchen = (id: string) => {
+    saveKitchenSelection();
+    const selected = readKitchenWorkspace().find((entry) => entry.id === id);
+    if (!selected) return;
+    setActiveKitchenId(id); setActiveKitchen(id); setKitchenName(selected.name);
+    loadKitchenMaterials(selected.materials ?? initial ?? defaultMaterials());
+  };
+  const renameKitchen = (name: string) => {
+    setKitchenName(name);
+    const entries = readKitchenWorkspace().map((entry) => entry.id === activeKitchen ? { ...entry, name } : entry);
+    writeKitchenWorkspace(entries); setKitchens(entries);
+  };
+
   async function continueToBuilder() {
     setBusy(true); setError("");
     try {
-      const selected = Object.fromEntries(KITCHEN_ZONES.map((zone) => [zone, copyZone(effective(zone))])) as unknown as KitchenMaterials;
-      selected._sources = { ...sources };
-      selected._hingeChoice = `${hingeBrand} ${hingeType}`;
-      selected._drawerBrand = drawerBrand;
-      selected._handleDefaults = { ...handleDefaults };
+      const selected = saveKitchenSelection();
       const response = await fetch("/api/kitchen-materials", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(selected) });
       if (!response.ok) {
         const result = await response.json().catch(() => ({}));
@@ -220,6 +282,17 @@ export function MaterialSelection({ options, initial }: { options: Option[]; ini
           <p style={{ margin: 0, color: "#607168" }}>Choose the materials for this kitchen before opening the Builder. These choices are not added to the admin master.</p></div>
         <UserSignOut />
       </header>
+      <section style={{ background: "#fff", border: "1px solid #d6dfd8", borderRadius: 8, padding: 16, marginBottom: 15, display: "flex", gap: 12, flexWrap: "wrap" }}>
+        <label style={{ display: "grid", gap: 5, minWidth: 230 }}>Kitchen
+          <select aria-label="Select kitchen" value={activeKitchen} onChange={(event) => switchKitchen(event.target.value)} style={fieldStyle}>
+            {kitchens.map((entry, index) => <option key={entry.id} value={entry.id}>{entry.name.trim() || entry.sourceName || `Kitchen ${index + 1}`}</option>)}
+          </select>
+        </label>
+        <label style={{ display: "grid", gap: 5, minWidth: 250 }}>Kitchen name (required for costing downloads)
+          <input aria-label="Kitchen name" value={kitchenNameDraft} onChange={(event) => setKitchenNameDraft(event.target.value)} style={fieldStyle} placeholder="Enter kitchen name" />
+        </label>
+        <button type="button" disabled={!kitchenNameDraft.trim() || kitchenNameDraft.trim() === kitchenName.trim()} onClick={() => renameKitchen(kitchenNameDraft.trim())}>Save name</button>
+      </section>
       <nav className="kitchen-step-nav" aria-label="Kitchen setup steps" style={{ marginBottom: 15, paddingLeft: 0 }}>
         <span aria-current="page">1 · Material selection</span>
         <button type="button" disabled={busy} onClick={() => void continueToBuilder()}>2 · Builder configuration</button>
@@ -256,7 +329,7 @@ export function MaterialSelection({ options, initial }: { options: Option[]; ini
           {HANDLE_ZONES.map((zone) => <div key={zone} style={{ display: "grid", alignContent: "start", gap: 10, border: "1px solid #dae2dc", borderRadius: 7, padding: 12 }}>
             <label style={{ display: "grid", gap: 5 }}>{zone} cabinets · handle
               <select value={handleDefaults[zone].type} onChange={(event) => setHandleDefaults((old) => ({ ...old, [zone]: { ...old[zone], type: event.target.value as HandleSetting["type"] } }))} style={fieldStyle}>
-                <option value="XCJ">C/J/G Gola</option><option value="PUSH">Push to Open</option><option value="KNOB">Knob</option><option value="HANDLE">Handle</option><option value="NONE">No Handle</option>
+                {(zone === "Base" || zone === "Tall") && <option value="XCJ">C/J/G Gola</option>}<option value="PUSH">Push to Open</option><option value="KNOB">Knob</option><option value="HANDLE">Handle</option><option value="NONE">No Handle</option>
               </select>
             </label>
             {(["PUSH", "KNOB", "HANDLE"] as string[]).includes(handleDefaults[zone].type) && <label style={{ display: "grid", gap: 5 }}>Price · ₹ / piece
@@ -272,7 +345,7 @@ export function MaterialSelection({ options, initial }: { options: Option[]; ini
       </section>
       <section style={{ background: "#fff", border: "1px solid #d6dfd8", borderRadius: 8, padding: 16, marginBottom: 15 }}>
         <h2 style={{ fontSize: 18, margin: "0 0 12px" }}>Material groups</h2>
-        <p style={{ color: "#607168", margin: "0 0 12px" }}>Back and drawer material prices can be changed separately from carcass prices, even when their board subgroup matches.</p>
+        <p style={{ color: "#607168", margin: "0 0 12px" }}>Back and drawer raw-board prices remain separate. The carcass laminate price fills their laminate prices; you can then change either one individually.</p>
         <div role="tablist" aria-label="Cabinet material groups" style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 15 }}>
           {(["All", ...KITCHEN_ZONES] as const).map((section) => <button key={section} type="button" role="tab" aria-selected={activeSection === section}
             onClick={() => setActiveSection(section)} style={{ padding: "9px 14px", border: "1px solid #cbd8d0", borderRadius: 30, background: activeSection === section ? "#17645b" : "white", color: activeSection === section ? "white" : "#496157", cursor: "pointer" }}>{section === "All" ? "All cabinets" : section}</button>)}

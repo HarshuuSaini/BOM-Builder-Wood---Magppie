@@ -10,7 +10,7 @@ Module._resolveFilename = function (name, ...args) {
 };
 for (const ext of ['.ts', '.tsx']) require.extensions[ext] = (mod, file) => {
   let source = fs.readFileSync(file, 'utf8').replace(/import\.meta\.url/g, '"file:///test"');
-  if (file.endsWith('WoodBomBuilder.tsx')) source += '\nexport {computeCosting, buildModel, buildAccessoryRows, restoreAccessoryRow, countertopMaterialItem, countertopMaterialId, DEFAULT_RATES, DEFAULT_LAMINATE_PRICES};';
+  if (file.endsWith('WoodBomBuilder.tsx')) source += '\nexport {computeCosting, buildModel, blindOpeningError, cabinetFillers, cabinetAccessories, buildExtrasBom, calculatedAccessories, buildMasterAccessoryRows, buildAccessoryRows, restoreAccessoryRow, restoreLegacyBom, countertopMaterialItem, countertopMaterialId, counterPlyAreaSqft, DEFAULT_RATES, DEFAULT_LAMINATE_PRICES};';
   mod._compile(ts.transpileModule(source, { compilerOptions: {
     module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true, target: ts.ScriptTarget.ES2020,
   } }).outputText, file);
@@ -69,6 +69,35 @@ allocatePurchaseCosts(rows);
 near(rows.reduce((s, x) => s + x.cost, 0), again);
 
 const b = require('../src/components/WoodBomBuilder.tsx');
+const { handleSettingFor } = require('../src/lib/kitchen-materials.ts');
+const { updateMaterialChoices } = require('../src/components/MaterialSelection.tsx');
+assert.equal(handleSettingFor(undefined, 'BC').type, 'XCJ');
+assert.equal(handleSettingFor(undefined, 'TC').type, 'XCJ');
+assert.equal(handleSettingFor(undefined, 'WC').type, 'NONE');
+assert.equal(handleSettingFor(undefined, 'LO').type, 'NONE');
+assert.equal(handleSettingFor(undefined, 'MD').type, 'NONE');
+assert.equal(handleSettingFor({ _handleDefaults: { Wall: { type: 'XCJ', price: '', brand: '' } } }, 'WC').type, 'NONE');
+const laminateChoices = Object.fromEntries(['carcass', 'back', 'drawer', 'shutter', 'visible'].map(field => [field,
+  { itemId: field, frontSheetPrice: '550', backSheetPrice: '950', boardSheetPrice: String(field.length * 100) }]));
+const cascaded = updateMaterialChoices(laminateChoices, 'carcass', { frontSheetPrice: '431' }, []).choices;
+for (const field of ['carcass', 'back', 'drawer']) {
+  assert.equal(cascaded[field].frontSheetPrice, '431');
+  assert.equal(cascaded[field].backSheetPrice, '431');
+  assert.equal(cascaded[field].boardSheetPrice, String(field.length * 100));
+}
+const drawerOverride = updateMaterialChoices(cascaded, 'drawer', { frontSheetPrice: '600' }, []).choices;
+assert.equal(drawerOverride.drawer.frontSheetPrice, '600');
+assert.equal(drawerOverride.carcass.frontSheetPrice, '431');
+assert.equal(drawerOverride.back.frontSheetPrice, '431');
+const shutterFrontOverride = updateMaterialChoices(cascaded, 'shutter', { frontSheetPrice: '961' }, [
+  { id: 'shutter', group: 'Shutter Material', subgroup: 'POSTlam MDF BSL', boardSheetPrice: '2084', type: 'POSTLAM' },
+  { id: 'visible', group: 'Shutter Material', subgroup: 'POSTlam MDF BSL', boardSheetPrice: '2084', type: 'POSTLAM' },
+]).choices;
+assert.equal(shutterFrontOverride.shutter.frontSheetPrice, '961');
+assert.equal(shutterFrontOverride.shutter.backSheetPrice, '950');
+const visibleBackOverride = updateMaterialChoices(shutterFrontOverride, 'visible', { backSheetPrice: '1200' }, []).choices;
+assert.equal(visibleBackOverride.visible.frontSheetPrice, '961');
+assert.equal(visibleBackOverride.visible.backSheetPrice, '1200');
 const config = { zk: 'BC', fk: 'SK', vid: 'double', hand: 'LHS', handle: 'STD', board: 'KITCHEN-007',
   backBoardId: 'KITCHEN-035', drawerBoardId: 'KITCHEN-029', shType: 'KITCHEN-013',
   visibleSides: 'LH', visibleSideMaterialId: 'KITCHEN-013', ...b.DEFAULT_LAMINATE_PRICES,
@@ -77,6 +106,95 @@ const config = { zk: 'BC', fk: 'SK', vid: 'double', hand: 'LHS', handle: 'STD', 
   glassType: 'KITCHEN-GLASS-5-TINTED', hingeChoice: 'Hettich Soft Close', neon: 'NEON50',
   W: 900, H: 720, D: 560, drawerModel: 'Hettich', finish: 'White' };
 const model = b.buildModel(config);
+const blindConfig = { ...config, zk: 'BB', fk: 'BSH', W: 1050 };
+const blindDefault = b.buildModel(blindConfig);
+const blindChanged = b.buildModel({ ...blindConfig, blindOpeningWidth: 450 });
+assert.deepEqual(blindDefault.panels.filter(panel => panel.name.includes('Blind')).map(panel => panel.w), [547, 497]);
+assert.deepEqual(blindChanged.panels.filter(panel => panel.name.includes('Blind')).map(panel => panel.w), [447, 597]);
+assert.equal(b.blindOpeningError('BB', 1050, 450), '');
+assert.equal(b.blindOpeningError('BB', 1050, 550), '');
+assert.match(b.blindOpeningError('BB', 1050, 449), /between 450 and 550/);
+assert.match(b.blindOpeningError('BB', 1050, 551), /between 450 and 550/);
+assert.match(b.blindOpeningError('BB', 500, 500), /fixed panel/);
+assert.equal(b.blindOpeningError('BC', 500, 100), '');
+const wallBlind = b.buildModel({ ...config, zk: 'WB', fk: 'WST', W: 900 });
+assert.equal(wallBlind.panels.find(panel => panel.name.includes('Blind Active')).w, 447);
+const wallGlassSpot = b.buildModel({ ...config, zk: 'WC', fk: 'WGL', W: 450, spotLight: true });
+const wallGlassSpotLine = [{ id: 12, m: wallGlassSpot, qty: 2, elevation: 'BB' }];
+const spotAccessories = b.cabinetAccessories(wallGlassSpotLine);
+assert.equal(spotAccessories.length, 1);
+assert.equal(spotAccessories[0].itemId, 'KITCHEN-091');
+assert.equal(spotAccessories[0].qty, 2);
+assert.equal(spotAccessories[0].elevation, 'BB');
+assert.equal(b.buildMasterAccessoryRows(spotAccessories, '')[0]['Zoho Item ID'], 'KITCHEN-091');
+assert.equal(b.buildModel({ ...config, zk: 'WC', fk: 'WST', spotLight: true }).spotLight, false);
+assert.equal(b.buildModel({ ...config, zk: 'LO', fk: 'LGL', spotLight: true }).spotLight, false);
+const spotCost = b.computeCosting([], [], [], [], [], [], spotAccessories, config.shType, config.shType,
+  b.DEFAULT_RATES, { carcass: 10, shutter: 20, profile: 20 }, {});
+assert.equal(spotCost.purchases.find(row => row.itemCode === 'KITCHEN-091').quantity, 2);
+for (const [width, id] of [[450, 'ACCESSORIES-130'], [600, 'ACCESSORIES-136']]) {
+  const pantry = b.buildModel({ ...config, zk: 'TC', fk: 'PAN', W: width, H: 2400 });
+  const accessory = b.cabinetAccessories([{ id: width, m: pantry, qty: 1, elevation: 'AA' }]);
+  assert(accessory.some(row => row.itemId === id), `Missing ${width}mm tandem pantry accessory`);
+}
+const twoFillerCabinet = b.buildModel({ ...config, fillerWidth: 50, fillerSides: 'BOTH', fillerWidthRH: 80 });
+const twoFillerProject = [{ id: 100, m: twoFillerCabinet, qty: 2, elevation: 'AA' }];
+const sideFillers = b.cabinetFillers(twoFillerProject);
+assert.deepEqual(sideFillers.map(row => [row.fillerSide, row.customWidth, row.customHeight, row.qty]),
+  [['LH', '50', '720', 2], ['RH', '80', '720', 2]]);
+const sidePanels = b.buildExtrasBom(sideFillers, [], [], twoFillerProject, '', config.shType, config.shType, config.finish,
+  { carcass: 10, shutter: 20, profile: 20 });
+assert.deepEqual(sidePanels.panels.map(panel => panel.w), [50, 80]);
+assert(sidePanels.panels.some(panel => panel.name.includes('Filler LH')));
+assert(sidePanels.panels.some(panel => panel.name.includes('Filler RH')));
+const singleRh = b.cabinetFillers([{ ...twoFillerProject[0], m: b.buildModel({ ...config, fillerWidth: 50, fillerSides: 'RH', fillerWidthRH: 80 }) }]);
+assert.deepEqual(singleRh.map(row => [row.fillerSide, row.customWidth]), [['RH', '80']]);
+const legacyFiller = b.cabinetFillers([{ ...twoFillerProject[0], m: b.buildModel({ ...config, fillerWidth: 50 }) }]);
+assert.deepEqual(legacyFiller.map(row => [row.fillerSide, row.customWidth]), [['LH', '50']]);
+const skirtingWithBoth = b.calculatedAccessories(twoFillerProject, sideFillers).find(row => row.kind === 'skirting');
+near(Number(skirtingWithBoth.size), (config.W * 2 + (50 + 80) * 2) / 1000);
+assert.equal(model.code.split('-')[2], 'STD');
+for (const [handle, token] of [['XCJ', 'CJ'], ['NONE', 'NHX'], ['PUSH', 'STD'], ['KNOB', 'STD'], ['HANDLE', 'STD']]) {
+  const cabinet = b.buildModel({ ...config, handle });
+  assert.equal(cabinet.code.split('-')[2], token);
+  if (handle === 'NONE') {
+    const restored = b.restoreLegacyBom([{ Level: 0, Item: cabinet.code, 'SO Qty': 1, Elevation: 'AA' }]);
+    assert.equal(restored.project[0].m.code.split('-')[2], 'NHX');
+    assert.equal(restored.project[0].m.handle, 'NONE');
+  }
+}
+const combinedLaminateModel = b.buildModel({ ...config, carcassLamFrontSheetPrice: '431', carcassLamBackSheetPrice: '999',
+  backLamFrontSheetPrice: '431', backLamBackSheetPrice: '999', shutterLamFrontSheetPrice: '431', shutterLamBackSheetPrice: '431',
+  visibleLamFrontSheetPrice: '431', visibleLamBackSheetPrice: '431' });
+assert.equal(combinedLaminateModel.carcassLamBackSheetPrice, '431');
+for (const pack of ['Carcass Pack', 'Shutter Pack']) {
+  const laminateRows = combinedLaminateModel.cons.filter(row => row.pack === pack && row.name.includes('LAMINATE 0.8MM'));
+  assert(laminateRows.length > 0);
+  assert(laminateRows.every(row => !/FRONT|BACK|OUTER|LINER/.test(row.name)));
+}
+const combinedLaminateCost = b.computeCosting([{ id: 1, m: combinedLaminateModel, qty: 1, elevation: 'AA' }], [], [], [], [], [], [], config.shType, config.shType,
+  b.DEFAULT_RATES, { carcass: 10, shutter: 20, profile: 20 }, {});
+const laminateDetails = combinedLaminateCost.lines[0].details.filter(row => row.category.endsWith(' laminate'));
+assert(laminateDetails.length > 0);
+assert(laminateDetails.every(row => row.rate === 431 / 32 && row.specification.includes('Both faces')));
+assert(laminateDetails.every(row => !/front|back|outer|liner/i.test(row.category)));
+const differentShutterVisiblePrices = b.buildModel({ ...config,
+  boardPrices: { shutter: { itemId: config.shType, sheetPrice: '2084' }, visible: { itemId: config.visibleSideMaterialId, sheetPrice: '2400' } },
+  shutterLamFrontSheetPrice: '961', shutterLamBackSheetPrice: '400',
+  visibleLamFrontSheetPrice: '1100', visibleLamBackSheetPrice: '400' });
+const separatePrices = b.computeCosting([{ id: 1, m: differentShutterVisiblePrices, qty: 1, elevation: 'AA' }], [], [], [], [], [], [], config.shType, config.shType,
+  b.DEFAULT_RATES, { carcass: 10, shutter: 20, profile: 20 }, {}).lines[0].details;
+for (const [category, sheetPrice] of [['Shutter board', 2084], ['Visible side board', 2400], ['Shutter laminate', 961], ['Visible side laminate', 1100]]) {
+  const row = separatePrices.find(detail => detail.category === category);
+  assert(row, `Missing ${category}`);
+  near(row.rate, sheetPrice / 32);
+}
+for (const category of ['Shutter laminate', 'Visible side laminate']) {
+  const faces = separatePrices.filter(detail => detail.category === category);
+  assert.equal(faces.length, 2);
+  assert(faces.some(detail => detail.specification.startsWith('Front face') && detail.rate === (category === 'Shutter laminate' ? 961 : 1100) / 32));
+  assert(faces.some(detail => detail.specification.startsWith('Back face') && detail.rate === 400 / 32));
+}
 const drawerModel = b.buildModel({...config, fk: 'DW', vid: '2dr-mixed'});
 const drawerPanels = drawerModel.panels.filter(p => p.pack === 'Drawer Pack');
 assert(drawerPanels.length > 0 && drawerPanels.every(p => p.band));
@@ -102,10 +220,12 @@ const project = [{ id: 1, m: model, qty: 1, elevation: 'AA' }, { id: 2, m: model
 const full = calc(project);
 const counter = b.computeCosting([], [], [], [{id: 1, materialId: 'KITCHEN-014', material: 'POSTlam BWP Ply BSL', ratePerSqft: '166.8125', length: '2050', depth: '600', thickness: '18', qty: 1}], [], [], [], config.shType, config.shType,
   b.DEFAULT_RATES, {carcass: 10, shutter: 20, profile: 20}, {});
+near(b.counterPlyAreaSqft({length: '2050', thickness: '18', depth: '600', qty: 2}), 2050 * 18 * 2 / 92903);
+near(counter.lines[0].details[0].netQty, 2050 * 18 / 92903);
 near(counter.lines[0].details[0].rate, 2612.4 / 32);
 near(counter.purchases[0].rate, 2612.4);
 near(counter.total, counter.purchases[0].quantity * 2612.4);
-const counterBase = {id: 1, materialId: 'KITCHEN-030', material: 'RAW BWR Ply Counter Base-16mm', ratePerSqft: '166.81', length: '2050', depth: '600', thickness: '', qty: 1};
+const counterBase = {id: 1, materialId: 'KITCHEN-030', material: 'RAW BWR Ply Counter Base-16mm', ratePerSqft: '166.81', length: '2050', depth: '600', thickness: '16', qty: 1};
 assert.equal(b.countertopMaterialId(counterBase), 'KITCHEN-030');
 assert.equal(b.countertopMaterialItem(counterBase, config.shType).thicknessMm, 16);
 assert.equal(b.countertopMaterialId({...counterBase, materialId: undefined}), 'KITCHEN-030');
@@ -190,12 +310,12 @@ const XLSX = require('xlsx-js-style');
 let workbook;
 XLSX.writeFile = value => { workbook = value; };
 require('../src/lib/export.ts').exportCostingWorkbook(full.lines, [], {
-  cabinetSqft: 0, fillerSqft: 0, totalSqft: 0, baseCost: full.total, conversion: 0, profit: 0,
+  cabinetSqft: 0, fillerSqft: 0, counterPlySqft: 0, totalSqft: 0, baseCost: full.total, conversion: 0, profit: 0,
   transportation: 0, installation: 0, loading: 0, subtotal: full.total, tax: 0, grandTotal: full.total,
 }, full.unpriced, {
   conversionPct: 0, profitPct: 0, transportation: { mode: 'direct', value: 0 },
   installation: { mode: 'direct', value: 0 }, loading: { mode: 'direct', value: 0 }, includeTax: false,
-});
+}, 'Test kitchen');
 const exported = XLSX.utils.sheet_to_json(workbook.Sheets['Consolidated Items']);
 assert(exported.some(p => !Number.isInteger(p['Purchase qty'])));
 for (const p of exported) {
