@@ -1870,6 +1870,37 @@ function requiredHandleHardware(kind: "c-handle" | "j-handle") {
 function accessoryMeters(row: AccessoryRow): number {
   return Math.max(0, Number(row.size) || 0) * Math.max(0, row.qty);
 }
+function groupedAutomaticAccessories(automatic: AccessoryRow[], edits: AccessoryRow[]) {
+  const overrides = new Map(edits.filter((row) => row.automaticKey).map((row) => [row.automaticKey, row]));
+  const groups = new Map<string, Array<{ source: AccessoryRow; item: AccessoryRow; edited: boolean }>>();
+  automatic.forEach((source) => {
+    const override = overrides.get(source.automaticKey);
+    const item = { ...source, ...override };
+    // Handles share one visible row per kind and elevation; each cut remains editable below it.
+    const key = item.kind === "c-handle" || item.kind === "j-handle"
+      ? `${item.elevation}\u0000${item.kind}` : source.automaticKey!;
+    const group = groups.get(key) ?? [];
+    group.push({ source, item, edited: !!override });
+    groups.set(key, group);
+  });
+  return [...groups.values()];
+}
+/** A J profile is one continuous run per elevation, while C handles keep their individual cuts. */
+function mergeJHandleRuns(rows: AccessoryRow[]): AccessoryRow[] {
+  const merged = new Map<string, AccessoryRow>();
+  const result: AccessoryRow[] = [];
+  rows.forEach((row) => {
+    if (row.kind !== "j-handle") { result.push(row); return; }
+    const previous = merged.get(row.elevation);
+    if (previous) previous.size = (accessoryMeters(previous) + accessoryMeters(row)).toFixed(3);
+    else {
+      const run = { ...row, size: accessoryMeters(row).toFixed(3), qty: 1 };
+      merged.set(row.elevation, run);
+      result.push(run);
+    }
+  });
+  return result;
+}
 const LIGHT_ITEMS = {
   profile: COSTING_ITEMS.find((item) => item.id === "KITCHEN-084")!,
   diffuser: COSTING_ITEMS.find((item) => item.id === "KITCHEN-085")!,
@@ -2180,7 +2211,7 @@ function validatedCabinetConfig(value: unknown): CabinetConfig {
   if (config.zk === "WB" && config.fk === "WGL") config.fk = "WST";
   if (config.zk === "TB" && config.fk === "BLNG") config.fk = "BLND";
   if ((config.zk === "LB" || config.zk === "LBF") && config.fk === "LGL") config.fk = "LST";
-  if (config.boardPrices !== undefined && (!isRecord(config.boardPrices) || Object.entries(config.boardPrices).some(([key, price]) => !MATERIAL_FIELDS.includes(key as typeof MATERIAL_FIELDS[number]) || !isRecord(price) || typeof price.itemId !== "string" || !COSTING_ITEMS.some(item => item.id === price.itemId) || !validBoardSheetPrice(price.sheetPrice)))) throw new Error("Invalid saved Prelam board price.");
+  if (config.boardPrices !== undefined && (!isRecord(config.boardPrices) || Object.entries(config.boardPrices).some(([key, price]) => !MATERIAL_FIELDS.includes(key as typeof MATERIAL_FIELDS[number]) || !isRecord(price) || typeof price.itemId !== "string" || !COSTING_ITEMS.some(item => item.id === price.itemId) || !validBoardSheetPrice(price.sheetPrice)))) throw new Error("Invalid saved board price.");
   const family = typeof config.zk === "string" ? famSetOf(config.zk)[config.fk] : undefined;
   if (!ZONES[config.zk] || !family || !family.variants.some((variant: { id: string }) => variant.id === config.vid)) {
     throw new Error(`Unknown cabinet family or configuration: ${String(config.zk)} / ${String(config.fk)} / ${String(config.vid)}.`);
@@ -2820,6 +2851,7 @@ function computeCosting(
     }] });
   });
 
+  const handleCostLines = new Map<string, LineCost>();
   otherAccessories.forEach((accessory) => {
     const details: CostDetail[] = [];
     const addAccessoryDetail = (name: string, specification: string, netQty: number, billableQty: number, uom: CostDetail["uom"], wastePct = 0) => {
@@ -2863,7 +2895,24 @@ function computeCosting(
     }
     const cost = details.reduce((sum, detail) => sum + detail.amount, 0);
     const qty = accessory.qty;
-    lines.push({ label: `${accessory.elevation ? `${accessory.elevation} · ` : ""}${ACC_LABEL[accessory.kind]}`, qty, unitCost: qty ? cost / qty : cost, cost, details });
+    const label = `${accessory.elevation ? `${accessory.elevation} · ` : ""}${ACC_LABEL[accessory.kind]}`;
+    if (accessory.kind === "c-handle" || accessory.kind === "j-handle") {
+      const key = `${accessory.elevation}\u0000${accessory.kind}`;
+      const previous = handleCostLines.get(key);
+      if (previous) {
+        previous.qty += qty;
+        previous.cost += cost;
+        previous.unitCost = previous.qty ? previous.cost / previous.qty : 0;
+        previous.details[0].netQty += details[0].netQty;
+        previous.details[0].billableQty += details[0].billableQty;
+        previous.details[0].amount += details[0].amount;
+        previous.details[0].specification += ` + ${details[0].specification}`;
+      } else {
+        const line = { label, qty, unitCost: qty ? cost / qty : cost, cost, details };
+        handleCostLines.set(key, line);
+        lines.push(line);
+      }
+    } else lines.push({ label, qty, unitCost: qty ? cost / qty : cost, cost, details });
   });
 
   const accessoryCostLines = new Map<string, LineCost>();
@@ -3021,11 +3070,12 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
   const allAccessories = useMemo(() => {
     const manual = accessories.filter((row) => !row.automaticKey);
     const edited = new Map(accessories.filter((row) => row.automaticKey).map((row) => [row.automaticKey, row]));
-    return [...manual, ...automaticAccessories.flatMap((automatic) => {
+    const calculated = automaticAccessories.flatMap((automatic) => {
       const override = edited.get(automatic.automaticKey);
       if (override?.disabled) return [];
       return [{ ...automatic, ...override }];
-    })];
+    });
+    return [...manual, ...mergeJHandleRuns(calculated)];
   }, [accessories, automaticAccessories]);
   const linkedAccessories = useMemo(() => cabinetAccessories(project, linkedAccessoryEdits), [project, linkedAccessoryEdits]);
   const linkedAccessoryGroups = useMemo(() => groupLinkedAccessories(linkedAccessories), [linkedAccessories]);
@@ -4090,12 +4140,61 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
                 <button className="x" style={{ color: "var(--acc)" }} onClick={addAcc}>+ add cut-length item</button>
                 <button className="x" style={{ color: "var(--acc)" }} onClick={addMasterAcc}>+ add priced item</button>
               </SecHead>
-              <p className="hint">Calculated items are editable defaults; Reset restores their calculated values. Matching cabinet accessories combine by item and elevation. Gola base cabinets get a J handle, and drawer-bearing base cabinets also get a C handle, each cut to cabinet width.</p>
+              <p className="hint">Calculated items are editable defaults; Reset restores their calculated values. J profiles combine into one run per elevation. C handles show the combined length and each editable cut size.</p>
               {automaticAccessories.length === 0 && accessories.filter((row) => !row.automaticKey).length === 0 && linkedAccessories.length === 0 && masterAccessories.length === 0
                 ? <div className="empty">No accessories selected. Add a cut-length or priced item above.</div>
                 : <Tbl head={["Accessory", "Cut size (m)", "Qty", "Total (m)", "Elevation", "Brand", "Rate (Rs/unit)", "Straight", "L-conn", "Driver", ""]} num={[2, 3, 6]}
                 rows={[
-                  ...automaticAccessories.map((source) => {
+                  ...groupedAutomaticAccessories(automaticAccessories, accessories).map((group) => {
+                  if (group[0].item.kind === "c-handle" || group[0].item.kind === "j-handle") {
+                    const kind = group[0].item.kind;
+                    const elevation = group[0].item.elevation;
+                    const included = group.filter(({ item }) => !item.disabled);
+                    const total = included.reduce((sum, { item }) => sum + accessoryMeters(item), 0);
+                    const pieces = included.reduce((sum, { item }) => sum + item.qty, 0);
+                    const updateJLength = (value: string) => {
+                      const requested = Number(value);
+                      if (value.trim() === "" || !Number.isFinite(requested) || requested < 0 || !included.length) return;
+                      if (total === 0) {
+                        const { source, item } = included[0];
+                        updAutomaticAcc(source, { size: (requested / item.qty).toFixed(3) });
+                        return;
+                      }
+                      const factor = requested / total;
+                      included.forEach(({ source, item }) => updAutomaticAcc(source, { size: (Number(item.size) * factor).toFixed(3) }));
+                    };
+                    const cutFields = group.map(({ source, item, edited }) => <div key={source.automaticKey} style={{ display: "flex", gap: 4, alignItems: "center", marginTop: 6 }}>
+                      <input type="number" min={0} step="0.001" value={item.size} disabled={item.disabled}
+                        aria-label={`${ACC_LABEL[kind]} cut size in ${elevation}`}
+                        onChange={(event) => updAutomaticAcc(source, { size: event.target.value })} style={{ width: 84 }} /> m ×
+                      <input type="number" min={1} step={1} value={item.qty} disabled={item.disabled}
+                        aria-label={`${ACC_LABEL[kind]} pieces in ${elevation}`}
+                        onChange={(event) => updAutomaticAcc(source, { qty: Math.max(1, Math.trunc(Number(event.target.value) || 1)) })} style={{ width: 52 }} />
+                      <button type="button" onClick={() => updAutomaticAcc(source, { disabled: !item.disabled })}>{item.disabled ? "Restore" : "Remove"}</button>
+                      {edited && <button type="button" onClick={() => resetAutomaticAcc(source)}>Reset</button>}
+                    </div>);
+                    return [
+                      <select key="kind" value={kind} aria-label={`Handle type in ${elevation}`}
+                        onChange={(event) => group.forEach(({ source }) => updAutomaticAcc(source, { kind: event.target.value as AccessoryKind }))}>
+                        {(Object.keys(ACC_LABEL) as AccessoryKind[]).map((option) => <option key={option} value={option}>{ACC_LABEL[option]}</option>)}</select>,
+                      kind === "j-handle"
+                        ? <label key="cuts" style={{ display: "flex", gap: 5, alignItems: "center" }}>Combined
+                          <input key={total.toFixed(3)} type="number" min={0} step="0.001" defaultValue={total.toFixed(3)}
+                            aria-label={`Combined J handle length in ${elevation}`} onBlur={(event) => updateJLength(event.target.value)} style={{ width: 90 }} /> m
+                        </label>
+                        : <details key="cuts" open><summary>Combined: {total.toFixed(3)} m</summary>{cutFields}</details>,
+                      kind === "j-handle" ? (included.length ? 1 : 0) : pieces,
+                      total.toFixed(3),
+                      <input key="elev" list="elev-list" value={elevation} aria-label={`Elevation for ${ACC_LABEL[kind]}`}
+                        onChange={(event) => group.forEach(({ source }) => updAutomaticAcc(source, { elevation: event.target.value }))} style={{ width: 64 }} />,
+                      "—", "—", "—", "—", "—",
+                      <div key="actions" style={{ display: "flex", gap: 6 }}>
+                        <button type="button" onClick={() => group.forEach(({ source }) => updAutomaticAcc(source, { disabled: included.length > 0 }))}>{included.length > 0 ? "Remove" : "Restore"}</button>
+                        {group.some(({ edited }) => edited) && <button type="button" onClick={() => group.forEach(({ source }) => resetAutomaticAcc(source))}>Reset</button>}
+                      </div>,
+                    ];
+                  }
+                  const source = group[0].source;
                   const override = accessories.find((row) => row.automaticKey === source.automaticKey);
                   const item = { ...source, ...override };
                   const disabled = !!override?.disabled;

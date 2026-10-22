@@ -52,7 +52,7 @@ export async function POST(request: Request) {
         (field !== "visible" || [18, 25].includes(candidate.thicknessMm ?? 0)));
       if (!item) return NextResponse.json({ error: `Unknown ${zone} ${field} material.` }, { status: 400 });
       if (selection.boardSheetPrice !== undefined && !validBoardSheetPrice(selection.boardSheetPrice)) {
-        return NextResponse.json({ error: `Invalid ${zone} ${field} Prelam board sheet price.` }, { status: 400 });
+        return NextResponse.json({ error: `Invalid ${zone} ${field} board sheet price.` }, { status: 400 });
       }
       for (const price of [selection.frontSheetPrice, selection.backSheetPrice]) {
         if (!/^(?:\d{1,7})(?:\.\d{1,2})?$/.test(price) || Number(price) > 1000000) {

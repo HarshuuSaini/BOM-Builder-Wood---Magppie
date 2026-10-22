@@ -12,14 +12,14 @@ Module._resolveFilename = function (name, ...args) {
 };
 for (const ext of ['.ts', '.tsx']) require.extensions[ext] = (mod, file) => {
   let source = fs.readFileSync(file, 'utf8').replace(/import\.meta\.url/g, '"file:///test"');
-  if (file.endsWith('WoodBomBuilder.tsx')) source += '\nexport { computeCosting };';
+  if (file.endsWith('WoodBomBuilder.tsx')) source += '\nexport { computeCosting, groupedAutomaticAccessories, mergeJHandleRuns };';
   mod._compile(ts.transpileModule(source, { compilerOptions: {
     module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX,
     esModuleInterop: true, target: ts.ScriptTarget.ES2020,
   } }).outputText, file);
 };
 
-const { computeCosting } = require('../src/components/WoodBomBuilder.tsx');
+const { computeCosting, groupedAutomaticAccessories, mergeJHandleRuns } = require('../src/components/WoodBomBuilder.tsx');
 const { exportCostingWorkbook } = require('../src/lib/export.ts');
 const accessories = [
   { id: 1, itemId: 'CUSTOM', customName: 'Handle', customUnit: 'PCS', qty: 1, elevation: 'AA', manualRate: '150' },
@@ -38,6 +38,43 @@ assert.equal(aa150.details[0].billableQty, 3);
 assert.equal(costing.purchases.filter(item => item.item === 'Handle' && item.rate === 150).length, 1);
 assert.equal(costing.purchases.find(item => item.item === 'Handle' && item.rate === 150).quantity, 7);
 assert.equal(costing.total, 1370);
+
+const cut = (id, kind, size, qty, elevation) => ({
+  id, kind, size: String(size), qty, elevation, straight: 0, lconn: 0, driver: '',
+});
+const profileCosting = computeCosting([], [], [], [], [], [
+  cut(1, 'j-handle', 0.45, 2, 'AA'), cut(2, 'j-handle', 0.6, 1, 'AA'),
+  cut(3, 'c-handle', 0.6, 1, 'AA'), cut(4, 'j-handle', 0.3, 1, 'BB'),
+], [], '', '', {}, { carcass: 10, shutter: 20, profile: 20 }, {});
+const jAa = profileCosting.lines.filter(line => line.label === 'AA · J Type handle');
+assert.equal(jAa.length, 1, 'same handle type and elevation should have one costing row');
+assert.equal(jAa[0].qty, 3);
+assert.equal(Number(jAa[0].details[0].netQty.toFixed(2)), 1.5);
+assert.equal(profileCosting.lines.filter(line => line.label === 'AA · C Type handle').length, 1,
+  'C and J remain different items');
+assert.equal(profileCosting.lines.filter(line => line.label === 'BB · J Type handle').length, 1,
+  'different elevations remain separate');
+const generated = [
+  { ...cut(1, 'j-handle', 0.45, 2, 'AA'), automaticKey: 'cabinet:1:j-handle' },
+  { ...cut(2, 'j-handle', 0.6, 1, 'AA'), automaticKey: 'cabinet:2:j-handle' },
+  { ...cut(3, 'c-handle', 0.6, 1, 'AA'), automaticKey: 'cabinet:2:c-handle' },
+];
+const grouped = groupedAutomaticAccessories(generated, []);
+assert.equal(grouped.length, 2, 'editor should show one row per handle type and elevation');
+assert.equal(grouped.find(group => group[0].item.kind === 'j-handle').length, 2,
+  'individual J cut sizes must remain editable within the group');
+const runs = mergeJHandleRuns(generated);
+const mergedJ = runs.filter(row => row.kind === 'j-handle');
+assert.equal(mergedJ.length, 1, 'J handle is one run per elevation');
+assert.equal(mergedJ[0].size, '1.500');
+assert.equal(mergedJ[0].qty, 1);
+assert.equal(runs.filter(row => row.kind === 'c-handle').length, 1,
+  'C handle retains its individual cut sizes');
+const mergedCosting = computeCosting([], [], [], [], [], runs, [], '', '', {},
+  { carcass: 10, shutter: 20, profile: 20 }, {});
+assert.equal(mergedCosting.lines.find(line => line.label === 'AA · J Type handle').qty, 1,
+  'merged J run must be one costing piece');
+assert.equal(mergedCosting.lines.find(line => line.label === 'AA · J Type handle').details[0].netQty, 1.5);
 
 let workbook;
 const originalWrite = XLSX.writeFile;

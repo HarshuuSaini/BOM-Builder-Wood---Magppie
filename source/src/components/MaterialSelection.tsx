@@ -63,7 +63,7 @@ function updateMaterialChoices(choices: ZoneMaterials, field: MaterialField, cha
         itemId: matchingOption.id,
         frontSheetPrice: next[field].frontSheetPrice,
         backSheetPrice: next[field].backSheetPrice,
-        boardSheetPrice: typeOf(sourceOption) === "Prelam" ? sourcePrice : undefined,
+        boardSheetPrice: typeOf(sourceOption) === "Prelam" || typeOf(sourceOption) === "Postlam" ? sourcePrice : undefined,
       };
     }
   }
@@ -156,7 +156,7 @@ export function MaterialSelection({ options, initial }: { options: Option[]; ini
         const selected = choices[field];
         const selectedOption = available.find((option) => option.id === selected.itemId);
         const postlam = selectedOption && typeOf(selectedOption) === "Postlam";
-        const prelam = selectedOption && typeOf(selectedOption) === "Prelam";
+        const boardWithSeparateRate = selectedOption && ["Prelam", "Postlam"].includes(typeOf(selectedOption));
         const types = (field === "shutter" || field === "visible" ? ["Prelam", "Postlam", "PU", "Membrane"] : ["Prelam", "Postlam"])
           .filter((type) => available.some((option) => typeOf(option) === type));
         return <div key={field} style={{ border: "1px solid #dae2dc", borderRadius: 7, padding: 12, background: "white", minWidth: 0 }}>
@@ -168,12 +168,12 @@ export function MaterialSelection({ options, initial }: { options: Option[]; ini
             </select>
           </label>
           <small style={{ color: "#65786e" }}>Kitchen item: {selected.itemId}</small>
-          {prelam && <label style={{ display: "grid", gap: 4, marginTop: 12 }}>Prelam board · ₹ / 32 sqft sheet
-            <input aria-label={`${section} ${meta.label} Prelam board sheet price`} type="number" min="0" max="1000000" step="any" inputMode="decimal"
+          {boardWithSeparateRate && <label style={{ display: "grid", gap: 4, marginTop: 12 }}>{postlam ? "Postlam raw board" : "Prelam board"} · ₹ / 32 sqft sheet
+            <input aria-label={`${section} ${meta.label} ${postlam ? "Postlam raw board" : "Prelam board"} sheet price`} type="number" min="0" max="1000000" step="any" inputMode="decimal"
               value={selected.boardSheetPrice ?? selectedOption.boardSheetPrice} disabled={disabled}
               onChange={(event) => update(section, field, { boardSheetPrice: event.target.value })} style={fieldStyle} />
           </label>}
-          {prelam && (field === "back" || field === "drawer") && selected.boardSheetPrice !== undefined &&
+          {boardWithSeparateRate && (field === "back" || field === "drawer") && selected.boardSheetPrice !== undefined &&
             selected.boardSheetPrice !== selectedOption.boardSheetPrice &&
             <button type="button" disabled={disabled} onClick={() => update(section, field, { boardSheetPrice: undefined })}
               style={{ border: 0, background: "none", padding: "7px 0 0", color: "#17645b", cursor: "pointer", textAlign: "left" }}>

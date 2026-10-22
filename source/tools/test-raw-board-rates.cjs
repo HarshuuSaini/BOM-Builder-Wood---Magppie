@@ -1,5 +1,12 @@
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const ts = require('typescript');
 const master = require('../src/data/costing_master.json');
+require.extensions['.ts'] = (mod, file) => mod._compile(ts.transpileModule(fs.readFileSync(file, 'utf8'), {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
+}).outputText, file);
+const { selectedBoardRate } = require(path.resolve(__dirname, '../src/lib/kitchen-materials.ts'));
 const byId = id => master.items.find(item => item.id === id);
 const expected = {
   'KITCHEN-004': 2201.91, 'KITCHEN-011': 2201.91,
@@ -23,6 +30,15 @@ for (const [id, rate] of Object.entries({
   'KITCHEN-019': 500,
 })) assert.equal(byId(id).currentRate, rate, id);
 assert(master.items.every(item => item.currentRate >= 0));
+for (const type of ['Prelam', 'Postlam']) {
+  const item = { id: 'TEST-BOARD', type, currentRate: 50 };
+  assert.equal(selectedBoardRate(item, { itemId: item.id, sheetPrice: '2400' }), 75,
+    `${type} selected sheet price must drive costing`);
+  assert.equal(selectedBoardRate(item, { itemId: 'OTHER-BOARD', sheetPrice: '2400' }), 50,
+    `${type} overrides must be item-specific`);
+}
+assert.equal(selectedBoardRate({ id: 'PU-BOARD', type: 'PU', currentRate: 50 },
+  { itemId: 'PU-BOARD', sheetPrice: '2400' }), 50, 'PU pricing must remain unchanged');
 for (const shutter of master.items.filter(item => item.group === 'Shutter Material')) {
   const carcass = master.items.find(item => item.group === 'Carcass/ Shelf Material' && item.subgroup === shutter.subgroup && item.thicknessMm === shutter.thicknessMm);
   if (!carcass) continue;

@@ -46,7 +46,7 @@ export function boardPricesFromMaterials(choices?: ZoneMaterials): BoardPriceOve
 }
 
 export function selectedBoardRate(item: { id: string; type: string; currentRate: number }, override?: BoardPriceOverride): number {
-  return /^prelam$/i.test(item.type) && override?.itemId === item.id && validBoardSheetPrice(override.sheetPrice)
+  return /^(?:prelam|postlam)$/i.test(item.type) && override?.itemId === item.id && validBoardSheetPrice(override.sheetPrice)
     ? Number(override.sheetPrice) / 32 : item.currentRate;
 }
 
