@@ -137,7 +137,7 @@ export function MaterialSelection({ options, initial }: { options: Option[]; ini
     }
     const selected = entries.find((entry) => entry.id === activeKitchenId()) ?? entries[0];
     setKitchens(entries); setActiveKitchen(selected.id); setKitchenName(selected.name);
-    if (selected.materials) loadKitchenMaterials(selected.materials);
+    loadKitchenMaterials(selected.materials ?? defaultMaterials());
   // Read the active kitchen once when this page opens.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -259,6 +259,16 @@ export function MaterialSelection({ options, initial }: { options: Option[]; ini
     const entries = readKitchenWorkspace().map((entry) => entry.id === activeKitchen ? { ...entry, name } : entry);
     writeKitchenWorkspace(entries); setKitchens(entries);
   };
+  const removeImportedKitchen = () => {
+    const current = kitchens.find((entry) => entry.id === activeKitchen);
+    if (!current?.sourceName || !window.confirm(`Remove ${current.name || current.sourceName} and its locally saved cabinets, materials, and costing?`)) return;
+    const remaining = readKitchenWorkspace().filter((entry) => entry.id !== current.id);
+    const next = remaining[0] ?? { id: crypto.randomUUID(), name: "", rows: [], materials: defaultMaterials() };
+    const updated = remaining.length ? remaining : [next];
+    writeKitchenWorkspace(updated); setKitchens(updated);
+    setActiveKitchenId(next.id); setActiveKitchen(next.id); setKitchenName(next.name);
+    loadKitchenMaterials(next.materials ?? defaultMaterials());
+  };
 
   async function continueToBuilder() {
     setBusy(true); setError("");
@@ -292,6 +302,8 @@ export function MaterialSelection({ options, initial }: { options: Option[]; ini
           <input aria-label="Kitchen name" value={kitchenNameDraft} onChange={(event) => setKitchenNameDraft(event.target.value)} style={fieldStyle} placeholder="Enter kitchen name" />
         </label>
         <button type="button" disabled={!kitchenNameDraft.trim() || kitchenNameDraft.trim() === kitchenName.trim()} onClick={() => renameKitchen(kitchenNameDraft.trim())}>Save name</button>
+        {kitchens.find((entry) => entry.id === activeKitchen)?.sourceName &&
+          <button type="button" onClick={removeImportedKitchen}>Remove imported PDF</button>}
       </section>
       <nav className="kitchen-step-nav" aria-label="Kitchen setup steps" style={{ marginBottom: 15, paddingLeft: 0 }}>
         <span aria-current="page">1 · Material selection</span>

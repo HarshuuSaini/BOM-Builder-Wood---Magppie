@@ -3706,12 +3706,12 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
     writeKitchenWorkspace(updated); setKitchens(updated);
   };
   const selectKitchen = async (id: string) => {
-    if (id === activeKitchen) return;
+    if (id === activeKitchen) return false;
     setImportError("");
     try {
       const entries = saveActiveKitchen();
       const selected = entries.find((entry) => entry.id === id);
-      if (!selected) return;
+      if (!selected) return false;
       if (selected.materials) {
         const response = await fetch("/api/kitchen-materials", { method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify(selected.materials) });
@@ -3726,7 +3726,22 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
       setMaterials(selected.materials ?? materials);
       setActiveKitchenId(id); setActiveKitchen(id); setKitchenName(selected.name);
       setImportMessage(`Showing ${selected.name.trim() || selected.sourceName || "unnamed kitchen"}.`);
-    } catch (error) { setImportError(error instanceof Error ? error.message : "Could not switch kitchens."); }
+      return true;
+    } catch (error) { setImportError(error instanceof Error ? error.message : "Could not switch kitchens."); return false; }
+  };
+  const removeImportedKitchen = async () => {
+    const current = kitchens.find((entry) => entry.id === activeKitchen);
+    if (!current?.sourceName || !window.confirm(`Remove ${current.name || current.sourceName} and its locally saved cabinets, materials, and costing?`)) return;
+    const remaining = readKitchenWorkspace().filter((entry) => entry.id !== current.id);
+    if (remaining.length) {
+      if (!await selectKitchen(remaining[0].id)) return;
+      const updated = readKitchenWorkspace().filter((entry) => entry.id !== current.id);
+      writeKitchenWorkspace(updated); setKitchens(updated);
+    } else {
+      const blank: KitchenWorkspaceEntry = { id: crypto.randomUUID(), name: "", rows: [] };
+      writeKitchenWorkspace([blank]); setActiveKitchenId(blank.id);
+      window.location.assign("/materials");
+    }
   };
   const importKitchenPdfs = async (files: FileList) => {
     setImportError(""); setImportMessage(""); setKitchenBusy(true);
@@ -4015,6 +4030,8 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
           <input aria-label="Kitchen name" required value={kitchenNameDraft} onChange={(event) => setKitchenNameDraft(event.target.value)} placeholder="Enter kitchen name" />
         </label>
         <button type="button" className="add" disabled={!kitchenNameDraft.trim() || kitchenNameDraft.trim() === kitchenName.trim()} onClick={() => renameKitchen(kitchenNameDraft.trim())}>Save name</button>
+        {kitchens.find((entry) => entry.id === activeKitchen)?.sourceName &&
+          <button type="button" className="add" disabled={kitchenBusy} onClick={() => void removeImportedKitchen()}>Remove imported PDF</button>}
         <span style={{ color: "var(--mut)", fontSize: 12 }}>{kitchens.length} kitchen{kitchens.length === 1 ? "" : "s"} in this session</span>
       </section>
       <nav className="kitchen-step-nav" aria-label="Kitchen setup steps">
