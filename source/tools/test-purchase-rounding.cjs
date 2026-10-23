@@ -10,7 +10,7 @@ Module._resolveFilename = function (name, ...args) {
 };
 for (const ext of ['.ts', '.tsx']) require.extensions[ext] = (mod, file) => {
   let source = fs.readFileSync(file, 'utf8').replace(/import\.meta\.url/g, '"file:///test"');
-  if (file.endsWith('WoodBomBuilder.tsx')) source += '\nexport {computeCosting, buildBoardTotals, buildModel, blindOpeningError, cabinetFillers, cabinetAccessories, buildExtrasBom, calculatedAccessories, buildMasterAccessoryRows, buildAccessoryRows, restoreAccessoryRow, restoreLegacyBom, countertopMaterialItem, countertopMaterialId, counterPlyAreaSqft, DEFAULT_RATES, DEFAULT_LAMINATE_PRICES};';
+  if (file.endsWith('WoodBomBuilder.tsx')) source += '\nexport {computeCosting, buildBoardTotals, buildModel, blindOpeningError, cabinetFillers, cabinetAccessories, buildExtrasBom, calculatedAccessories, buildMasterAccessoryRows, buildAccessoryRows, restoreAccessoryRow, restoreLegacyBom, restoreProjectSetup, kitchenCostingSnapshot, countertopMaterialItem, countertopMaterialId, counterPlyAreaSqft, DEFAULT_RATES, DEFAULT_LAMINATE_PRICES};';
   mod._compile(ts.transpileModule(source, { compilerOptions: {
     module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true, target: ts.ScriptTarget.ES2020,
   } }).outputText, file);
@@ -335,6 +335,29 @@ near(counterBaseCost.lines[0].details[0].rate, 2612.3 / 32);
 near(counterBaseCost.purchases[0].rate, 2612.3);
 near(counterBaseCost.total, counterBaseCost.purchases.reduce((sum, row) => sum + row.amount, 0));
 assert(counterBaseCost.lines[0].details[0].specification.includes('16mm'));
+const importedCounterRows = (processingRates) => [
+  { 'Record Type': 'format', Data: JSON.stringify({ name: 'wood-bom-project', version: 2 }) },
+  { 'Record Type': 'settings', Data: JSON.stringify({ name: 'Imported counter kitchen', waste: { carcass: 10, shutter: 20, profile: 20 }, pricing: {
+    conversionPct: '', profitPct: '', transportation: { mode: 'direct', value: '' }, installation: { mode: 'direct', value: '' },
+    loading: { mode: 'direct', value: '' }, includeTax: false, processingRates,
+  } }) },
+  { 'Record Type': 'countertop', Data: JSON.stringify(counterBase) },
+];
+for (const [savedRates, expectedRate] of [[{}, 12.6], [{ 'Counter Ply': 15.75 }, 15.75]]) {
+  const restored = b.restoreProjectSetup(importedCounterRows(savedRates));
+  const snapshot = b.kitchenCostingSnapshot(restored, undefined, b.DEFAULT_RATES);
+  const importedCost = b.computeCosting(restored.project, restored.fillers, restored.visiblePanels, restored.countertops,
+    [], restored.accessories, restored.masterAccessories, config.shType, config.shType, b.DEFAULT_RATES,
+    restored.waste, restored.pricing.processingRates);
+  const processing = importedCost.lines.flatMap(line => line.details).find(row => row.category === 'Counter Ply processing');
+  assert(processing, 'Imported Counter Ply must have a processing line');
+  assert.equal(processing.rate, expectedRate);
+  near(processing.billableQty, 2050 * 600 / 92903);
+  near(processing.amount, processing.billableQty * expectedRate);
+  const purchasedProcessing = snapshot.items.find(row => row.category === 'Counter Ply processing');
+  assert(purchasedProcessing, 'Imported Counter Ply processing must appear in the costing snapshot');
+  near(purchasedProcessing.amount, processing.amount);
+}
 const otherRows = [
   { id: 1, kind: 'elenor', size: '1.75', qty: 3, elevation: 'AA', straight: 0, lconn: 0, driver: '' },
   { id: 2, kind: 'c-handle', size: '0.375', qty: 2, elevation: 'AA', straight: 0, lconn: 0, driver: '' },

@@ -68,6 +68,30 @@ assert.equal(ws("Project Pricing").B23.v, 8868.88);
 const reopened = XLSX.read(XLSX.write(workbook, { type: "buffer", bookType: "xlsx" }), { type: "buffer" });
 assert.equal(reopened.Sheets["Project Pricing"].B23.f, "B19+B22");
 assert.equal(reopened.Sheets["Consolidated Items"].H2.f, "ROUND(E2/G2,2)");
+XLSX.writeFile = result => { workbook = result; };
+try {
+  const board = { category: "Carcass board", itemCode: "BOARD-1", item: "Test board",
+    specification: "test", netQty: 64, wastePct: 0, billableQty: 64,
+    allocatedBillableQty: 64, uom: "sqft", rate: 100, amount: 6400 };
+  const processing = { category: "Carcass / shelf material processing", itemCode: "BOARD-1-PROC",
+    item: "Test board processing", specification: "Processing", netQty: 10, wastePct: 10,
+    billableQty: 11, uom: "sqft", rate: 42.3, amount: 465.3 };
+  exportCostingWorkbook([{ label: "AA · Test cabinet", code: "TEST", qty: 1,
+    unitCost: 6865.3, cost: 6865.3, details: [board, processing] }], [{ eachSqft: 10, sqft: 10 }],
+    { cabinetSqft: 10, fillerSqft: 0, counterPlySqft: 0, totalSqft: 10,
+      baseCost: 6865.3, conversion: 0, profit: 0, transportation: 0, installation: 0,
+      loading: 0, subtotal: 6865.3, tax: 0, grandTotal: 6865.3 }, [], {
+      conversionPct: 0, profitPct: 0, transportation: { mode: "direct", value: 0 },
+      installation: { mode: "direct", value: 0 }, loading: { mode: "direct", value: 0 }, includeTax: false,
+    }, "Test kitchen");
+} finally { XLSX.writeFile = originalWrite; }
+const manualExport = XLSX.utils.sheet_to_json(workbook.Sheets["Manual Comparison"], { range: 3 });
+const processingRow = manualExport.find(row => row["Item code"] === "BOARD-1-PROC");
+assert.equal(processingRow.Elevation, "PROCESSING COST");
+assert.equal(processingRow["Material Description"], "CARCASS / SHELF MATERIAL PROCESSING - Test board processing");
+const boardRow = manualExport.find(row => row["Item code"] === "BOARD-1");
+assert.equal(boardRow.Elevation, "CARCASS BOARD");
+assert.equal(boardRow["Material Description"], "Test board");
 const bulkItem = (rate, quantity) => ({ category: 'Counter Ply', itemCode: 'KITCHEN-030', item: 'Counter base ply', unit: 'sheet', rate, quantity, amount: rate * quantity });
 const bulkKitchen = (name, rate, quantity, areaSqft) => ({ name, areaSqft, materialCost: rate * quantity,
   conversion: 0, profit: 0, transportation: 0, installation: 0, loading: 0, tax: 0,

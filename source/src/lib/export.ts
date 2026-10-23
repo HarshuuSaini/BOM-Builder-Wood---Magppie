@@ -545,8 +545,13 @@ export function exportCostingWorkbook(
     const factor = sourceFactor(item.unit);
     return { item, factor, requiredSourceQty: item.requiredQty * factor, sourceRate: item.rate / factor };
   });
-  const manualItems = purchaseRows.map(({ item }) => ({ key: item.key, elevation: item.categories.join(", ").toUpperCase(),
-    description: item.item, code: item.itemCode, rate: item.rate, unit: item.unit, qty: item.quantity }));
+  const manualItems = purchaseRows.map(({ item }) => {
+    const previousElevation = item.categories.join(", ").toUpperCase();
+    const processing = item.categories.some((category) => /processing$/i.test(category));
+    return { key: item.key, elevation: processing ? "PROCESSING COST" : previousElevation,
+      description: processing ? `${previousElevation} - ${item.item}` : item.item,
+      code: item.itemCode, rate: item.rate, unit: item.unit, qty: item.quantity };
+  });
   const manualRows: (string | number | XLSX.CellObject)[][] = [
     [`KITCHEN COSTING - ${kitchenName.trim()}`],
     ["Cabinet + filler + Counter Ply area (sqft)", pricing.totalSqft, "Total cabinets", lines.filter((line) => !!line.code).reduce((total, line) => total + line.qty, 0)],

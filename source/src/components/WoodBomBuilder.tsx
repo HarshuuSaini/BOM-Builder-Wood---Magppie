@@ -2393,9 +2393,9 @@ function restoreProjectSetup(rows: Record<string, unknown>[], pdfMaterials?: Kit
   }
   if (pricing.processingRates === undefined) pricing.processingRates = {};
   if (!isRecord(pricing.processingRates) || Object.entries(pricing.processingRates).some(([key, value]) =>
-    !PROCESSING_CATEGORIES.some((category) => key.startsWith(`${category}|`)) ||
+    (key !== "Counter Ply" && (!PROCESSING_CATEGORIES.some((category) => key.startsWith(`${category}|`)) ||
     ![...PROCESSING_TYPES, ...COSTING_ITEMS.filter((item) => item.rateBasis === "SQFT").map((item) => item.id)]
-      .some((suffix) => key.endsWith(`|${suffix}`)) ||
+      .some((suffix) => key.endsWith(`|${suffix}`)))) ||
     typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 1_000_000)) {
     throw new Error("Saved board processing rates are invalid.");
   }
@@ -3633,6 +3633,8 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
 
   const applyRestoredKitchen = (restored: ProjectRestore, boardInputs: Record<string, string> = {}) => {
     setProject(restored.project);
+    // Counter Ply is project-wide; a stale elevation filter would hide its processing on import.
+    setSelectedElevation(null);
     setLinkedFillerEdits(restored.linkedFillerEdits ?? []);
     setSelectedProjectLineIds([]);
     setLinkedAccessoryEdits(restored.linkedAccessoryEdits ?? []);
@@ -3730,6 +3732,7 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
       if (!Array.isArray(draft.rows)) throw new Error("Saved kitchen is incomplete.");
       const restored = restoreProjectSetup(draft.rows, materials);
       setProject(restored.project);
+      setSelectedElevation(null);
       setLinkedFillerEdits(restored.linkedFillerEdits ?? []);
       setSelectedProjectLineIds([]);
       setLinkedAccessoryEdits(restored.linkedAccessoryEdits ?? []);
