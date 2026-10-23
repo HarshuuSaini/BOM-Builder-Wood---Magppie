@@ -10,7 +10,7 @@ Module._resolveFilename = function (name, ...args) {
 };
 for (const ext of ['.ts', '.tsx']) require.extensions[ext] = (mod, file) => {
   let source = fs.readFileSync(file, 'utf8').replace(/import\.meta\.url/g, '"file:///test"');
-  if (file.endsWith('WoodBomBuilder.tsx')) source += '\nexport {computeCosting, buildModel, blindOpeningError, cabinetFillers, cabinetAccessories, buildExtrasBom, calculatedAccessories, buildMasterAccessoryRows, buildAccessoryRows, restoreAccessoryRow, restoreLegacyBom, countertopMaterialItem, countertopMaterialId, counterPlyAreaSqft, DEFAULT_RATES, DEFAULT_LAMINATE_PRICES};';
+  if (file.endsWith('WoodBomBuilder.tsx')) source += '\nexport {computeCosting, buildBoardTotals, buildModel, blindOpeningError, cabinetFillers, cabinetAccessories, buildExtrasBom, calculatedAccessories, buildMasterAccessoryRows, buildAccessoryRows, restoreAccessoryRow, restoreLegacyBom, countertopMaterialItem, countertopMaterialId, counterPlyAreaSqft, DEFAULT_RATES, DEFAULT_LAMINATE_PRICES};';
   mod._compile(ts.transpileModule(source, { compilerOptions: {
     module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true, target: ts.ScriptTarget.ES2020,
   } }).outputText, file);
@@ -57,6 +57,9 @@ near(purchaseTotals([detail('DECIMAL', 0.9241325678, 'kg', 400)])[0].amount, 368
 // Combine first: separately rounding 0.004 + 0.004 would incorrectly yield zero.
 near(purchaseTotals([detail('SMALL', 0.004, 'kg', 400), detail('SMALL', 0.004, 'kg', 400)])[0].quantity, 0.01);
 assert.equal(get('PROC').quantity, 32.1);
+const fractionalProcessing = purchaseTotals([detail('PROC-FRACTIONAL', 1.23456, 'sqft', 42.3, 'Carcass / shelf material processing')])[0];
+near(fractionalProcessing.quantity, 1.23456);
+near(fractionalProcessing.amount, 1.23456 * 42.3);
 assert.equal(get('PIN').quantity, 6.1);
 assert.equal(get('SET').quantity, 2.1);
 near(rows.reduce((s, x) => s + x.cost, 0), totals.reduce((s, x) => s + x.amount, 0));
@@ -69,6 +72,14 @@ allocatePurchaseCosts(rows);
 near(rows.reduce((s, x) => s + x.cost, 0), again);
 
 const b = require('../src/components/WoodBomBuilder.tsx');
+const { DEFAULT_BOARD_PROCESSING_RATES } = require('../src/lib/costing.ts');
+assert.deepEqual(DEFAULT_BOARD_PROCESSING_RATES, {
+  'Carcass / shelf material|Postlam': 42.3, 'Carcass back material|Postlam': 17.1,
+  'Drawer material|Postlam': 28.8125, 'Shutter material|Postlam': 42.3,
+  'Visible side material|Postlam': 42.3, 'Carcass / shelf material|Prelam': 36,
+  'Carcass back material|Prelam': 12.59375, 'Drawer material|Prelam': 22.5,
+  'Shutter material|Prelam': 36, 'Visible side material|Prelam': 36, 'Counter Ply': 12.6,
+});
 const { handleSettingFor } = require('../src/lib/kitchen-materials.ts');
 const { updateMaterialChoices } = require('../src/components/MaterialSelection.tsx');
 assert.equal(handleSettingFor(undefined, 'BC').type, 'XCJ');
@@ -185,6 +196,24 @@ const sidePanels = b.buildExtrasBom(sideFillers, [], [], twoFillerProject, '', c
 assert.deepEqual(sidePanels.panels.map(panel => panel.w), [50, 80]);
 assert(sidePanels.panels.some(panel => panel.name.includes('Filler LH')));
 assert(sidePanels.panels.some(panel => panel.name.includes('Filler RH')));
+const wallCoverCabinet = b.buildModel({ ...config, zk: 'WC', fk: 'WST', W: 600, H: 900 });
+const wallCoverProject = [{ id: 202, m: wallCoverCabinet, qty: 1, elevation: 'AA' }];
+const wallCoverFillers = [
+  { id: 203, linkedLineId: 202, fillerType: 'cover-panel', zone: 'wall', customShade: 'White', qty: 1,
+    customHeight: '900', customWidth: '80', customDepth: '336', elevation: 'AA' },
+  { id: 204, fillerType: 'filler', zone: 'wall', customShade: 'White', qty: 1,
+    customHeight: '900', customWidth: '50', customDepth: '336', elevation: 'AA' },
+];
+const wallCoverExtras = b.buildExtrasBom(wallCoverFillers, [], [], wallCoverProject, '', config.shType, config.shType, config.finish,
+  { carcass: 10, shutter: 20, profile: 20 });
+assert.equal(wallCoverExtras.panels.length, 6); // five cover panels plus the next filler
+const wallCoverCost = b.computeCosting(wallCoverProject, wallCoverFillers, [], [], wallCoverExtras.panels, [], [], config.shType, config.shType,
+  b.DEFAULT_RATES, { carcass: 10, shutter: 20, profile: 20 }, {});
+assert.equal(wallCoverCost.lines.filter(line => !line.code).length, wallCoverExtras.panels.length);
+const wallCoverRaw = b.buildBoardTotals(wallCoverProject, { carcass: 10, shutter: 20, profile: 20 }, wallCoverExtras.panels)
+  .filter(row => !/glass/i.test(row.mat)).reduce((sum, row) => sum + row.billableSqft, 0);
+near(wallCoverCost.lines.flatMap(line => line.details).filter(row => /processing$/.test(row.category))
+  .reduce((sum, row) => sum + row.billableQty, 0), wallCoverRaw);
 const singleRh = b.cabinetFillers([{ ...twoFillerProject[0], m: b.buildModel({ ...config, fillerWidth: 50, fillerSides: 'RH', fillerWidthRH: 80 }) }]);
 assert.deepEqual(singleRh.map(row => [row.fillerSide, row.customWidth]), [['RH', '80']]);
 const legacyFiller = b.cabinetFillers([{ ...twoFillerProject[0], m: b.buildModel({ ...config, fillerWidth: 50 }) }]);
@@ -213,6 +242,35 @@ for (const pack of ['Carcass Pack', 'Shutter Pack']) {
 const combinedLaminateCost = b.computeCosting([{ id: 1, m: combinedLaminateModel, qty: 1, elevation: 'AA' }], [], [], [], [], [], [], config.shType, config.shType,
   b.DEFAULT_RATES, { carcass: 10, shutter: 20, profile: 20 }, {});
 const laminateDetails = combinedLaminateCost.lines[0].details.filter(row => row.category.endsWith(' laminate'));
+const processingDetails = combinedLaminateCost.lines[0].details.filter(row => row.category.endsWith(' processing'));
+assert(processingDetails.length > 0);
+const rawBoardSqft = b.buildBoardTotals([{ id: 1, m: combinedLaminateModel, qty: 1, elevation: 'AA' }], { carcass: 10, shutter: 20, profile: 20 })
+  .filter(row => !/glass/i.test(row.mat)).reduce((sum, row) => sum + row.billableSqft, 0);
+near(processingDetails.reduce((sum, row) => sum + row.billableQty, 0), rawBoardSqft);
+const sharedPhysicalBoard = b.buildModel({ ...config, shType: 'KITCHEN-014', visibleSideMaterialId: 'KITCHEN-014', visibleSides: 'LH' });
+const sharedProject = [{ id: 17, m: sharedPhysicalBoard, qty: 1, elevation: 'AA' }];
+const sharedCost = b.computeCosting(sharedProject, [], [], [], [], [], [], sharedPhysicalBoard.shType, sharedPhysicalBoard.shType,
+  b.DEFAULT_RATES, { carcass: 10, shutter: 20, profile: 20 }, {});
+const sharedRaw = b.buildBoardTotals(sharedProject, { carcass: 10, shutter: 20, profile: 20 })
+  .filter(row => /POSTlam BWP Ply BSL-18mm/i.test(row.mat))
+  .reduce((sum, row) => sum + row.billableSqft, 0);
+const sharedProcessing = sharedCost.lines[0].details.filter(row => row.item === 'POSTlam BWP Ply BSL-18mm' && /processing$/.test(row.category));
+assert(sharedProcessing.some(row => row.category === 'Carcass / shelf material processing'));
+assert(sharedProcessing.some(row => row.category === 'Shutter material processing'));
+assert(sharedProcessing.some(row => row.category === 'Visible side material processing'));
+near(sharedProcessing.reduce((sum, row) => sum + row.billableQty, 0), sharedRaw);
+for (const row of processingDetails) {
+  assert.equal(row.rate, DEFAULT_BOARD_PROCESSING_RATES[`${row.category.replace(/ processing$/, '')}|Postlam`]);
+  near(row.billableQty, row.netQty * (1 + row.wastePct / 100));
+}
+const zeroProcessingCost = b.computeCosting([{ id: 1, m: combinedLaminateModel, qty: 1, elevation: 'AA' }], [], [], [], [], [], [], config.shType, config.shType,
+  b.DEFAULT_RATES, { carcass: 10, shutter: 20, profile: 20 }, { 'Carcass / shelf material|Postlam': 0 });
+assert(!zeroProcessingCost.lines[0].details.some(row => row.category === 'Carcass / shelf material processing'));
+const prelamModel = b.buildModel({ ...config, board: 'KITCHEN-003', backBoardId: 'KITCHEN-033', drawerBoardId: 'KITCHEN-025', shType: 'KITCHEN-010', visibleSideMaterialId: 'KITCHEN-010' });
+const prelamCost = b.computeCosting([{ id: 1, m: prelamModel, qty: 1, elevation: 'AA' }], [], [], [], [], [], [], prelamModel.shType, prelamModel.shType,
+  b.DEFAULT_RATES, { carcass: 10, shutter: 20, profile: 20 }, {});
+for (const row of prelamCost.lines[0].details.filter(row => row.category.endsWith(' processing')))
+  assert.equal(row.rate, DEFAULT_BOARD_PROCESSING_RATES[`${row.category.replace(/ processing$/, '')}|Prelam`]);
 assert(laminateDetails.length > 0);
 assert(laminateDetails.every(row => row.rate === 431 / 32 && row.specification.includes('Both faces')));
 assert(laminateDetails.every(row => !/front|back|outer|liner/i.test(row.category)));
@@ -262,7 +320,9 @@ near(b.counterPlyAreaSqft({length: '2050', thickness: '18', depth: '600', qty: 2
 near(counter.lines[0].details[0].netQty, 2050 * 600 / 92903);
 near(counter.lines[0].details[0].rate, 2612.4 / 32);
 near(counter.purchases[0].rate, 2612.4);
-near(counter.total, counter.purchases[0].quantity * 2612.4);
+assert.equal(counter.lines[0].details[1].rate, 12.6);
+near(counter.lines[0].details[1].netQty, 2050 * 600 / 92903);
+near(counter.total, counter.purchases.reduce((sum, row) => sum + row.amount, 0));
 const counterBase = {id: 1, materialId: 'KITCHEN-030', material: 'RAW BWR Ply Counter Base-16mm', ratePerSqft: '166.81', length: '2050', depth: '600', thickness: '16', qty: 1};
 assert.equal(b.countertopMaterialId(counterBase), 'KITCHEN-030');
 assert.equal(b.countertopMaterialItem(counterBase, config.shType).thicknessMm, 16);
@@ -273,7 +333,7 @@ const counterBaseCost = b.computeCosting([], [], [], [counterBase], [], [], [], 
 assert.equal(counterBaseCost.lines[0].details[0].itemCode, 'KITCHEN-030');
 near(counterBaseCost.lines[0].details[0].rate, 2612.3 / 32);
 near(counterBaseCost.purchases[0].rate, 2612.3);
-near(counterBaseCost.total, counterBaseCost.purchases[0].quantity * 2612.3);
+near(counterBaseCost.total, counterBaseCost.purchases.reduce((sum, row) => sum + row.amount, 0));
 assert(counterBaseCost.lines[0].details[0].specification.includes('16mm'));
 const otherRows = [
   { id: 1, kind: 'elenor', size: '1.75', qty: 3, elevation: 'AA', straight: 0, lconn: 0, driver: '' },
@@ -340,7 +400,8 @@ full.lines.forEach((l, i) => l.details.forEach((d, j) => {
 near(full.total, calc([{...project[0], qty: 2}]).total);
 near(full.total, full.purchases.reduce((s, p) => s + p.amount, 0));
 near(calc([project[0]], full.purchases).total + calc([project[1]], full.purchases).total, full.total);
-assert(full.purchases.every(p => !p.rounded && p.quantity === Math.round((p.requiredQty + Number.EPSILON) * 100) / 100));
+assert(full.purchases.every(p => !p.rounded && (/processing$/i.test(p.categories[0])
+  ? p.quantity === p.requiredQty : p.quantity === Math.round((p.requiredQty + Number.EPSILON) * 100) / 100)));
 assert.equal(full.purchases.filter(p => p.itemCode === 'KITCHEN-013').length, 1);
 near(full.purchases.find(p => p.itemCode === 'KITCHEN-SINK-PROFILE').quantity, 4.1);
 
@@ -357,9 +418,14 @@ require('../src/lib/export.ts').exportCostingWorkbook(full.lines, [], {
 const exported = XLSX.utils.sheet_to_json(workbook.Sheets['Consolidated Items']);
 assert(exported.some(p => !Number.isInteger(p['Purchase qty'])));
 for (const p of exported) {
-  near(p['Purchase qty'], Math.round((p['Required qty (editable)'] / p['Units per purchase'] + Number.EPSILON) * 100) / 100);
+  const required = p['Required qty (editable)'] / p['Units per purchase'];
+  near(p['Purchase qty'], /processing$/i.test(p.Category) ? required : Math.round((required + Number.EPSILON) * 100) / 100);
   near(p['Amount (Rs)'], p['Purchase qty'] * p['Purchase rate (Rs)']);
 }
+const exportedProcessing = exported.find(row => /processing$/i.test(row.Category));
+assert(exportedProcessing);
+const processingExportRow = exported.findIndex(row => row === exportedProcessing) + 2;
+assert.equal(workbook.Sheets['Consolidated Items'][`H${processingExportRow}`].f, `E${processingExportRow}/G${processingExportRow}`);
 assert.equal(workbook.Sheets['Consolidated Items'].E2.z, '#,##0.00');
 assert.equal(workbook.Sheets['Manual Comparison'].G5.z, '#,##0.00');
 near(exported.reduce((s, p) => s + p['Amount (Rs)'], 0), full.total);

@@ -29,6 +29,22 @@ export const COSTING_MASTER: CostingMaster = {
 };
 export const COSTING_ITEMS = COSTING_MASTER.items;
 
+/** Default labour/processing charges per billable board sqft (+ wastage).
+ * Project-specific rates may override these without changing the master. */
+export const DEFAULT_BOARD_PROCESSING_RATES: Record<string, number> = {
+  "Carcass / shelf material|Postlam": 42.3,
+  "Carcass back material|Postlam": 17.1,
+  "Drawer material|Postlam": 28.8125,
+  "Shutter material|Postlam": 42.3,
+  "Visible side material|Postlam": 42.3,
+  "Carcass / shelf material|Prelam": 36,
+  "Carcass back material|Prelam": 12.59375,
+  "Drawer material|Prelam": 22.5,
+  "Shutter material|Prelam": 36,
+  "Visible side material|Prelam": 36,
+  "Counter Ply": 12.6,
+};
+
 export function costingItemNames(item: CostingMasterItem): string[] {
   return [...new Set([item.materialDescription, item.sourceMaterialDescription, ...(item.legacyDescriptions ?? [])].filter((name): name is string => !!name))];
 }

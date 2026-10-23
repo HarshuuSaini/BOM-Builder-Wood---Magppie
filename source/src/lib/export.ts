@@ -668,10 +668,11 @@ export function exportCostingWorkbook(
   purchaseRows.forEach(({ item, factor, requiredSourceQty, sourceRate }, index) => {
     const row = index + 2;
     const sourceUnit = item.unit === "sheet" ? "sqft" : item.unit === "kg" ? "gm" : item.unit;
+    const processing = item.categories.some((category) => /processing$/i.test(category));
     purchaseSheetRows.push([
       item.categories.join(", "), item.itemCode, item.item, requiredSourceQty, requiredSourceQty,
       sourceUnit, factor,
-      { f: `ROUND(E${row}/G${row},2)`, t: "n", v: item.quantity }, item.unit, sourceRate,
+      { f: processing ? `E${row}/G${row}` : `ROUND(E${row}/G${row},2)`, t: "n", v: item.quantity }, item.unit, sourceRate,
       { f: `J${row}*G${row}`, t: "n", v: item.rate },
       { f: `H${row}*K${row}`, t: "n", v: item.amount },
     ]);
@@ -686,6 +687,9 @@ export function exportCostingWorkbook(
     }
     for (const col of [4, 6, 9]) {
       purchaseSheet[XLSX.utils.encode_cell({ r: row, c: col })].s = { fill: { patternType: "solid", fgColor: { rgb: "FFF1DD" } } };
+    }
+    if (purchases[row - 1].categories.some((category) => /processing$/i.test(category))) {
+      purchaseSheet[XLSX.utils.encode_cell({ r: row, c: 7 })].z = "#,##0.00000";
     }
   }
   XLSX.utils.book_append_sheet(workbook, purchaseSheet, "Consolidated Items");

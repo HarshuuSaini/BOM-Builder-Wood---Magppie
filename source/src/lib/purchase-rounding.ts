@@ -58,7 +58,10 @@ export function purchaseTotals(details: PurchaseDetail[]): PurchaseTotal[] {
     });
   }
   return [...groups.values()].map(group => {
-    const quantity = roundQuantity(group.requiredQty);
+    // Processing is a service charged on the full billable area, not a
+    // purchased unit. Preserve its exact sqft (including wastage) for cost.
+    const processing = group.categories.some(category => /processing$/i.test(category));
+    const quantity = processing ? group.requiredQty : roundQuantity(group.requiredQty);
     return { ...group, quantity, amount: quantity * group.rate };
   });
 }

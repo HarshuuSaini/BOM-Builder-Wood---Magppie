@@ -25,7 +25,7 @@ import accessoryCatalogData from "@/data/accessory_catalog.json";
 import hardwarePacksData from "@/data/hardware_packs.json";
 import { getPartBaseName, getPanelBaseName, normalizePartOrPanelName } from "@/lib/naming";
 import { exportBomWorkbook, exportBomCsv, exportCostingWorkbook, exportBulkCostingWorkbook, type AccessoryExportRow, type ProjectSetupRow } from "@/lib/export";
-import { COSTING_ITEMS, DEFAULT_RATES, findCostingItem, costingItemNames, type CostingMasterItem, type CostingRates } from "@/lib/costing";
+import { COSTING_ITEMS, DEFAULT_RATES, DEFAULT_BOARD_PROCESSING_RATES, findCostingItem, costingItemNames, type CostingMasterItem, type CostingRates } from "@/lib/costing";
 import { MATERIAL_MASTER, laminatePrice } from "@/lib/material-master";
 import { boardPricesFromMaterials, selectedBoardRate, validBoardSheetPrice, MATERIAL_FIELDS, HANDLE_TYPES, DRAWER_BRANDS, handleSettingFor, carcassLaminateForCabinet, isGlassCabinetFamily, type BoardPriceOverride, type BoardPriceOverrides, kitchenZoneForCode, type KitchenMaterials, type ZoneMaterials } from "@/lib/kitchen-materials";
 import { materialsFromImportedCabinets } from "@/lib/imported-kitchen-materials";
@@ -1457,6 +1457,11 @@ function wasteFor(pack: string, uom: string, wst: WastePct = WASTE): number {
   return pack === "Shutter Pack" ? wst.shutter : wst.carcass;
 }
 
+function billableBoardSqft(panel: Panel, multiplier: number, wst: WastePct): number {
+  const pack = panel.visibleSide ? "Shutter Pack" : panel.pack;
+  return sqft(panel.w, panel.h) * panel.qty * multiplier * (1 + wasteFor(pack, "sqft", wst) / 100);
+}
+
 function makeRow(o: Partial<FullBomRow>): FullBomRow {
   return {
     SO: "", Elevation: "", "Main Group": "", "Sub Group": "", Level: 0, Item: "", SKU: "",
@@ -1543,29 +1548,29 @@ function buildFullBomData(project: ProjectLine[], so: string, finish: string, ws
 /*  Board roll-up — sqft → sheets                                      */
 /* ------------------------------------------------------------------ */
 
-type BoardTotal = { mat: string; t: number; pack: string; sqft: number; waste: number; sheets: number | null };
+type BoardTotal = { mat: string; t: number; pack: string; sqft: number; billableSqft: number; waste: number; sheets: number | null };
 
 function buildBoardTotals(project: ProjectLine[], wst: WastePct = WASTE, extraPanels: Panel[] = []): BoardTotal[] {
-  const map = new Map<string, BoardTotal & { billableArea: number }>();
+  const map = new Map<string, BoardTotal>();
   const fold = (p: Panel, mult: number) => {
     const mat = p.mat ?? "Board";
     const pack = p.visibleSide ? "Shutter Pack" : p.pack;
     const k = `${mat}|${p.t}`;
     if (!map.has(k)) {
-      map.set(k, { mat, t: p.t ?? T, pack, sqft: 0, waste: 0, sheets: 0, billableArea: 0 });
+      map.set(k, { mat, t: p.t ?? T, pack, sqft: 0, billableSqft: 0, waste: 0, sheets: 0 });
     }
     const total = map.get(k)!;
     const area = sqft(p.w, p.h) * p.qty * mult;
     total.sqft += area;
-    total.billableArea += area * (1 + wasteFor(pack, "sqft", wst) / 100);
+    total.billableSqft += billableBoardSqft(p, mult, wst);
     if (!total.pack.split(", ").includes(pack)) total.pack += `, ${pack}`;
   };
   project.forEach((l) => l.m.panels.forEach((p) => fold(p, l.qty)));
   extraPanels.forEach((p) => fold(p, 1));
   return [...map.values()].map((b) => ({
     ...b,
-    waste: b.sqft ? r3((b.billableArea / b.sqft - 1) * 100) : 0,
-    sheets: /glass/i.test(b.mat) ? null : roundQuantity(b.billableArea / 32),
+    waste: b.sqft ? r3((b.billableSqft / b.sqft - 1) * 100) : 0,
+    sheets: /glass/i.test(b.mat) ? null : roundQuantity(b.billableSqft / 32),
   }));
 }
 
@@ -2164,6 +2169,13 @@ const processingType = (item: CostingMasterItem): ProcessingType | undefined => 
   return undefined;
 };
 const processingKey = (category: ProcessingCategory, type: ProcessingType) => `${category}|${type}`;
+const processingRateFor = (rates: Record<string, number>, category: ProcessingCategory, item: CostingMasterItem): number => {
+  const type = processingType(item);
+  return (type ? rates[processingKey(category, type)] : undefined)
+    ?? rates[`${category}|${item.id}`]
+    ?? (type ? DEFAULT_BOARD_PROCESSING_RATES[processingKey(category, type)] : undefined)
+    ?? 0;
+};
 const materialItemsForCategory = (category: ProcessingCategory): CostingMasterItem[] => {
   if (category === "Carcass / shelf material") return CARCASS_BOARD_ITEMS;
   if (category === "Carcass back material") return CARCASS_BACK_ITEMS;
@@ -2204,6 +2216,15 @@ function usedProcessingTypes(boards: ProcessingBoard[]): Array<{ category: Proce
   return PROCESSING_CATEGORIES.flatMap((category) => PROCESSING_TYPES
     .filter((type) => boards.some((board) => board.category === category && processingType(board.item) === type))
     .map((type) => ({ category, type })));
+}
+
+function extraProcessingBoard(panel: Panel): ProcessingBoard | undefined {
+  const carcass = panel.pack === "Carcass Pack";
+  const item = carcass ? CARCASS_BOARD_ITEMS.find((candidate) => candidate.id === panel.materialId)
+    : shutterMasterItem(panel.materialId ?? "");
+  if (!item || item.rateBasis !== "SQFT" || /glass/i.test(panel.mat ?? "")) return undefined;
+  return { category: carcass ? "Carcass / shelf material"
+    : panel.extraMaterialRole === "visible" ? "Visible side material" : "Shutter material", item };
 }
 
 const DEFAULT_PROJECT_PRICING: ProjectPricingInputs = {
@@ -2848,6 +2869,7 @@ function computeCosting(
   const lines: LineCost[] = [];
   const unpriced = new Set<string>();
 
+
   // Compatibility fallback for filler/visible-panel rows outside a cabinet.
   void rates;
 
@@ -2909,12 +2931,10 @@ function computeCosting(
       }
       const processingBoard = processingBoardForPanel(p, m);
       if (processingBoard) {
-        const type = processingType(processingBoard.item);
-        const rate = (type ? processingRates[processingKey(processingBoard.category, type)] : undefined)
-          ?? processingRates[`${processingBoard.category}|${processingBoard.item.id}`] ?? 0;
+        const rate = processingRateFor(processingRates, processingBoard.category, processingBoard.item);
         if (rate > 0) {
-          const wastePct = p.pack === "Shutter Pack" || p.visibleSide ? wst.shutter : wst.carcass;
-          const billed = a * (1 + wastePct / 100);
+          const wastePct = wasteFor(p.visibleSide ? "Shutter Pack" : p.pack, "sqft", wst);
+          const billed = billableBoardSqft(p, l.qty, wst);
           addDetail({ category: `${processingBoard.category} processing`, itemCode: `${processingBoard.item.id}-PROC`,
             item: processingBoard.item.materialDescription, specification: "Processing cost per billable board sqft",
             netQty: a, wastePct, billableQty: billed, uom: "sqft", rate, amount: billed * rate });
@@ -2994,13 +3014,11 @@ function computeCosting(
   });
 
   // Cover-panel returns use carcass material; visible panels have their own board and laminate selection.
-  const extraRows = [
-    ...fillers.flatMap((f) => Array(f.fillerType === "cover-panel" || (f.zone === "wall" && f.linkedLineId !== undefined) ? 3 : 1).fill(globalShType) as string[]),
-    ...visiblePanels.map((v) => v.shutterType || globalShType),
-  ];
-  extrasPanels.forEach((p, i) => {
-    const st = extraRows[i];
-    if (st === undefined) return; // countertops emit no panels
+  // Every emitted extra panel carries its own material. A filler may emit one,
+  // three, or five panels (wall cover panels); positional filler counts can
+  // silently omit the final panels from costing while Raw Material includes them.
+  extrasPanels.forEach((p) => {
+    const st = p.materialId ?? globalShType;
     const isCarcassSide = p.pack === "Carcass Pack";
     const boardItem = isCarcassSide
       ? CARCASS_BOARD_ITEMS.find((item) => item.id === p.materialId)
@@ -3024,13 +3042,13 @@ function computeCosting(
           laminateCostDetail(group, backPrice, net, boardWaste, "back"));
       }
     }
-    if (boardItem) {
-      const processingCategory: ProcessingCategory = isCarcassSide ? "Carcass / shelf material"
-        : p.extraMaterialRole === "visible" ? "Visible side material" : "Shutter material";
-      const type = processingType(boardItem);
-      const processingRate = (type ? processingRates[processingKey(processingCategory, type)] : undefined)
-        ?? processingRates[`${processingCategory}|${boardItem.id}`] ?? 0;
-      if (processingRate > 0) details.push({ category: `${processingCategory} processing`, itemCode: `${boardItem.id}-PROC`, item: boardItem.materialDescription, specification: "Processing cost per billable board sqft", netQty: net, wastePct: boardWaste, billableQty: billed, uom: "sqft", rate: processingRate, amount: billed * processingRate });
+    const extraBoard = extraProcessingBoard(p);
+    if (extraBoard) {
+      const processingRate = processingRateFor(processingRates, extraBoard.category, extraBoard.item);
+      if (processingRate > 0) {
+        const processingSqft = billableBoardSqft(p, 1, wst);
+        details.push({ category: `${extraBoard.category} processing`, itemCode: `${extraBoard.item.id}-PROC`, item: extraBoard.item.materialDescription, specification: "Processing cost per billable board sqft", netQty: net, wastePct: boardWaste, billableQty: processingSqft, uom: "sqft", rate: processingRate, amount: processingSqft * processingRate });
+      }
     }
     if (p.band) {
       const band = perim(p.w, p.h) * p.qty;
@@ -3057,17 +3075,24 @@ function computeCosting(
     const rate = selected?.currentRate ?? Number(countertop.ratePerSqft);
     const material = selected?.materialDescription ?? (countertop.material.trim() || "Unspecified material");
     const label = `Counter Ply ${material} ${thickness}mm ${length}x${depth}`;
+    const processingRate = processingRates["Counter Ply"] ?? DEFAULT_BOARD_PROCESSING_RATES["Counter Ply"];
+    const processingDetail: CostDetail = {
+      category: "Counter Ply processing", itemCode: `${selected?.id ?? `CT-${length}x${depth}x${thickness}`}-PROC`,
+      item: material, specification: "Processing cost per Counter Ply material sqft",
+      netQty, wastePct: 0, billableQty: netQty, uom: "sqft", rate: processingRate,
+      amount: netQty * processingRate,
+    };
     if ((!selected && !countertop.ratePerSqft) || !Number.isFinite(rate) || rate <= 0) {
       unpriced.add(`${label} (Counter Ply rate per sqft)`);
-      lines.push({ label, qty, unitCost: 0, cost: 0, details: [{ category: "Counter Ply", itemCode: selected?.id ?? "UNPRICED-COUNTER-PLY", item: material, specification: `${length}×${depth}×${thickness}mm · RATE REQUIRED`, netQty, wastePct: 0, billableQty: netQty, uom: "sqft", rate: 0, amount: 0 }] });
+      lines.push({ label, qty, unitCost: processingDetail.amount / qty, cost: processingDetail.amount, details: [{ category: "Counter Ply", itemCode: selected?.id ?? "UNPRICED-COUNTER-PLY", item: material, specification: `${length}×${depth}×${thickness}mm · RATE REQUIRED`, netQty, wastePct: 0, billableQty: netQty, uom: "sqft", rate: 0, amount: 0 }, processingDetail] });
       return;
     }
     const amount = netQty * rate;
-    lines.push({ label, qty, unitCost: amount / qty, cost: amount, details: [{
+    lines.push({ label, qty, unitCost: (amount + processingDetail.amount) / qty, cost: amount + processingDetail.amount, details: [{
       category: "Counter Ply", itemCode: selected?.id ?? `CT-${length}x${depth}x${thickness}`,
       item: material, specification: `${selected?.subgroup ?? "Custom material"} · ${length}×${depth}×${thickness}mm · bought-in`,
       netQty, wastePct: 0, billableQty: netQty, uom: "sqft", rate, amount,
-    }] });
+    }, processingDetail] });
   });
 
   const handleCostLines = new Map<string, LineCost>();
@@ -4025,6 +4050,11 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
     shType, countertopShutterType, rates, waste, projectPricingInputs.processingRates, costing.purchases, boardQuantityOverrides,
   ), [activeElevation, costing, shownProject, shownFillers, shownVisiblePanels, shownExtras, shownAccessories, shownMasterAccessories,
     shType, countertopShutterType, rates, waste, projectPricingInputs.processingRates, boardQuantityOverrides]);
+  const shownProcessingCosts = useMemo(() => {
+    return shownCosting.lines.flatMap((line) => line.details
+      .filter((detail) => /processing$/i.test(detail.category))
+      .map((detail) => ({ source: line.label, ...detail })));
+  }, [shownCosting]);
   const shownPricing = useMemo(() => {
     if (activeElevation === null) return projectPricing;
     const allocatedCharges = projectPricing.allocatedCharges.filter((_, index) => project[index]?.elevation === activeElevation);
@@ -4102,13 +4132,16 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
     setDraftPricing({ ...projectPricingInputs, processingRates: { ...projectPricingInputs.processingRates },
       transportation: { ...projectPricingInputs.transportation }, installation: { ...projectPricingInputs.installation },
       loading: { ...projectPricingInputs.loading } });
-    setDraftProcessingRates(Object.fromEntries(processingTypes.map(({ category, type }) => {
+    setDraftProcessingRates({ ...Object.fromEntries(processingTypes.map(({ category, type }) => {
       const key = processingKey(category, type);
       const legacyRate = processingBoards.find((board) => board.category === category && processingType(board.item) === type &&
         projectPricingInputs.processingRates[`${category}|${board.item.id}`] !== undefined);
       return [key, String(projectPricingInputs.processingRates[key] ??
-        (legacyRate ? projectPricingInputs.processingRates[`${category}|${legacyRate.item.id}`] : ""))];
-    })));
+        (legacyRate ? projectPricingInputs.processingRates[`${category}|${legacyRate.item.id}`] : undefined)
+        ?? DEFAULT_BOARD_PROCESSING_RATES[key] ?? "")];
+    })),
+      "Counter Ply": String(projectPricingInputs.processingRates["Counter Ply"] ?? DEFAULT_BOARD_PROCESSING_RATES["Counter Ply"]),
+    });
     setPricingAdminError("");
     setPricingModalOpen(true);
   };
@@ -4142,8 +4175,15 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
       const raw = draftProcessingRates[key] ?? "";
       const value = raw.trim() === "" ? 0 : Number(raw);
       if (!Number.isFinite(value) || value < 0 || value > 1_000_000) { setPricingAdminError(`Enter a valid processing cost for ${category} ${type}.`); return; }
-      if (value > 0) processingRates[key] = value;
+      if (raw.trim() !== "" && value !== DEFAULT_BOARD_PROCESSING_RATES[key]) processingRates[key] = value;
     }
+    const counterPlyRaw = draftProcessingRates["Counter Ply"] ?? "";
+    const counterPlyRate = counterPlyRaw.trim() === "" ? DEFAULT_BOARD_PROCESSING_RATES["Counter Ply"] : Number(counterPlyRaw);
+    if (!Number.isFinite(counterPlyRate) || counterPlyRate < 0 || counterPlyRate > 1_000_000) {
+      setPricingAdminError("Enter a valid Counter Ply processing cost."); return;
+    }
+    if (counterPlyRaw.trim() !== "" && counterPlyRate !== DEFAULT_BOARD_PROCESSING_RATES["Counter Ply"])
+      processingRates["Counter Ply"] = counterPlyRate;
     const factorValues = [draftPricing.conversionPct, draftPricing.profitPct,
       draftPricing.transportation.value, draftPricing.installation.value, draftPricing.loading.value];
     if (factorValues.some((value) => value !== "" && (!Number.isFinite(Number(value)) || Number(value) < 0))) {
@@ -4873,12 +4913,19 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
                 <p style={{ fontWeight: 700 }}>Manual item total: ₹{manualCosting.rows.reduce((sum, row) => sum + row.quantity * row.rate, 0).toFixed(2)} · Manual including listed charges: ₹{(manualCosting.rows.reduce((sum, row) => sum + row.quantity * row.rate, 0) + (manualCosting.extraCharges ?? []).reduce((sum, charge) => sum + charge.amount, 0)).toFixed(2)} · Software material total: ₹{costing.total.toFixed(2)}</p>
                 <button type="button" className="x" onClick={() => { if (window.confirm("Remove this imported manual costing from the kitchen?")) updateManualCosting(null); }}>Remove imported costing</button>
               </details>}
+              {shownProcessingCosts.length > 0 && <div style={{ marginBottom: 16 }}>
+                <h3>Board processing costs</h3>
+                <p className="hint">Each processing line stays separate. Billable sqft = net sqft + wastage. Raw Material Selection combines identical boards across categories, so compare its sqft with the sum of the corresponding processing lines. Counter Ply uses length × depth × quantity ÷ 92903.</p>
+                <Tbl head={["Cabinet / item", "Category", "Board", "Net sqft", "Waste sqft", "Billable sqft (+waste)", "Rate (Rs/sqft)", "Amount (Rs)"]} num={[3, 4, 5, 6, 7]}
+                  rows={[...shownProcessingCosts.map((row) => [row.source, row.category, row.item, row.netQty.toFixed(2), (row.billableQty - row.netQty).toFixed(2), row.billableQty.toFixed(2), String(row.rate), row.amount.toFixed(2)]),
+                    [<b key="total">Total processing</b>, "", "", "", "", shownProcessingCosts.reduce((sum, row) => sum + row.billableQty, 0).toFixed(2), "", <b key="amount">{shownProcessingCosts.reduce((sum, row) => sum + row.amount, 0).toFixed(2)}</b>]]} />
+              </div>}
               {costing.purchases.length > 0 && <details open style={{ marginBottom: 16 }}>
                 <summary style={{ cursor: "pointer", fontWeight: 650 }}>Whole-kitchen purchase quantities</summary>
                 <p style={{ color: "var(--mut)", fontSize: 12 }}>Same items are combined across all cabinets and panels after wastage, then quantities are rounded to two decimal places for purchasing and costing—not up to whole units. Boards and laminates use 32 sqft sheets; adhesives use kg. Different quoted rates remain separate. Processing remains charged on billable sqft.</p>
                 <Tbl head={["Category", "Item", "Unit", "Purchase qty", "Rate (Rs)", "Amount (Rs)"]} num={[3, 4, 5]}
                   rows={costing.purchases.map((item) => [item.categories.join(", "), `${item.itemCode} · ${item.item}`, item.unit,
-                    item.quantity.toFixed(2), item.rate.toFixed(2), item.amount.toFixed(2)])} />
+                    item.quantity.toFixed(2), item.categories.some((category) => /processing$/i.test(category)) ? String(item.rate) : item.rate.toFixed(2), item.amount.toFixed(2)])} />
               </details>}
               {shownCosting.lines.length === 0 ? <div className="empty">No costed items for this elevation.</div> : <>
                 <Tbl head={[<ColumnFilter key="cost-cabinet" label="Cabinet" options={cabinetCodeOptions}
@@ -4904,7 +4951,7 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
                               <td style={{ padding: "6px 7px", border: "1px solid #E3E7E4", textAlign: "right" }}>{detail.wastePct}%</td>
                               <td style={{ padding: "6px 7px", border: "1px solid #E3E7E4", textAlign: "right" }}>{(detail.allocatedBillableQty ?? detail.billableQty).toFixed(2)}</td>
                               <td style={{ padding: "6px 7px", border: "1px solid #E3E7E4" }}>{detail.uom}</td>
-                              <td style={{ padding: "6px 7px", border: "1px solid #E3E7E4", textAlign: "right" }}>{detail.rate.toFixed(2)}</td>
+                              <td style={{ padding: "6px 7px", border: "1px solid #E3E7E4", textAlign: "right" }}>{/processing$/i.test(detail.category) ? String(detail.rate) : detail.rate.toFixed(2)}</td>
                               <td style={{ padding: "6px 7px", border: "1px solid #E3E7E4", textAlign: "right", fontWeight: 650 }}>{detail.amount.toFixed(2)}</td>
                             </tr>)}</tbody>
                             <tfoot><tr><td colSpan={9} style={{ padding: "7px", textAlign: "right", fontWeight: 700 }}>Cabinet line total</td><td style={{ padding: "7px", textAlign: "right", fontWeight: 700 }}>{c.cost.toFixed(2)}</td></tr></tfoot>
@@ -5012,7 +5059,7 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
                     const key = `${b.mat}|${b.t}|${b.pack}`;
                     const rs = rawMap[key];
                     const selItem = rs?.items.find((i) => i.item_id === rs.sel);
-                    return [b.mat, b.t, (b.sqft * (1 + b.waste / 100)).toFixed(2),
+                    return [b.mat, b.t, b.billableSqft.toFixed(2),
                       rs?.loading ? "loading…"
                         : rs?.error ? <span key="e" style={{ color: "var(--flag)" }}>{rs.error}</span>
                         : rs?.items.length ? (
@@ -5141,7 +5188,7 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
               </div>;
             })}
             <h3>Board processing costs</h3>
-            <p className="hint">Select a current or replacement material type to edit its processing rate. Each type keeps a separate rate within its category, charged per billable sqft after wastage.</p>
+            <p className="hint">Select a current or replacement material type to edit its processing rate. Each type keeps a separate rate within its category, charged on the same billable sqft (+ wastage) shown in Raw Material Selection.</p>
             {displayedProcessingTypes.length === 0 ? <div className="empty">Add cabinets to list their material types.</div> :
               PROCESSING_CATEGORIES.filter((category) => displayedProcessingTypes.some((row) => row.category === category)).map((category) =>
                 <div key={category} className="pricing-board-group">
@@ -5156,12 +5203,19 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
                         onChange={(event) => setSelectedProcessingTypes((old) => ({ ...old, [category]: event.target.value as ProcessingType }))}>
                         {types.map((option) => <option key={option} value={option}>{option}</option>)}
                       </select></Fld>
-                      <Fld label="Processing · Rs/sqft"><input type="number" min={0} step="0.01" inputMode="decimal"
+                      <Fld label="Processing · Rs/sqft"><input type="number" min={0} step="0.00001" inputMode="decimal"
                         aria-label={`${category} ${type} processing cost per sqft`} value={draftProcessingRates[key] ?? ""} placeholder="0"
                         onChange={(event) => setDraftProcessingRates((old) => ({ ...old, [key]: event.target.value }))} /></Fld>
                     </div>;
                   })()}
                 </div>)}
+            <div className="pricing-board-group">
+              <h4>Counter Ply</h4>
+              <Fld label="Processing · Rs/sqft"><input type="number" min={0} step="0.00001" inputMode="decimal"
+                aria-label="Counter Ply processing cost per sqft" value={draftProcessingRates["Counter Ply"] ?? ""}
+                onChange={(event) => setDraftProcessingRates((old) => ({ ...old, "Counter Ply": event.target.value }))} /></Fld>
+              <p className="hint">Charged on length × depth × quantity ÷ 92903, separately from the Counter Ply board price.</p>
+            </div>
             <h3 style={{ marginTop: 22 }}>Costing factors</h3>
             <p className="hint">Per-sqft service charges use cabinet front area plus only the filler front area. Cover-panel LH/RH sides remain in material costing but do not add to total area. Base and Tall cabinets add 100mm to their height for this calculation.</p>
             <div className="pricing-factor-grid">
