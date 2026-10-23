@@ -1,5 +1,5 @@
 import {
-  DRAWER_BRANDS, HANDLE_TYPES, HANDLE_ZONES, KITCHEN_ZONES, MATERIAL_FIELDS, handleZoneForCode, kitchenZoneForCode,
+  DRAWER_BRANDS, HANDLE_TYPES, HANDLE_ZONES, KITCHEN_ZONES, MATERIAL_FIELDS, handleZoneForCode, isGlassCabinetFamily, kitchenZoneForCode,
   type BoardPriceOverrides, type HandleSetting, type HandleType, type HandleZone, type KitchenMaterials, type KitchenZone, type MaterialChoice, type MaterialField, type ZoneMaterials,
 } from "./kitchen-materials";
 
@@ -55,9 +55,22 @@ export function materialsFromImportedCabinets(configs: ImportedCabinetMaterials[
   const conflictingZones: KitchenZone[] = [];
   const zones = Object.fromEntries(KITCHEN_ZONES.map((zone) => {
     const matching = configs.filter((config) => kitchenZoneForCode(config.zk, config.fk) === zone);
-    const selected = matching.length ? choicesFromCabinet(matching[0]) : firstChoices;
-    if (matching.some((config) => MATERIAL_FIELDS.some((field) =>
-      JSON.stringify(choicesFromCabinet(config)[field]) !== JSON.stringify(selected[field])))) conflictingZones.push(zone);
+    const regular = matching.find((config) => !isGlassCabinetFamily(config.fk));
+    const glass = matching.find((config) => isGlassCabinetFamily(config.fk));
+    const selected = matching.length ? choicesFromCabinet(regular ?? matching[0]) : firstChoices;
+    if (glass) selected.glassCarcassLaminate = {
+      frontSheetPrice: glass.carcassLamFrontSheetPrice,
+      backSheetPrice: glass.carcassLamBackSheetPrice,
+    };
+    else if (previous?.[zone]?.glassCarcassLaminate) selected.glassCarcassLaminate = { ...previous[zone].glassCarcassLaminate };
+    if (matching.some((config) => MATERIAL_FIELDS.some((field) => {
+      const candidate = choicesFromCabinet(config)[field];
+      const expected = selected[field];
+      // Glass cabinets intentionally use different carcass laminate prices.
+      if (field === "carcass" && isGlassCabinetFamily(config.fk))
+        return candidate.itemId !== expected.itemId || candidate.boardSheetPrice !== expected.boardSheetPrice;
+      return JSON.stringify(candidate) !== JSON.stringify(expected);
+    }))) conflictingZones.push(zone);
     return [zone, selected];
   })) as Record<KitchenZone, ZoneMaterials>;
   const handleSetting = (config: ImportedCabinetMaterials): HandleSetting => ({

@@ -27,7 +27,7 @@ import { getPartBaseName, getPanelBaseName, normalizePartOrPanelName } from "@/l
 import { exportBomWorkbook, exportBomCsv, exportCostingWorkbook, exportBulkCostingWorkbook, type AccessoryExportRow, type ProjectSetupRow } from "@/lib/export";
 import { COSTING_ITEMS, DEFAULT_RATES, findCostingItem, costingItemNames, type CostingMasterItem, type CostingRates } from "@/lib/costing";
 import { MATERIAL_MASTER, laminatePrice } from "@/lib/material-master";
-import { boardPricesFromMaterials, selectedBoardRate, validBoardSheetPrice, MATERIAL_FIELDS, HANDLE_TYPES, DRAWER_BRANDS, handleSettingFor, type BoardPriceOverride, type BoardPriceOverrides, kitchenZoneForCode, type KitchenMaterials, type ZoneMaterials } from "@/lib/kitchen-materials";
+import { boardPricesFromMaterials, selectedBoardRate, validBoardSheetPrice, MATERIAL_FIELDS, HANDLE_TYPES, DRAWER_BRANDS, handleSettingFor, carcassLaminateForCabinet, isGlassCabinetFamily, type BoardPriceOverride, type BoardPriceOverrides, kitchenZoneForCode, type KitchenMaterials, type ZoneMaterials } from "@/lib/kitchen-materials";
 import { materialsFromImportedCabinets } from "@/lib/imported-kitchen-materials";
 import { UserSignOut } from "@/components/UserSignOut";
 import { encodeProjectPrintData, readPrintedProjectPdf } from "@/lib/print-project";
@@ -35,6 +35,7 @@ import type { BomReportRow } from "@/lib/types";
 import { allocatePurchaseCosts, roundQuantity, sheetQuantityInput, type PurchaseTotal } from "@/lib/purchase-rounding";
 import { activeKitchenId, kitchenNameFromPdfFilename, readKitchenWorkspace, setActiveKitchenId, writeKitchenWorkspace, type KitchenWorkspaceEntry, type KitchenCostingSnapshot } from "@/lib/kitchen-workspace";
 import { parseManualCosting, type ManualCostingImport } from "@/lib/manual-costing-import";
+import { blindOpeningLimits, isDoubleShutterWidth, shelfCodeToken, tallApplianceDrawerCode } from "@/lib/cabinet-rules";
 
 /* ------------------------------------------------------------------ */
 /*  Types & Interfaces  (identical shapes to stone)                    */
@@ -416,8 +417,7 @@ const NEON_LABEL: Record<string, string> = { NEON20: "Neon 20", NEON50: "Neon 50
 const GLASS_T = 5;
 const GLASS_SHELF_T = 6;
 
-const GLASS_SHUTTER_FAMS = new Set(["WGL", "SHFG", "DPNG", "PPNG", "BLNG", "LOWSG", "LGL"]);
-const isGlassShutterFam = (fk?: string) => !!fk && GLASS_SHUTTER_FAMS.has(fk);
+const isGlassShutterFam = isGlassCabinetFamily;
 
 /* ------------------------------------------------------------------ */
 /*  Catalog — families (ported from stone verbatim)                    */
@@ -462,16 +462,16 @@ const BLIND_FAMILIES: Record<string, any> = {
 
 const WALL_FAMILIES: Record<string, any> = {
   WST: { name: "Wall Solid Shutter", p2: "SH",
-         variants: [V("sgl", "Single door (handed)", { p3: "1SG", handed: true }),
-                    V("dbl", "Double door", { p3: "1SG", p4: "2HS", both: true })] },
+         variants: [V("sgl", "Single door (handed)", { p3: "1SX", handed: true }),
+                    V("dbl", "Double door", { p3: "1SX", p4: "2HS", both: true })] },
   WGL: { name: "Wall Glass Shutter", p2: "SH", glassFam: true,
          variants: [V("sgl", "Single door (handed)", { p3: "3SG", handed: true }),
                     V("dbl", "Double door", { p3: "3SG", p4: "2HS", both: true })] },
   WOP: { name: "Wall Open Shelf", p2: "OP", noShutter: true,
-         variants: [V("op", "Open (no door)", { p3: "3SG", p4: "XXX", both: true })] },
+         variants: [V("op", "Open (no door)", { p3: "3SX", p4: "XXX", both: true })] },
   WDR: { name: "Wall Dish Rack", p2: "AC", noBottom: true, top: "frame",
-         variants: [V("sgl", "Single door (handed)", { p3: "2SG", handed: true }),
-                    V("dbl", "Double door", { p3: "2SG", p4: "2HS", both: true })] },
+         variants: [V("sgl", "Single door (handed)", { p3: "2SX", handed: true }),
+                    V("dbl", "Double door", { p3: "2SX", p4: "2HS", both: true })] },
 };
 
 const TALL_FAMILIES: Record<string, any> = {
@@ -482,8 +482,8 @@ const TALL_FAMILIES: Record<string, any> = {
           variants: [V("sgl", "Single door (handed)", { p3: "6SG", handed: true }),
                      V("dbl", "Double door", { p3: "6SG", p4: "2HS", both: true })] },
   APP:  { name: "Tall Appliance + DW", p2: "AP", bracket: "TMO", holes: "4H", special: "APP", drawers: true,
-          variants: [V("1dw", "+ 1 Drawer (handed)", { p4: "1HB", handed: true }),
-                     V("2dw", "+ 2 Drawers (handed)", { p4: "2HB", handed: true })] },
+          variants: [V("1dw", "+ 1 Low Back Drawer (handed)", { p4: tallApplianceDrawerCode(1), handed: true }),
+                     V("2dw", "+ 2 Low Back Drawers (handed)", { p4: tallApplianceDrawerCode(2), handed: true })] },
   PAN:  { name: "Tall Tandem Pantry", p2: "AC", bracket: "TTP", holes: "6H",
           variants: [V("h", "Pantry (handed)", { p3: "1SX", p5: "TPT", handed: true })] },
   DPN:  { name: "Tall Drawer Pantry", p2: "DW", bracket: "T3A", holes: "4H", drawers: true, fixedDpn: true,
@@ -618,16 +618,11 @@ function drawerFrontHeight(cls: DrawerClass, loc: string, lowFrontCount: number,
   return slotHeight - shDeduct(isBase, handle, loc);
 }
 
-/** Wall units switch at 800mm; all other paired shutters switch at 900mm. */
-function doubleShutterWidth(zoneKey: string): number {
-  return ZONES[zoneKey]?.kind === "wall" ? 800 : 900;
-}
-
 function widthVariant(zoneKey: string, fam: any, variantId: string, width: number): string {
   const single = fam.variants.find((variant: any) => variant.id === "single" || variant.id === "sgl");
   const double = fam.variants.find((variant: any) => variant.id === "double" || variant.id === "dbl");
   if (!single || !double) return variantId;
-  return width >= doubleShutterWidth(zoneKey) ? double.id : single.id;
+  return isDoubleShutterWidth(width) ? double.id : single.id;
 }
 
 /** Shelf material is derived from the shutter type, not the zone. */
@@ -709,7 +704,8 @@ const DRAWER_PANEL_MAT = (t: number) => `${t}mm BWP Plywood`;
 
 /**
  * Drawer height mix per variant.
- *   2dr / 2dw  → 2 High
+ *   2dr         → 2 High
+ *   Tall APP    → 1 or 2 Low
  *   2dr-mixed  → 1 Low + 1 High
  *   3dr        → 2 Low + 1 High
  *   fixed_dpn  → 2 Low + 3 High   (stone had 2 Low + 3 Semi-High; wood has no
@@ -717,6 +713,7 @@ const DRAWER_PANEL_MAT = (t: number) => `${t}mm BWP Plywood`;
  */
 function drawerBreakdown(fam: any, v: any): Array<{ cls: DrawerClass; n: number }> {
   if (fam.fixedDpn) return [{ cls: "LOW", n: 2 }, { cls: "HIGH", n: 3 }];
+  if (fam.special === "APP") return [{ cls: "LOW", n: v.id === "2dw" ? 2 : 1 }];
   if (/^3dr$/.test(v.id)) return [{ cls: "LOW", n: 2 }, { cls: "HIGH", n: 1 }];
   if (v.id === "2dr-mixed") return [{ cls: "LOW", n: 1 }, { cls: "HIGH", n: 1 }];
   if (/^(2dr|2dw)$/.test(v.id)) return [{ cls: "HIGH", n: 2 }];
@@ -749,7 +746,7 @@ function addDrawerBoxes(
   const table = DRAWER_DED[drawerModel];
   const drawerBoard = DRAWER_BOARD_ITEMS.find((item) => item.id === drawerBoardId);
 
-  if (v.id === "2dr-mixed") {
+  if (v.id === "2dr-mixed" || fam.special === "APP") {
     // Show the actual LB and HB drawer/channel sets in the BOM. A brand with no
     // Kitchen-master row keeps an explicit class-labelled fallback instead.
     mix.forEach(({ cls, n }) => hardware.push({
@@ -814,15 +811,14 @@ function zoneOfFam(fk: string): string {
 /*  Shutters                                                           */
 /* ------------------------------------------------------------------ */
 
-const BLIND_OPENING_MIN = 450;
-const BLIND_OPENING_MAX = 550;
 function defaultBlindOpeningWidth(zk: string): number {
-  return ZONES[zk]?.kind === "wall" || ZONES[zk]?.kind === "loft" ? 450 : 550;
+  return blindOpeningLimits(zk).defaultWidth;
 }
 function blindOpeningError(zk: string, cabinetWidth: number, openingWidth: number): string {
   if (!ZONES[zk]?.blind) return "";
-  if (!Number.isSafeInteger(openingWidth) || openingWidth < BLIND_OPENING_MIN || openingWidth > BLIND_OPENING_MAX) {
-    return `Opening shutter width must be between ${BLIND_OPENING_MIN} and ${BLIND_OPENING_MAX} mm.`;
+  const { min, max } = blindOpeningLimits(zk);
+  if (!Number.isSafeInteger(openingWidth) || openingWidth < min || openingWidth > max) {
+    return `Opening shutter width must be between ${min} and ${max} mm.`;
   }
   if (cabinetWidth - openingWidth - 3 <= 0) return "Cabinet width must leave room for the fixed panel after the opening shutter and 3 mm gap.";
   return "";
@@ -858,7 +854,9 @@ function buildShutters(
   if (fam.drawers && !fam.fixedDpn) {
     const st = isGlassShutterFam(fk) ? "GLASS" : shType;
     const S = shOf(st);
-    const fronts: Array<{ cls: DrawerClass; loc: string; fixed?: boolean }> = v.id === "3dr"
+    const fronts: Array<{ cls: DrawerClass; loc: string; fixed?: boolean }> = fk === "APP"
+      ? Array.from({ length: v.id === "2dw" ? 2 : 1 }, (_, index) => ({ cls: "LOW" as const, loc: index === 0 ? "UL" : "ML" }))
+      : v.id === "3dr"
       ? [{ cls: "LOW", loc: "UL" }, { cls: "LOW", loc: "ML" }, { cls: "HIGH", loc: "BH" }]
       : v.id === "2dr-mixed"
         ? [{ cls: "LOW", loc: "UL" }, { cls: "LOW", loc: "UL", fixed: true }, { cls: "HIGH", loc: "BH" }]
@@ -1183,6 +1181,10 @@ function buildCarcassInnerRaw(cfg: {
   const carcLamSqft = merged.filter((p) => p.pack === PK && !p.visibleSide &&
     isPostlamItem(carcassMasterItem(board, backBoardId, drawerBoardId, p)))
     .reduce((a, p) => a + sqft(p.w, p.h) * p.qty, 0);
+  const glassCarcassLamSqft = isGlassShutterFam(fk) ? merged.filter((p) => p.pack === PK && !p.visibleSide &&
+    carcassMasterItem(board, backBoardId, drawerBoardId, p)?.group !== "Carcass Back Material" &&
+    isPostlamItem(carcassMasterItem(board, backBoardId, drawerBoardId, p)))
+    .reduce((a, p) => a + sqft(p.w, p.h) * p.qty, 0) : 0;
   const drawerSqft = merged.filter((p) => p.pack === "Drawer Pack").reduce((a, p) => a + sqft(p.w, p.h) * p.qty, 0);
   const shSqft = merged.filter((p) => p.pack === "Shutter Pack").reduce((a, p) => a + sqft(p.w, p.h) * p.qty, 0);
   const visibleSqft = merged.filter((p) => p.visibleSide).reduce((a, p) => a + sqft(p.w, p.h) * p.qty, 0);
@@ -1200,7 +1202,11 @@ function buildCarcassInnerRaw(cfg: {
     cons.push({ name: "EDGEBAND ADHESIVE", qty: r3(drawerBandM * EDGE_ADH_G_PER_M), uom: "gm", pack: "Drawer Pack" });
   }
   if (carcLamSqft > 0) {
-    cons.push({ name: "CARCASS LAMINATE 0.8MM", qty: r3(carcLamSqft * 2), uom: "sqft", pack: PK });
+    if (glassCarcassLamSqft > 0) {
+      cons.push({ name: "CARCASS FRONT LAMINATE 0.8MM", qty: r3(glassCarcassLamSqft), uom: "sqft", pack: PK });
+      cons.push({ name: "CARCASS BACK LAMINATE 0.8MM", qty: r3(glassCarcassLamSqft), uom: "sqft", pack: PK });
+    }
+    if (carcLamSqft > glassCarcassLamSqft) cons.push({ name: "CARCASS LAMINATE 0.8MM", qty: r3((carcLamSqft - glassCarcassLamSqft) * 2), uom: "sqft", pack: PK });
     cons.push({ name: "LAMINATE ADHESIVE", qty: r3(carcLamSqft * LAM_ADH * 2), uom: "gm", pack: PK });
   }
   if (drawerSqft > 0 && isPostlamItem(DRAWER_BOARD_ITEMS.find((item) => item.id === drawerBoardId))) {
@@ -1266,13 +1272,13 @@ function buildModel(cfg: {
   W: number; H: number; D: number; shelfQty?: number; fillerWidth?: number; fillerSides?: "LH" | "RH" | "BOTH"; fillerWidthRH?: number; blindOpeningWidth?: number; spotLight?: boolean; drawerModel: string; finish?: string;
 }): CarcassModel {
   cfg = { ...cfg,
-    carcassLamBackSheetPrice: cfg.carcassLamFrontSheetPrice,
+    carcassLamBackSheetPrice: isGlassShutterFam(cfg.fk) ? cfg.carcassLamBackSheetPrice : cfg.carcassLamFrontSheetPrice,
     backLamBackSheetPrice: cfg.backLamFrontSheetPrice,
     drawerLamBackSheetPrice: cfg.drawerLamFrontSheetPrice,
     spotLight: cfg.zk === "WC" && isGlassShutterFam(cfg.fk) && !!cfg.spotLight,
   };
   const fam = famSetOf(cfg.zk)[cfg.fk];
-  const v = fam.variants.find((x: any) => x.id === cfg.vid) ?? fam.variants[0];
+  const v = fam.variants.find((x: any) => x.id === widthVariant(cfg.zk, fam, cfg.vid, cfg.W)) ?? fam.variants[0];
   const shelfQty = cfg.shelfQty ?? shelfCount(cfg.zk, cfg.fk, fam, cfg.H);
   const built = buildCarcassInnerRaw({ ...cfg, shelfQty, v });
 
@@ -1283,10 +1289,7 @@ function buildModel(cfg: {
   const handleToken = cfg.handle === "XCJ" ? "CJ" : cfg.handle === "NONE" ? "NHX" : "STD";
   const matToken = isGlassShutterFam(cfg.fk) ? "GL" : "WD";
   const handTok = v.handed ? cfg.hand : "";
-  let p3: string = v.p3 ?? "1SX";
-  if (ZONES[cfg.zk].kind === "wall" && /^\d/.test(p3)) {
-    p3 = String(shelfQty) + p3.slice(1);
-  }
+  const p3 = shelfCodeToken(v.p3 ?? "1SX", shelfQty, ZONES[cfg.zk].kind === "wall", isGlassShutterFam(cfg.fk));
   const p4: string = v.p4 || handTok || "XXX";
   const p5: string = v.p5 || (v.p4 && handTok ? handTok : "XXX");
   const code =
@@ -1386,7 +1389,7 @@ function exportPanelCalculatorWorkbook(project: ProjectLine[], extraPanels: Pane
     ["Paste a cabinet code in B4. Results use the Panels tab exported from this kitchen."],
     [], ["Cabinet code", firstCode],
     ["Code status", { f: `IF(B4="","Enter a code",IF(COUNTIFS('Panels'!$A$2:$A$${limit},B4)=0,"Code not found","Found"))`, t: "s" }],
-    ["Postlam laminate is counted on both faces. Prelam, PU, membrane and glass have no separate laminate sheets."],
+    ["Postlam board laminate is counted on both faces. Glass-cabinet carcass laminate may have separate front and back prices; glass shutters and shelves themselves have no laminate sheets. Prelam, PU and membrane have no separate laminate sheets."],
     [],
     ["Category", "Panel sqft net", "Laminate sqft (both faces)", "Edge band m net", "Laminate sqft incl waste", "Edge band m incl waste"],
   ];
@@ -2317,7 +2320,7 @@ function validatedCabinetConfig(value: unknown): CabinetConfig {
     if (typeof value !== "string" || !isValidLaminatePrice(value)) throw new Error(`Invalid ${field} in a saved cabinet.`);
     config[field] = value;
   }
-  config.carcassLamBackSheetPrice = config.carcassLamFrontSheetPrice;
+  if (!isGlassShutterFam(config.fk)) config.carcassLamBackSheetPrice = config.carcassLamFrontSheetPrice;
   config.backLamBackSheetPrice = config.backLamFrontSheetPrice;
   config.drawerLamBackSheetPrice = config.drawerLamFrontSheetPrice;
   return config;
@@ -2328,6 +2331,7 @@ function cabinetConfigWithSelectedMaterials(value: unknown, materials: KitchenMa
   const zone = kitchenZoneForCode(String(value.zk ?? ""), String(value.fk ?? ""));
   const selected = materials[zone] ?? materials.Base;
   const handleChoice = handleSettingFor(materials, String(value.zk ?? ""), String(value.fk ?? ""));
+  const carcassLaminate = carcassLaminateForCabinet(selected, isGlassShutterFam(String(value.fk ?? "")));
   return {
     ...value,
     handle: handleChoice.type, handlePrice: handleChoice.price, handleBrand: handleChoice.brand,
@@ -2339,8 +2343,8 @@ function cabinetConfigWithSelectedMaterials(value: unknown, materials: KitchenMa
     visibleSideMaterialId: selected.visible.itemId,
     hingeChoice: (materials._hingeChoice ?? value.hingeChoice) as HingeChoice,
     drawerModel: materials._drawerBrand ?? value.drawerModel,
-    carcassLamFrontSheetPrice: selected.carcass.frontSheetPrice,
-    carcassLamBackSheetPrice: selected.carcass.frontSheetPrice,
+    carcassLamFrontSheetPrice: carcassLaminate.front,
+    carcassLamBackSheetPrice: carcassLaminate.back,
     backLamFrontSheetPrice: selected.back.frontSheetPrice,
     backLamBackSheetPrice: selected.back.frontSheetPrice,
     drawerLamFrontSheetPrice: selected.drawer.frontSheetPrice,
@@ -2478,8 +2482,18 @@ function restoreLegacyBom(rows: Record<string, unknown>[]): ProjectRestore {
       if (family.p2 !== familyCode || (isGlassShutterFam(fk) ? "GL" : "WD") !== matToken) return [];
       return family.variants.map((variant: { id: string }) => ({ fk, vid: variant.id }));
     }).filter(({ fk, vid }) => {
-      const config: CabinetConfig = { zk: zone, fk, vid, hand, handle: handleToken === "CJ" ? "XCJ" : handleToken === "NHX" ? "NONE" : "STD", board: DEFAULT_BOARD_ID, backBoardId: DEFAULT_BACK_ID, drawerBoardId: DEFAULT_DRAWER_ID, shType: DEFAULT_SHTYPE, visibleSides: "", visibleSideMaterialId: MATERIAL_MASTER.visibleSideShutterMaterialId, ...DEFAULT_LAMINATE_PRICES, backLamFrontSheetPrice: "550", backLamBackSheetPrice: "550", drawerLamFrontSheetPrice: "550", drawerLamBackSheetPrice: "550", visibleLamFrontSheetPrice: "550", visibleLamBackSheetPrice: "550", glassType: DEFAULT_GLASS_TYPE, hingeChoice: HINGE_CHOICES[0], neon: "NEON50", W, H, D, shelfQty, drawerModel: DRAWER_MODELS[0], finish };
-      return buildModel(config).code.split("-").slice(0, 7).join("-") === parts.slice(0, 7).join("-");
+      const family = famSetOf(zone)[fk];
+      const variant = family.variants.find((candidate: { id: string }) => candidate.id === vid);
+      const expectedP3 = shelfCodeToken(variant.p3 ?? "1SX", shelfQty ?? shelfCount(zone, fk, family, H), ZONES[zone].kind === "wall", isGlassShutterFam(fk));
+      // Older wall exports used SG for wood shelves and 0SG for no shelf.
+      // Preserve the original single/double choice while identifying a legacy
+      // row; buildModel then applies today's >600 mm shutter rule.
+      const observedP3 = ZONES[zone].kind === "wall" && matToken === "WD" && /^\d+SG$/.test(parts[4])
+        ? shelfCodeToken(parts[4], shelfQty ?? 0, true, false) : parts[4];
+      const expectedP4 = variant.p4 || (variant.handed ? hand : "XXX");
+      const expectedP5 = variant.p5 || (variant.p4 && variant.handed ? hand : "XXX");
+      const observedP4 = fk === "APP" && /^[12]HB$/.test(parts[5]) ? parts[5].replace("HB", "LB") : parts[5];
+      return observedP3 === expectedP3 && observedP4 === expectedP4 && parts[6] === expectedP5;
     });
     if (candidates.length !== 1 && !solidBlindFamily) throw new Error(`Cannot uniquely identify cabinet ${code} from this older export. Please use a new Excel BOM with Project Setup.`);
     const selected = solidBlindFamily ? { fk: solidBlindFamily, vid: famSetOf(zone)[solidBlindFamily].variants[0].id } : candidates[0];
@@ -2492,6 +2506,139 @@ function restoreLegacyBom(rows: Record<string, unknown>[]): ProjectRestore {
     pricing: { ...DEFAULT_PROJECT_PRICING, transportation: { ...DEFAULT_PROJECT_PRICING.transportation },
       installation: { ...DEFAULT_PROJECT_PRICING.installation }, loading: { ...DEFAULT_PROJECT_PRICING.loading }, processingRates: {} }, rawSelections: [],
     notice: `Imported ${project.length} cabinet line${project.length === 1 ? "" : "s"} from an older BOM. That file did not save material, hinge, drawer, accessory, or pricing selections; review those before continuing.` };
+}
+
+/** Older costing exports have no Project Setup; recover only fields actually recorded in their detail sheets. */
+function restoreCostingWorkbook(workbook: XLSX.WorkBook): ProjectRestore {
+  const summarySheet = workbook.Sheets["Cabinet Summary"];
+  const itemSheet = workbook.Sheets["Cabinet Items"];
+  if (!summarySheet || !itemSheet) throw new Error("This is not a Wood Kitchen costing export (Cabinet Summary and Cabinet Items are required).");
+  const summary = XLSX.utils.sheet_to_json<Record<string, unknown>>(summarySheet, { defval: "" });
+  const items = XLSX.utils.sheet_to_json<Record<string, unknown>>(itemSheet, { defval: "" });
+  const cabinetRows = summary.filter((row) => String(row["Cabinet code"] ?? "").trim());
+  if (!cabinetRows.length) throw new Error("The costing workbook has no cabinet codes to restore.");
+  const restored = restoreLegacyBom(cabinetRows.map((row) => ({
+    Level: 0, Item: String(row["Cabinet code"]).trim(), "SO Qty": Number(row.Qty),
+    Elevation: String(row["Cabinet / item"] ?? "").match(/^([A-Z]{2})\s*·/)?.[1] ?? "",
+  })));
+  const detailByCode = new Map<string, Record<string, unknown>[]>();
+  for (const item of items) {
+    const code = String(item["Cabinet code"] ?? "").trim();
+    if (code) detailByCode.set(code, [...(detailByCode.get(code) ?? []), item]);
+  }
+  const purchaseRows = workbook.Sheets["Consolidated Items"]
+    ? XLSX.utils.sheet_to_json<Record<string, unknown>>(workbook.Sheets["Consolidated Items"], { defval: "" }) : [];
+  const sheetPriceById = new Map(purchaseRows.filter((row) => row["Purchase unit"] === "sheet")
+    .map((row) => [String(row["Item code"]), String(row["Purchase rate (Rs)"])]));
+  const priceInSpec = (spec: unknown): string | undefined => String(spec ?? "").match(/₹\s*([\d,.]+)/)?.[1]?.replace(/,/g, "");
+  const fieldForCategory: Record<string, { field: typeof MATERIAL_FIELDS[number]; key: "board" | "backBoardId" | "drawerBoardId" | "shType" | "visibleSideMaterialId" }> = {
+    "Carcass board": { field: "carcass", key: "board" },
+    "Carcass back board": { field: "back", key: "backBoardId" },
+    "Drawer board": { field: "drawer", key: "drawerBoardId" },
+    "Shutter board": { field: "shutter", key: "shType" },
+    "Visible side board": { field: "visible", key: "visibleSideMaterialId" },
+  };
+  restored.project = restored.project.map((line, index) => {
+    const detail = detailByCode.get(String(cabinetRows[index]["Cabinet code"]).trim()) ?? [];
+    const config = cabinetConfig(line.m);
+    const prices: BoardPriceOverrides = {};
+    for (const item of detail) {
+      const category = String(item.Category ?? "");
+      const match = fieldForCategory[category];
+      const id = String(item["Item code"] ?? "");
+      if (match && COSTING_ITEMS.some((candidate) => candidate.id === id)) {
+        config[match.key] = id;
+        const sheetPrice = sheetPriceById.get(id);
+        if (validBoardSheetPrice(sheetPrice)) prices[match.field] = { itemId: id, sheetPrice };
+      }
+      if (category === "Shutter glass" && GLASS_SHUTTER_ITEMS.some((candidate) => candidate.id === id)) config.glassType = id;
+      if (category === "Drawer System" || category === "Drawer system") {
+        const master = COSTING_ITEMS.find((candidate) => candidate.id === id);
+        const brand = DRAWER_MODELS.find((candidate) => candidate.toLowerCase() === master?.brand.toLowerCase());
+        if (brand) config.drawerModel = brand;
+      }
+    }
+    config.boardPrices = prices;
+    if (!detail.some((item) => item.Category === "Visible side board")) config.visibleSideMaterialId = config.shType;
+    const laminatePriceFor = (category: string, face: "Front" | "Back", fallback: string): string => {
+      const matches = detail.filter((item) => item.Category === category);
+      const selected = matches.find((item) => new RegExp(`^${face} face`, "i").test(String(item.Specification ?? "")))
+        ?? matches.find((item) => /Both faces/i.test(String(item.Specification ?? "")));
+      return priceInSpec(selected?.Specification) ?? fallback;
+    };
+    config.carcassLamFrontSheetPrice = laminatePriceFor("Carcass laminate", "Front", config.carcassLamFrontSheetPrice);
+    config.carcassLamBackSheetPrice = laminatePriceFor("Carcass laminate", "Back", config.carcassLamFrontSheetPrice);
+    config.backLamFrontSheetPrice = laminatePriceFor("Carcass back laminate", "Front", config.carcassLamFrontSheetPrice);
+    config.backLamBackSheetPrice = config.backLamFrontSheetPrice;
+    config.drawerLamFrontSheetPrice = laminatePriceFor("Drawer laminate", "Front", config.drawerLamFrontSheetPrice);
+    config.drawerLamBackSheetPrice = config.drawerLamFrontSheetPrice;
+    config.shutterLamFrontSheetPrice = laminatePriceFor("Shutter laminate", "Front", config.shutterLamFrontSheetPrice);
+    config.shutterLamBackSheetPrice = laminatePriceFor("Shutter laminate", "Back", config.shutterLamFrontSheetPrice);
+    config.visibleLamFrontSheetPrice = laminatePriceFor("Visible side laminate", "Front", config.shutterLamFrontSheetPrice);
+    config.visibleLamBackSheetPrice = laminatePriceFor("Visible side laminate", "Back", config.shutterLamBackSheetPrice);
+    const hinge = detail.find((item) => item.Category === "Hardware" && COSTING_ITEMS.some((candidate) => candidate.id === item["Item code"] && candidate.group === "Hinge"));
+    if (hinge) {
+      const hingeItem = COSTING_ITEMS.find((candidate) => candidate.id === hinge["Item code"]);
+      const choice = HINGE_CHOICES.find((candidate) => candidate.toLowerCase().startsWith(hingeItem?.brand.toLowerCase() ?? "\0") &&
+        candidate.includes("Non Soft") === /WITHOUT|W\/OUT|NON SOFT/i.test(hingeItem?.type ?? ""));
+      if (choice) config.hingeChoice = choice;
+    }
+    return { ...line, m: buildModel(validatedCabinetConfig(config)) };
+  });
+  let extraId = 1;
+  for (const row of summary.filter((candidate) => !String(candidate["Cabinet code"] ?? "").trim())) {
+    const label = String(row["Cabinet / item"] ?? "").trim();
+    const qty = Number(row.Qty);
+    if (!Number.isSafeInteger(qty) || qty < 1) continue;
+    const filler = label.match(/^Panels- (?:SH|CR) (Filler|Chimney Panel|Dishwasher Panel)\s*(LH|RH)?\s*\d+mm\s+(\d+)x(\d+)$/i);
+    if (filler) {
+      const width = Number(filler[3]), height = Number(filler[4]);
+      restored.fillers.push({ id: extraId++, fillerType: /chimney/i.test(filler[1]) ? "chimney-panel" : /dishwasher/i.test(filler[1]) ? "dishwasher-panel" : "filler",
+        fillerSide: filler[2] === "LH" || filler[2] === "RH" ? filler[2] : undefined,
+        zone: height >= 1800 ? "tall" : height >= 800 || /chimney/i.test(filler[1]) ? "wall" : "base",
+        customShade: "", qty, customHeight: String(height), customWidth: String(width), elevation: "" });
+      continue;
+    }
+    const counter = label.match(/^Counter Ply (.+?) (\d+)mm (\d+)x(\d+)$/i);
+    if (counter) {
+      const detail = items.find((item) => item["Cabinet / item"] === label && item.Category === "Counter Ply");
+      restored.countertops.push({ id: extraId++, material: String(detail?.["Actual item"] ?? counter[1]),
+        materialId: String(detail?.["Item code"] ?? ""), thickness: counter[2], length: counter[3], depth: counter[4], qty });
+      continue;
+    }
+    const detail = items.find((item) => item["Cabinet / item"] === label && item.Category === "Accessory");
+    if (detail) {
+      const id = String(detail["Item code"] ?? "");
+      const catalog = MASTER_ACCESSORY_ITEMS.find((item) => item.id === id);
+      restored.masterAccessories.push({ id: extraId++, itemId: catalog?.id ?? "CUSTOM", qty,
+        elevation: label.match(/^([A-Z]{2})\s*·/)?.[1] ?? "",
+        ...(!catalog ? { customName: String(detail["Actual item"] ?? label), customUnit: "PCS" as const } : {}),
+        ...(/manual rate/i.test(String(detail.Specification ?? "")) ? { manualRate: String(detail["Rate (Rs / basis)"] ?? "") } : {}),
+      });
+    }
+  }
+  const carcassWaste = items.find((item) => item.Category === "Carcass board")?.["Waste %"];
+  const shutterWaste = items.find((item) => item.Category === "Shutter board")?.["Waste %"];
+  if (typeof carcassWaste === "number") restored.waste.carcass = carcassWaste;
+  if (typeof shutterWaste === "number") restored.waste.shutter = shutterWaste;
+  const pricingSheet = workbook.Sheets["Project Pricing"];
+  if (pricingSheet) {
+    const pricingRows = XLSX.utils.sheet_to_json<(string | number)[]>(pricingSheet, { header: 1, defval: "" });
+    const value = (name: string) => pricingRows.find((row) => row[0] === name)?.[1];
+    const number = (name: string) => Number(value(name)) || 0;
+    restored.pricing = {
+      ...restored.pricing, conversionPct: number("Conversion (%)"), profitPct: number("Profit (%)"),
+      transportation: { mode: value("Transportation method") === "sqft" ? "sqft" : "direct", value: number("Transportation rate / amount") },
+      installation: { mode: value("Installation method") === "sqft" ? "sqft" : "direct", value: number("Installation rate / amount") },
+      loading: { mode: value("Loading / Unloading method") === "sqft" ? "sqft" : "direct", value: number("Loading / Unloading rate / amount") },
+      includeTax: number("Include GST (1=yes, 0=no)") === 1,
+    };
+  }
+  const firstCell = XLSX.utils.sheet_to_json<(string | number)[]>(workbook.Sheets["Manual Comparison"], { header: 1, defval: "" })[0]?.[0];
+  restored.name = String(firstCell ?? "").replace(/^KITCHEN COSTING\s*-\s*/i, "").trim();
+  restored.hasSavedMaterialSnapshot = true;
+  restored.notice = `Recovered ${restored.project.length} cabinet lines, ${restored.fillers.length} standalone panel rows, ${restored.countertops.length} Counter Ply rows, ${restored.masterAccessories.length} additional accessories, recorded board and laminate prices, and project pricing. This older costing export has no Project Setup: filler elevations and cabinet links, individual cutting-size edits for calculated handles/lights/skirting, and some cabinet-only options cannot be recovered. Review these before using the new costing.`;
+  return restored;
 }
 
 /** Browser-printed projects predating the restore appendix expose only their visible tables. */
@@ -2609,6 +2756,7 @@ async function readProjectFile(file: File, pdfMaterials?: KitchenMaterials): Pro
   const workbook = XLSX.read(await file.arrayBuffer(), { type: "array" });
   const setupSheet = workbook.Sheets["Project Setup"];
   if (setupSheet) return restoreProjectSetup(XLSX.utils.sheet_to_json<Record<string, unknown>>(setupSheet, { defval: "" }));
+  if (workbook.Sheets["Cabinet Summary"] && workbook.Sheets["Cabinet Items"]) return restoreCostingWorkbook(workbook);
   const bomSheet = workbook.Sheets["Full BOM"] ?? workbook.Sheets[workbook.SheetNames[0]];
   if (!bomSheet) throw new Error("This file contains no BOM sheet.");
   const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(bomSheet, { defval: "" });
@@ -2753,9 +2901,10 @@ function computeCosting(
         addDetail({ category, itemCode: masterItem.id, item: masterItem.materialDescription, specification: `${masterItem.subgroup} · ${masterItem.thicknessMm ?? "—"}mm`, netQty: a, wastePct: wst.carcass, billableQty: billed, uom: "sqft", rate, amount: billed * rate });
         if (isPostlamItem(masterItem)) {
           const group = category === "Drawer board" ? "Drawer" : "Carcass";
-          const sheetPrice = category === "Drawer board" ? m.drawerLamFrontSheetPrice
+          const frontPrice = category === "Drawer board" ? m.drawerLamFrontSheetPrice
             : category === "Carcass back board" ? m.backLamFrontSheetPrice : m.carcassLamFrontSheetPrice;
-          addLaminateCost(group, sheetPrice, sheetPrice, masterItem, a, wst.carcass);
+          const backPrice = category === "Carcass board" ? m.carcassLamBackSheetPrice : frontPrice;
+          addLaminateCost(group, frontPrice, backPrice, masterItem, a, wst.carcass);
         }
       }
       const processingBoard = processingBoardForPanel(p, m);
@@ -2829,7 +2978,7 @@ function computeCosting(
     });
     // Board-face laminate and edge band already have detailed cost lines above.
     // Every remaining consumable must stay visible, even without a matching price.
-    m.cons.filter((c) => !/^EDGE BAND /i.test(c.name) && !/^(CARCASS|DRAWER|SHUTTER|VISIBLE SIDE) LAMINATE /i.test(c.name)).forEach((c) => {
+    m.cons.filter((c) => !/^EDGE BAND /i.test(c.name) && !/^(CARCASS(?: FRONT| BACK)?|DRAWER|SHUTTER|VISIBLE SIDE) LAMINATE /i.test(c.name)).forEach((c) => {
       const item = COSTING_ITEMS.find((candidate) => costingItemNames(candidate).some((name) => hardwareNameKey(name) === hardwareNameKey(c.name)));
       const unit = c.uom.toLowerCase();
       const uom: CostDetail["uom"] = unit === "gm" ? "gm" : unit === "kg" ? "kg" : unit === "sqft" ? "sqft" : /^(rmt|mtr)$/.test(unit) ? "RMT" : unit === "set" ? "set" : "nos";
@@ -2866,7 +3015,7 @@ function computeCosting(
     if (isPostlamItem(boardItem)) {
       const laminate = isCarcassSide ? p.extraCarcassLaminate : p.extraLaminate;
       const frontPrice = laminate?.front;
-      const backPrice = isCarcassSide ? frontPrice : laminate?.back;
+      const backPrice = laminate?.back;
       if (!frontPrice || !backPrice || !isValidLaminatePrice(frontPrice) || !isValidLaminatePrice(backPrice)) unpriced.add(`${p.name} laminate sheet price`);
       else {
         const group = isCarcassSide ? "Carcass" : p.extraMaterialRole === "visible" ? "Visible side" : "Shutter";
@@ -3334,12 +3483,13 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
     [boardPrices, zk, fkSafe, v.id, hand, handle, handlePrice, handleBrand, board, backBoardId, drawerBoardId, shType, visibleSides, visibleSideMaterialId, carcassLamFrontSheetPrice, carcassLamBackSheetPrice, backLamFrontSheetPrice, backLamBackSheetPrice, drawerLamFrontSheetPrice, drawerLamBackSheetPrice, visibleLamFrontSheetPrice, visibleLamBackSheetPrice, shutterLamFrontSheetPrice, shutterLamBackSheetPrice, glassType, hingeChoice, neon, W, H, D, effectiveShelfQty, fillerWidth, fillerSides, fillerWidthRH, blindOpeningWidth, spotLight, drawerModel, finish],
   );
 
-  const applyMaterialChoices = useCallback((chosen: ZoneMaterials | undefined) => {
+  const applyMaterialChoices = useCallback((chosen: ZoneMaterials | undefined, glassCabinet = false) => {
     if (chosen) {
+      const carcassLaminate = carcassLaminateForCabinet(chosen, glassCabinet);
       setBoardPrices(boardPricesFromMaterials(chosen));
       setBoard(chosen.carcass.itemId); setBackBoardId(chosen.back.itemId); setDrawerBoardId(chosen.drawer.itemId);
       setShType(chosen.shutter.itemId); setVisibleSideMaterialId(chosen.visible.itemId);
-      setCarcassLamFrontSheetPrice(chosen.carcass.frontSheetPrice); setCarcassLamBackSheetPrice(chosen.carcass.backSheetPrice);
+      setCarcassLamFrontSheetPrice(carcassLaminate.front); setCarcassLamBackSheetPrice(carcassLaminate.back);
       setBackLamFrontSheetPrice(chosen.back.frontSheetPrice); setBackLamBackSheetPrice(chosen.back.backSheetPrice);
       setDrawerLamFrontSheetPrice(chosen.drawer.frontSheetPrice); setDrawerLamBackSheetPrice(chosen.drawer.backSheetPrice);
       setVisibleLamFrontSheetPrice(chosen.visible.frontSheetPrice); setVisibleLamBackSheetPrice(chosen.visible.backSheetPrice);
@@ -3353,7 +3503,7 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
     setHandle(handleChoice.type); setHandlePrice(handleChoice.price); setHandleBrand(handleChoice.brand);
     setShelfOverride(null);
     const f = Object.keys(famSetOf(z))[0];
-    applyMaterialChoices(materials?.[kitchenZoneForCode(z, f)] ?? materials?.Base);
+    applyMaterialChoices(materials?.[kitchenZoneForCode(z, f)] ?? materials?.Base, isGlassShutterFam(f));
     setFk(f);
     setVid(famSetOf(z)[f].variants[0].id);
     const s = defSizes(z, f);
@@ -3367,8 +3517,12 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
     const nextMaterialZone = kitchenZoneForCode(zk, f);
     const handleChoice = handleSettingFor(materials, zk, f);
     setHandle(handleChoice.type); setHandlePrice(handleChoice.price); setHandleBrand(handleChoice.brand);
-    if (nextMaterialZone !== kitchenZoneForCode(zk, fkSafe)) {
-      applyMaterialChoices(materials?.[nextMaterialZone] ?? materials?.Base);
+    const nextChoices = materials?.[nextMaterialZone] ?? materials?.Base;
+    if (nextMaterialZone !== kitchenZoneForCode(zk, fkSafe)) applyMaterialChoices(nextChoices, isGlassShutterFam(f));
+    else if (nextChoices) {
+      const laminate = carcassLaminateForCabinet(nextChoices, isGlassShutterFam(f));
+      setCarcassLamFrontSheetPrice(laminate.front);
+      setCarcassLamBackSheetPrice(laminate.back);
     }
     setFk(f);
     setSpotLight(false);
@@ -3380,13 +3534,12 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
   }, [zk, fkSafe, fams, materials, applyMaterialChoices, zoneHeights, H]);
 
   const onVariant = (nextId: string) => {
-    const doubleWidth = doubleShutterWidth(zk);
     const paired = fam.variants.some((option: any) => option.id === "single" || option.id === "sgl")
       && fam.variants.some((option: any) => option.id === "double" || option.id === "dbl");
     if (paired) {
       const nextIsDouble = nextId === "double" || nextId === "dbl";
-      if (nextIsDouble && W < doubleWidth) setW(doubleWidth);
-      if (!nextIsDouble && W >= doubleWidth) setW(doubleWidth - 1);
+      if (nextIsDouble && !isDoubleShutterWidth(W)) setW(601);
+      if (!nextIsDouble && isDoubleShutterWidth(W)) setW(600);
     }
     setVid(nextId);
   };
@@ -3482,22 +3635,22 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
       const restored = await readProjectFile(file, materials);
       if (/\.pdf$/i.test(file.name)) restored.name = kitchenNameFromPdfFilename(file.name);
       if (project.length > 0 && !window.confirm("Replace the current project with the imported file?")) return;
-      if (file.name.toLowerCase().endsWith(".pdf") && restored.hasSavedMaterialSnapshot && restored.project.length) {
+      if (restored.hasSavedMaterialSnapshot && restored.project.length) {
         const imported = materialsFromImportedCabinets(restored.project.map((line) => cabinetConfig(line.m)), materials);
         const response = await fetch("/api/kitchen-materials", {
           method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(imported.materials),
         });
         if (!response.ok) {
           const result = await response.json().catch(() => ({}));
-          throw new Error(result.error ?? "Could not save the PDF materials to the material selection page.");
+          throw new Error(result.error ?? "Could not save the imported materials to the material selection page.");
         }
         window.sessionStorage.removeItem(MATERIAL_EDIT_DRAFT_KEY);
         setMaterials(imported.materials);
-        restored.notice += " The PDF board choices, prices, hinges, drawer brand, and handles are now filled in on Material Selection.";
+        restored.notice += " Recovered material choices are now filled in on Material Selection.";
         if (imported.conflictingZones.length) restored.notice += ` Cabinets in ${imported.conflictingZones.join(", ")} have different materials within the same zone. Their individual BOM choices were kept; Material Selection shows the first cabinet in each zone.`;
         if (imported.conflictingHandleZones.length) restored.notice += ` Cabinets in ${imported.conflictingHandleZones.join(", ")} have different handle settings within the same zone. Their individual BOM choices were kept; Material Selection shows the first cabinet in each zone.`;
-        if (imported.conflictingHinges) restored.notice += " The PDF contains different hinge settings. Individual cabinet BOM choices were kept; Material Selection shows the first cabinet's hinges.";
-        if (imported.conflictingDrawerBrands) restored.notice += " The PDF contains different drawer brands. Individual cabinet BOM choices were kept; Material Selection shows the first cabinet's drawer brand.";
+        if (imported.conflictingHinges) restored.notice += " The imported cabinets have different hinge settings. Individual cabinet BOM choices were kept; Material Selection shows the first cabinet's hinges.";
+        if (imported.conflictingDrawerBrands) restored.notice += " The imported cabinets have different drawer brands. Individual cabinet BOM choices were kept; Material Selection shows the first cabinet's drawer brand.";
       }
       applyRestoredKitchen(restored);
       setKitchenName(restored.name ?? "");
@@ -3798,6 +3951,11 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
     try {
       if (!/\.(xlsx|xls)$/i.test(file.name)) throw new Error("Select an Excel costing file (.xls or .xlsx).");
       if (file.size > 10_000_000) throw new Error("The costing file is too large (maximum 10 MB).");
+      const workbook = XLSX.read(await file.arrayBuffer(), { type: "array", bookSheets: true });
+      if (workbook.SheetNames.includes("Cabinet Summary") && workbook.SheetNames.includes("Cabinet Items")) {
+        await importFile(file);
+        return;
+      }
       const imported = parseManualCosting(await file.arrayBuffer(), file.name);
       updateManualCosting(imported);
       setImportMessage(`Imported ${imported.rows.length} manual costing items from ${file.name}. Quantities are shown per kitchen (${imported.sets} set${imported.sets === 1 ? "" : "s"} in the source). The BOM calculation was not changed.`);
@@ -4111,7 +4269,7 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
               {fam.variants.map((x: any) => <option key={x.id} value={x.id}>{x.label}</option>)}
             </select>
             {fam.variants.some((option: any) => option.id === "single" || option.id === "sgl") && fam.variants.some((option: any) => option.id === "double" || option.id === "dbl") &&
-              <Hint>Below {doubleShutterWidth(zk)}mm: single shutter. At {doubleShutterWidth(zk)}mm or wider: double shutter.</Hint>}
+              <Hint>Up to 600 mm: single shutter. Above 600 mm: double shutter.</Hint>}
           </Fld>
 
           {zk === "WC" && isGlass && <Fld label="Top spot light">
@@ -4209,10 +4367,10 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
           </Fld>
 
           {ZONES[zk].blind && <Fld label="Blind opening shutter width (mm)">
-            <input type="number" min={BLIND_OPENING_MIN} max={BLIND_OPENING_MAX} step={1}
+            <input type="number" min={blindOpeningLimits(zk).min} max={blindOpeningLimits(zk).max} step={1}
               aria-label="Blind opening shutter width in millimetres" value={blindOpeningWidth || ""}
               onChange={(event) => setBlindOpeningWidth(event.target.value === "" ? 0 : Number(event.target.value))} />
-            <Hint>Allowed: {BLIND_OPENING_MIN}–{BLIND_OPENING_MAX} mm. The fixed panel uses the remaining cabinet width, allowing 3 mm for each panel.</Hint>
+            <Hint>Allowed: {blindOpeningLimits(zk).min}–{blindOpeningLimits(zk).max} mm. The fixed panel uses the remaining cabinet width, allowing 3 mm for each panel.</Hint>
             {openingWidthAlert && <p role="alert" style={{ color: "#a63d16", fontWeight: 650, margin: "8px 0 0" }}>{openingWidthAlert}</p>}
           </Fld>}
 

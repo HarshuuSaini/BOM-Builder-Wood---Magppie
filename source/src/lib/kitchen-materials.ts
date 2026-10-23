@@ -50,7 +50,20 @@ export function selectedBoardRate(item: { id: string; type: string; currentRate:
     ? Number(override.sheetPrice) / 32 : item.currentRate;
 }
 
-export type ZoneMaterials = Record<MaterialField, MaterialChoice>;
+export type ZoneMaterials = Record<MaterialField, MaterialChoice> & {
+  /** Glass-shutter cabinets use the same carcass board, but may laminate its faces differently. */
+  glassCarcassLaminate?: { frontSheetPrice: string; backSheetPrice: string };
+};
+
+const GLASS_CABINET_FAMILIES = new Set(["WGL", "SHFG", "DPNG", "PPNG", "BLNG", "LOWSG", "LGL"]);
+export const isGlassCabinetFamily = (family?: string) => !!family && GLASS_CABINET_FAMILIES.has(family);
+
+export function carcassLaminateForCabinet(choices: ZoneMaterials, glassCabinet: boolean) {
+  return glassCabinet
+    ? { front: choices.glassCarcassLaminate?.frontSheetPrice ?? choices.carcass.frontSheetPrice,
+        back: choices.glassCarcassLaminate?.backSheetPrice ?? choices.carcass.frontSheetPrice }
+    : { front: choices.carcass.frontSheetPrice, back: choices.carcass.frontSheetPrice };
+}
 export const DRAWER_BRANDS = ["Lian", "Hettich", "Blum", "Hafele", "Grass"] as const;
 export const HANDLE_ZONES = ["Base", "Wall", "Tall", "Loft"] as const;
 export type HandleZone = (typeof HANDLE_ZONES)[number];

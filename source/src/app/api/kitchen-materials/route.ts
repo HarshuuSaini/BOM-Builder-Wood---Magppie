@@ -43,6 +43,12 @@ export async function POST(request: Request) {
   }
   for (const zone of KITCHEN_ZONES) {
     if (!materials[zone] || typeof materials[zone] !== "object") return NextResponse.json({ error: `Missing ${zone} materials.` }, { status: 400 });
+    const glass = materials[zone].glassCarcassLaminate;
+    if (glass !== undefined && (!glass || typeof glass !== "object" ||
+      [glass.frontSheetPrice, glass.backSheetPrice].some((price) =>
+        typeof price !== "string" || !/^(?:\d{1,7})(?:\.\d{1,2})?$/.test(price) || Number(price) > 1000000))) {
+      return NextResponse.json({ error: `Invalid ${zone} glass cabinet laminate price.` }, { status: 400 });
+    }
     for (const field of MATERIAL_FIELDS) {
       const selection = materials[zone][field];
       if (!selection || typeof selection.itemId !== "string" || typeof selection.frontSheetPrice !== "string" || typeof selection.backSheetPrice !== "string") {

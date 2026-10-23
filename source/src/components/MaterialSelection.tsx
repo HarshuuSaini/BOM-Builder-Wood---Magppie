@@ -20,12 +20,12 @@ const DEFAULT_IDS: Record<MaterialField, string> = {
 const fieldStyle: React.CSSProperties = { padding: "9px 10px", width: "100%", boxSizing: "border-box", border: "1px solid #ccd6d0", borderRadius: 5, background: "white", font: "inherit" };
 
 function defaultZone(): ZoneMaterials {
-  return Object.fromEntries(MATERIAL_FIELDS.map((field) => [field, { itemId: DEFAULT_IDS[field], frontSheetPrice: "550", backSheetPrice: "550" }])) as ZoneMaterials;
+  return Object.fromEntries(MATERIAL_FIELDS.map((field) => [field, { itemId: DEFAULT_IDS[field], frontSheetPrice: "550", backSheetPrice: "550" }])) as unknown as ZoneMaterials;
 }
 function copyZone(zone: ZoneMaterials): ZoneMaterials {
-  return Object.fromEntries(MATERIAL_FIELDS.map((field) => [field, {
+  return { ...Object.fromEntries(MATERIAL_FIELDS.map((field) => [field, {
     ...zone[field], backSheetPrice: field === "shutter" || field === "visible" ? zone[field].backSheetPrice : zone[field].frontSheetPrice,
-  }])) as ZoneMaterials;
+  }])), glassCarcassLaminate: zone.glassCarcassLaminate ? { ...zone.glassCarcassLaminate } : undefined } as ZoneMaterials;
 }
 function defaultMaterials(): KitchenMaterials {
   return Object.fromEntries(KITCHEN_ZONES.map((zone) => [zone, defaultZone()])) as unknown as KitchenMaterials;
@@ -82,6 +82,7 @@ export function updateMaterialChoices(choices: ZoneMaterials, field: MaterialFie
 export function MaterialSelection({ options, initial }: { options: Option[]; initial?: KitchenMaterials }) {
   const router = useRouter();
   const [activeSection, setActiveSection] = useState<KitchenZone | "All">("All");
+  const [allZonesExpanded, setAllZonesExpanded] = useState(false);
   const [hingeBrand, setHingeBrand] = useState(() => initial?._hingeChoice?.split(" ")[0] ?? "Hettich");
   const [hingeType, setHingeType] = useState(() => initial?._hingeChoice?.endsWith("Non Soft Close") ? "Non Soft Close" : "Soft Close");
   const [drawerBrand, setDrawerBrand] = useState(() => initial?._drawerBrand ?? "Hettich");
@@ -106,7 +107,8 @@ export function MaterialSelection({ options, initial }: { options: Option[]; ini
       initial.Sink[field].itemId === initial.Base[field].itemId &&
       initial.Sink[field].frontSheetPrice === initial.Base[field].frontSheetPrice &&
       initial.Sink[field].backSheetPrice === initial.Base[field].backSheetPrice &&
-      initial.Sink[field].boardSheetPrice === initial.Base[field].boardSheetPrice))) restored.Sink = "Base";
+      initial.Sink[field].boardSheetPrice === initial.Base[field].boardSheetPrice) &&
+      JSON.stringify(initial.Sink.glassCarcassLaminate) === JSON.stringify(initial.Base.glassCarcassLaminate))) restored.Sink = "Base";
     return restored;
   });
   const [busy, setBusy] = useState(false);
@@ -173,6 +175,18 @@ export function MaterialSelection({ options, initial }: { options: Option[]; ini
     }
     setSyncWarning(missing.size ? `No matching master board for ${[...missing].map((target) => GROUPS[target].label).join(" and ")}. Those selections were left unchanged.` : "");
   };
+  const updateGlassLaminate = (zone: KitchenZone | "All", face: "frontSheetPrice" | "backSheetPrice", price: string) => {
+    const withPrice = (choices: ZoneMaterials): ZoneMaterials => ({ ...copyZone(choices), glassCarcassLaminate: {
+      frontSheetPrice: choices.glassCarcassLaminate?.frontSheetPrice ?? choices.carcass.frontSheetPrice,
+      backSheetPrice: choices.glassCarcassLaminate?.backSheetPrice ?? choices.carcass.frontSheetPrice,
+      [face]: price,
+    } });
+    if (zone === "All") {
+      setAll(withPrice(all));
+      setZones(Object.fromEntries(KITCHEN_ZONES.map((current) => [current, withPrice(effective(current))])) as unknown as KitchenMaterials);
+      setSources(Object.fromEntries(KITCHEN_ZONES.map((current) => [current, "Own"])) as Record<KitchenZone, MaterialSource>);
+    } else setZones((old) => ({ ...old, [zone]: withPrice(old[zone]) }));
+  };
   const changeSource = (zone: KitchenZone, source: MaterialSource) => {
     if (source !== "Own" && source !== "All" && createsMaterialSourceCycle(zone, source, sources)) {
       const sourceSnapshot = copyZone(effective(source));
@@ -227,6 +241,37 @@ export function MaterialSelection({ options, initial }: { options: Option[]; ini
           </label>}
         </div>;
       })}
+      <div style={{ gridColumn: "1 / -1", border: "1px solid #dae2dc", borderRadius: 7, padding: 12, background: "#f9fbf9" }}>
+        <strong style={{ display: "block", marginBottom: 5 }}>Glass cabinet carcass / shelf laminate</strong>
+        <p style={{ color: "#607168", margin: "0 0 12px" }}>Uses the carcass / shelf board selected above. Set a separate laminate price for each face of glass cabinets; other cabinets keep the regular carcass laminate price.</p>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: 12 }}>
+          {(["frontSheetPrice", "backSheetPrice"] as const).map((face) => <label key={face} style={{ display: "grid", gap: 4 }}>
+            {face === "frontSheetPrice" ? "Front laminate" : "Back laminate"} · ₹ / 32 sqft sheet
+            <input aria-label={`${section} glass cabinet ${face === "frontSheetPrice" ? "front" : "back"} laminate sheet price`}
+              type="number" min="0" max="1000000" step="0.01" inputMode="decimal" disabled={disabled}
+              value={choices.glassCarcassLaminate?.[face] ?? choices.carcass.frontSheetPrice}
+              onChange={(event) => updateGlassLaminate(section, face, event.target.value)} style={fieldStyle} />
+          </label>)}
+        </div>
+      </div>
+    </div>;
+  }
+
+  function zoneMaterialRow(zone: KitchenZone) {
+    const inherited = sources[zone] !== "Own";
+    return <div key={zone} aria-label={`${zone} cabinet materials`} style={{ background: inherited ? "#f9fbf9" : "#fff", borderTop: "1px solid #dae2dc", padding: "16px 0" }}>
+      <header style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "center", flexWrap: "wrap", marginBottom: 12 }}>
+        <h3 style={{ fontSize: 18, margin: 0 }}>{zone} cabinets</h3>
+        <label style={{ display: "flex", alignItems: "center", gap: 8 }}>Materials from
+          <select aria-label={`${zone} material source`} value={sources[zone]} onChange={(event) => changeSource(zone, event.target.value as MaterialSource)}
+            style={{ ...fieldStyle, width: "auto", minWidth: 190 }}>
+            <option value="Own">Choose separately</option>
+            <option value="All">All cabinets</option>
+            {KITCHEN_ZONES.filter((candidate) => candidate !== zone).map((candidate) => <option key={candidate} value={candidate}>{candidate} cabinets</option>)}
+          </select>
+        </label>
+      </header>
+      <div style={{ overflowX: "auto" }}>{materialCards(zone, effective(zone), inherited)}</div>
     </div>;
   }
 
@@ -356,30 +401,26 @@ export function MaterialSelection({ options, initial }: { options: Option[]; ini
         </div>
       </section>
       <section style={{ background: "#fff", border: "1px solid #d6dfd8", borderRadius: 8, padding: 16, marginBottom: 15 }}>
-        <h2 style={{ fontSize: 18, margin: "0 0 12px" }}>Material groups</h2>
+        <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
+          <h2 style={{ fontSize: 18, margin: 0 }}>Material groups</h2>
+          <button type="button" aria-pressed={allZonesExpanded} aria-controls="material-zone-rows"
+            onClick={() => setAllZonesExpanded((expanded) => !expanded)}
+            style={{ padding: "9px 14px", border: "1px solid #17645b", borderRadius: 6, background: allZonesExpanded ? "#17645b" : "white", color: allZonesExpanded ? "white" : "#17645b", font: "inherit", cursor: "pointer" }}>
+            {allZonesExpanded ? "Collapse all zones" : "Expand all zones"}
+          </button>
+        </header>
         <p style={{ color: "#607168", margin: "0 0 12px" }}>Back and drawer raw-board prices remain separate. The carcass laminate price fills their laminate prices; you can then change either one individually.</p>
         <div role="tablist" aria-label="Cabinet material groups" style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 15 }}>
-          {(["All", ...KITCHEN_ZONES] as const).map((section) => <button key={section} type="button" role="tab" aria-selected={activeSection === section}
-            onClick={() => setActiveSection(section)} style={{ padding: "9px 14px", border: "1px solid #cbd8d0", borderRadius: 30, background: activeSection === section ? "#17645b" : "white", color: activeSection === section ? "white" : "#496157", cursor: "pointer" }}>{section === "All" ? "All cabinets" : section}</button>)}
+          {(["All", ...KITCHEN_ZONES] as const).map((section) => <button key={section} type="button" role="tab" aria-selected={!allZonesExpanded && activeSection === section}
+            onClick={() => { setActiveSection(section); setAllZonesExpanded(false); }} style={{ padding: "9px 14px", border: "1px solid #cbd8d0", borderRadius: 30, background: !allZonesExpanded && activeSection === section ? "#17645b" : "white", color: !allZonesExpanded && activeSection === section ? "white" : "#496157", cursor: "pointer" }}>{section === "All" ? "All cabinets" : section}</button>)}
         </div>
-        {activeSection === "All" && <div style={{ overflowX: "auto" }}>{materialCards("All", all, false)}</div>}
-      {KITCHEN_ZONES.filter((zone) => zone === activeSection).map((zone) => {
-        const inherited = sources[zone] !== "Own";
-        return <div key={zone} style={{ background: inherited ? "#f9fbf9" : "#fff" }}>
-          <header style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "center", flexWrap: "wrap", marginBottom: 12 }}>
-            <h2 style={{ fontSize: 18, margin: 0 }}>{zone} cabinets</h2>
-            <label style={{ display: "flex", alignItems: "center", gap: 8 }}>Materials from
-              <select aria-label={`${zone} material source`} value={sources[zone]} onChange={(event) => changeSource(zone, event.target.value as MaterialSource)}
-                style={{ ...fieldStyle, width: "auto", minWidth: 190 }}>
-                <option value="Own">Choose separately</option>
-                <option value="All">All cabinets</option>
-                {KITCHEN_ZONES.filter((candidate) => candidate !== zone).map((candidate) => <option key={candidate} value={candidate}>{candidate} cabinets</option>)}
-              </select>
-            </label>
-          </header>
-          <div style={{ overflowX: "auto" }}>{materialCards(zone, effective(zone), inherited)}</div>
-        </div>;
-      })}
+        <div id="material-zone-rows">
+          {(allZonesExpanded || activeSection === "All") && <div style={{ overflowX: "auto", paddingBottom: allZonesExpanded ? 16 : 0 }}>
+            {allZonesExpanded && <h3 style={{ fontSize: 18, margin: "0 0 12px" }}>All cabinets</h3>}
+            {materialCards("All", all, false)}
+          </div>}
+          {(allZonesExpanded ? KITCHEN_ZONES : KITCHEN_ZONES.filter((zone) => zone === activeSection)).map(zoneMaterialRow)}
+        </div>
       </section>
       {syncWarning && <p role="status" style={{ color: "#945615" }}>{syncWarning}</p>}
       {error && <p role="alert" style={{ color: "#a4412e" }}>{error}</p>}

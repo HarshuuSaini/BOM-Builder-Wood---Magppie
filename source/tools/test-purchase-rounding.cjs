@@ -113,12 +113,50 @@ assert.deepEqual(blindDefault.panels.filter(panel => panel.name.includes('Blind'
 assert.deepEqual(blindChanged.panels.filter(panel => panel.name.includes('Blind')).map(panel => panel.w), [447, 597]);
 assert.equal(b.blindOpeningError('BB', 1050, 450), '');
 assert.equal(b.blindOpeningError('BB', 1050, 550), '');
-assert.match(b.blindOpeningError('BB', 1050, 449), /between 450 and 550/);
-assert.match(b.blindOpeningError('BB', 1050, 551), /between 450 and 550/);
+assert.equal(b.blindOpeningError('BB', 1050, 300), '');
+assert.equal(b.blindOpeningError('BBL', 1050, 600), '');
+assert.match(b.blindOpeningError('BB', 1050, 299), /between 300 and 600/);
+assert.match(b.blindOpeningError('BB', 1050, 601), /between 300 and 600/);
+assert.equal(b.blindOpeningError('WB', 1050, 350), '');
+assert.equal(b.blindOpeningError('WB', 1050, 600), '');
+assert.match(b.blindOpeningError('WB', 1050, 349), /between 350 and 600/);
+assert.match(b.blindOpeningError('WB', 1050, 601), /between 350 and 600/);
 assert.match(b.blindOpeningError('BB', 500, 500), /fixed panel/);
 assert.equal(b.blindOpeningError('BC', 500, 100), '');
 const wallBlind = b.buildModel({ ...config, zk: 'WB', fk: 'WST', W: 900 });
 assert.equal(wallBlind.panels.find(panel => panel.name.includes('Blind Active')).w, 447);
+for (const [zone, family, single, double] of [
+  ['BC', 'SH', '1SX', '2HS'], ['WC', 'WST', '1SX', '2HS'],
+  ['WC', 'WGL', '2SG', '2HS'], ['LO', 'LST', '1SX', '2HS'],
+]) {
+  const at600 = b.buildModel({ ...config, zk: zone, fk: family, vid: 'sgl', W: 600, H: zone === 'WC' ? 900 : 720 });
+  const at601 = b.buildModel({ ...config, zk: zone, fk: family, vid: 'sgl', W: 601, H: zone === 'WC' ? 900 : 720 });
+  assert.equal(at600.code.split('-')[5], 'LHS', `${zone}/${family} 600mm must be single`);
+  assert.equal(at601.code.split('-')[5], double, `${zone}/${family} 601mm must be double`);
+  assert.equal(at600.panels.filter(panel => panel.pack === 'Shutter Pack' && panel.name.includes('Panels- SH')).reduce((sum, panel) => sum + panel.qty, 0), 1);
+  assert.equal(at601.panels.filter(panel => panel.pack === 'Shutter Pack' && panel.name.includes('Panels- SH')).reduce((sum, panel) => sum + panel.qty, 0), 2);
+  if (family !== 'WGL') assert.equal(at600.code.split('-')[4], zone === 'WC' ? '2SX' : single);
+}
+assert.equal(b.buildModel({ ...config, zk: 'WC', fk: 'WST', W: 450, H: 900, shelfQty: 0 }).code.split('-')[4], 'XXX');
+assert.equal(b.buildModel({ ...config, zk: 'WC', fk: 'WGL', W: 450, H: 900, shelfQty: 0 }).code.split('-')[4], 'XXX');
+assert.equal(b.buildModel({ ...config, zk: 'WC', fk: 'WST', W: 450, H: 900, shelfQty: 2 }).code.split('-')[4], '2SX');
+assert.equal(b.buildModel({ ...config, zk: 'WC', fk: 'WGL', W: 450, H: 900, shelfQty: 2 }).code.split('-')[4], '2SG');
+assert.equal(b.buildModel({ ...config, zk: 'WC', fk: 'WOP', W: 300, H: 900, shelfQty: 2 }).code.split('-')[4], '2SX');
+for (const [variant, count] of [['1dw', 1], ['2dw', 2]]) {
+  const appliance = b.buildModel({ ...config, zk: 'TC', fk: 'APP', vid: variant, W: 600, H: 2400 });
+  assert.equal(appliance.code.split('-')[5], `${count}LB`);
+  assert.equal(appliance.panels.filter(panel => panel.pack === 'Drawer Pack' && panel.name.includes('DR Back')).reduce((sum, panel) => sum + panel.qty, 0), count);
+  assert(appliance.panels.filter(panel => panel.pack === 'Drawer Pack' && panel.name.includes('DR Back')).every(panel => panel.h === 68));
+  assert.equal(appliance.hardware.filter(row => row.pack === 'Drawer Pack' && /H70/.test(row.name)).reduce((sum, row) => sum + row.qty, 0), count);
+  assert.equal(appliance.panels.filter(panel => panel.pack === 'Shutter Pack' && panel.name.includes('Drawer Front LOW')).reduce((sum, panel) => sum + panel.qty, 0), count);
+}
+const oldWallCode = 'WC-SH-NHX-WD-1SG-RHS-XXX-800-900-336-18-WHITE';
+const restoredWall = b.restoreLegacyBom([{ Level: 0, Item: oldWallCode, 'SO Qty': 1, Elevation: 'AA' }]).project[0].m;
+assert.equal(restoredWall.code.split('-')[4], '1SX');
+assert.equal(restoredWall.code.split('-')[5], '2HS');
+const oldApplianceCode = 'TC-AP-CJ-WD-1SX-1HB-LHS-600-2400-560-18-WHITE';
+const restoredAppliance = b.restoreLegacyBom([{ Level: 0, Item: oldApplianceCode, 'SO Qty': 1, Elevation: 'AA' }]).project[0].m;
+assert.equal(restoredAppliance.code.split('-')[5], '1LB');
 const wallGlassSpot = b.buildModel({ ...config, zk: 'WC', fk: 'WGL', W: 450, spotLight: true });
 const wallGlassSpotLine = [{ id: 12, m: wallGlassSpot, qty: 2, elevation: 'BB' }];
 const spotAccessories = b.cabinetAccessories(wallGlassSpotLine);
@@ -221,7 +259,7 @@ const full = calc(project);
 const counter = b.computeCosting([], [], [], [{id: 1, materialId: 'KITCHEN-014', material: 'POSTlam BWP Ply BSL', ratePerSqft: '166.8125', length: '2050', depth: '600', thickness: '18', qty: 1}], [], [], [], config.shType, config.shType,
   b.DEFAULT_RATES, {carcass: 10, shutter: 20, profile: 20}, {});
 near(b.counterPlyAreaSqft({length: '2050', thickness: '18', depth: '600', qty: 2}), 2050 * 18 * 2 / 92903);
-near(counter.lines[0].details[0].netQty, 2050 * 18 / 92903);
+near(counter.lines[0].details[0].netQty, 2050 * 600 / 92903);
 near(counter.lines[0].details[0].rate, 2612.4 / 32);
 near(counter.purchases[0].rate, 2612.4);
 near(counter.total, counter.purchases[0].quantity * 2612.4);
