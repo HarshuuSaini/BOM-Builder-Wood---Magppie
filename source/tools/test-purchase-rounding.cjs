@@ -10,7 +10,7 @@ Module._resolveFilename = function (name, ...args) {
 };
 for (const ext of ['.ts', '.tsx']) require.extensions[ext] = (mod, file) => {
   let source = fs.readFileSync(file, 'utf8').replace(/import\.meta\.url/g, '"file:///test"');
-  if (file.endsWith('WoodBomBuilder.tsx')) source += '\nexport {computeCosting, buildBoardTotals, buildModel, blindOpeningError, cabinetFillers, cabinetAccessories, buildExtrasBom, calculatedAccessories, mergeJHandleRuns, mergeAccessoryExportRows, buildMasterAccessoryRows, buildAccessoryRows, restoreAccessoryRow, restoreLegacyBom, restoreProjectSetup, projectSetupRows, kitchenCostingSnapshot, countertopMaterialItem, countertopMaterialId, counterPlyAreaSqft, DEFAULT_RATES, DEFAULT_LAMINATE_PRICES};';
+  if (file.endsWith('WoodBomBuilder.tsx')) source += '\nexport {computeCosting, buildBoardTotals, buildModel, blindOpeningError, cabinetFillers, cabinetAccessories, buildExtrasBom, calculatedAccessories, groupedAutomaticAccessories, visibleSuggestedRows, mergeJHandleRuns, mergeAccessoryExportRows, buildMasterAccessoryRows, buildAccessoryRows, restoreAccessoryRow, restoreLegacyBom, restoreProjectSetup, projectSetupRows, kitchenCostingSnapshot, countertopMaterialItem, countertopMaterialId, counterPlyAreaSqft, DEFAULT_RATES, DEFAULT_LAMINATE_PRICES};';
   mod._compile(ts.transpileModule(source, { compilerOptions: {
     module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true, target: ts.ScriptTarget.ES2020,
   } }).outputText, file);
@@ -417,6 +417,13 @@ assert.equal(hardwareQty('HARDWARE-026'), 8);
 const mergedHandleCost = b.computeCosting([], [], [], [], [], mergedHandles, [], config.shType, config.shType,
   b.DEFAULT_RATES, { carcass: 10, shutter: 20, profile: 20 }, {});
 near(mergedHandleCost.purchases.find(row => row.itemCode === 'HARDWARE-026').quantity, 8);
+const suggested = [{ id: 1 }, { id: 2, disabled: true }];
+assert.deepEqual(b.visibleSuggestedRows(suggested, false).map(row => row.id), [1]);
+assert.deepEqual(b.visibleSuggestedRows(suggested, true).map(row => row.id), [1, 2]);
+const removedHandle = { ...automaticHandleRows[2], id: 99, disabled: true };
+const automaticGroups = b.groupedAutomaticAccessories([automaticHandleRows[2]], [removedHandle]);
+assert.equal(b.visibleSuggestedRows(automaticGroups[0].map(({ item }) => item), false).length, 0);
+assert.equal(b.visibleSuggestedRows(automaticGroups[0].map(({ item }) => item), true).length, 1);
 const legacyLightRow = b.restoreAccessoryRow({...otherRows[0], lengthMeters: undefined, size: '1000', qty: 2}, 1, []);
 assert.equal(legacyLightRow.size, '1');
 assert.equal(legacyLightRow.qty, 2);

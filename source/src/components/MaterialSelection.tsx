@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { UserSignOut } from "@/components/UserSignOut";
+import { SINK_STONE_BOARD_ID } from "@/lib/costing";
 import { DRAWER_BRANDS, KITCHEN_ZONES, HANDLE_ZONES, DEFAULT_MATERIAL_SOURCES, MATERIAL_FIELDS, createsMaterialSourceCycle, handleSettingFor, type HandleSetting, type HandleZone, type KitchenMaterials, type KitchenZone, type MaterialSource, type MaterialChoice, type MaterialField, type ZoneMaterials } from "@/lib/kitchen-materials";
 import { activeKitchenId, readKitchenWorkspace, setActiveKitchenId, writeKitchenWorkspace, type KitchenWorkspaceEntry } from "@/lib/kitchen-workspace";
 
@@ -31,6 +32,7 @@ function defaultMaterials(): KitchenMaterials {
   return Object.fromEntries(KITCHEN_ZONES.map((zone) => [zone, defaultZone()])) as unknown as KitchenMaterials;
 }
 function typeOf(option: Option) {
+  if (option.id === SINK_STONE_BOARD_ID) return "Stone";
   if (/^Membrane\b/i.test(option.subgroup)) return "Membrane";
   if (/^PU\b/i.test(option.subgroup)) return "PU";
   return /POSTLAM/i.test(option.type) ? "Postlam" : "Prelam";
@@ -53,6 +55,7 @@ export function updateMaterialChoices(choices: ZoneMaterials, field: MaterialFie
   // raw-board prices belong to their own material selections.
   if (field === "carcass" && change.itemId === undefined) return { choices: next, unmatched: [] as MaterialField[] };
   const unmatched: MaterialField[] = [];
+  if (field === "carcass" && next.carcass.itemId === SINK_STONE_BOARD_ID) return { choices: next, unmatched };
   for (const target of SYNC_TARGETS[field] ?? []) {
     const sourceOption = options.find((option) => option.id === next[field].itemId);
     const matchingOption = sourceOption && options.find((option) =>
@@ -204,15 +207,18 @@ export function MaterialSelection({ options, initial }: { options: Option[]; ini
     return <div style={{ display: "grid", gridTemplateColumns: "repeat(5,minmax(225px,1fr))", gap: 12, minWidth: 1185 }}>
       {MATERIAL_FIELDS.map((field) => {
         const meta = GROUPS[field];
-        const available = options.filter((option) => option.group === meta.group && (field !== "visible" || [18, 25].includes(option.thicknessMm ?? 0)));
+        const available = options.filter((option) => option.group === meta.group &&
+          (option.id !== SINK_STONE_BOARD_ID || (section === "Sink" && field === "carcass")) &&
+          (field !== "visible" || [18, 25].includes(option.thicknessMm ?? 0)));
         const selected = choices[field];
         const selectedOption = available.find((option) => option.id === selected.itemId);
         const postlam = selectedOption && typeOf(selectedOption) === "Postlam";
-        const boardWithSeparateRate = selectedOption && ["Prelam", "Postlam"].includes(typeOf(selectedOption));
-        const types = (field === "shutter" || field === "visible" ? ["Prelam", "Postlam", "PU", "Membrane"] : ["Prelam", "Postlam"])
+        const boardWithSeparateRate = selectedOption && ["Prelam", "Postlam", "Stone"].includes(typeOf(selectedOption));
+        const types = (field === "shutter" || field === "visible" ? ["Prelam", "Postlam", "PU", "Membrane"] :
+          section === "Sink" && field === "carcass" ? ["Prelam", "Postlam", "Stone"] : ["Prelam", "Postlam"])
           .filter((type) => available.some((option) => typeOf(option) === type));
         return <div key={field} style={{ border: "1px solid #dae2dc", borderRadius: 7, padding: 12, background: "white", minWidth: 0 }}>
-          <strong style={{ display: "block", marginBottom: 10 }}>{meta.label}</strong>
+          <strong style={{ display: "block", marginBottom: 10 }}>{section === "Sink" && field === "carcass" ? "Sink cabinet material" : meta.label}</strong>
           <label style={{ display: "grid", gap: 5 }}>Subgroup
             <select aria-label={`${section} ${meta.label}`} value={selected.itemId} disabled={disabled} onChange={(event) => update(section, field, { itemId: event.target.value, boardSheetPrice: undefined })} style={fieldStyle}>
               {types.map((type) => <optgroup key={type} label={type}>{available.filter((option) => typeOf(option) === type).map((option) =>
@@ -220,8 +226,8 @@ export function MaterialSelection({ options, initial }: { options: Option[]; ini
             </select>
           </label>
           <small style={{ color: "#65786e" }}>Kitchen item: {selected.itemId}</small>
-          {boardWithSeparateRate && <label style={{ display: "grid", gap: 4, marginTop: 12 }}>{postlam ? "Postlam raw board" : "Prelam board"} · ₹ / 32 sqft sheet
-            <input aria-label={`${section} ${meta.label} ${postlam ? "Postlam raw board" : "Prelam board"} sheet price`} type="number" min="0" max="1000000" step="any" inputMode="decimal"
+          {boardWithSeparateRate && <label style={{ display: "grid", gap: 4, marginTop: 12 }}>{selected.itemId === SINK_STONE_BOARD_ID ? "Stone board" : postlam ? "Postlam raw board" : "Prelam board"} · ₹ / 32 sqft sheet
+            <input aria-label={`${section} ${meta.label} ${selected.itemId === SINK_STONE_BOARD_ID ? "Stone board" : postlam ? "Postlam raw board" : "Prelam board"} sheet price`} type="number" min="0" max="1000000" step="any" inputMode="decimal"
               value={selected.boardSheetPrice ?? selectedOption.boardSheetPrice} disabled={disabled}
               onChange={(event) => update(section, field, { boardSheetPrice: event.target.value })} style={fieldStyle} />
           </label>}
@@ -271,6 +277,7 @@ export function MaterialSelection({ options, initial }: { options: Option[]; ini
           </select>
         </label>
       </header>
+      {zone === "Sink" && inherited && <p style={{ margin: "0 0 12px", color: "#607168" }}>To choose Stone for sink cabinets, change “Materials from” to “Choose separately.”</p>}
       <div style={{ overflowX: "auto" }}>{materialCards(zone, effective(zone), inherited)}</div>
     </div>;
   }

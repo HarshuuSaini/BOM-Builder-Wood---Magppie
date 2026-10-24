@@ -18,14 +18,24 @@ export type CostingMaster = {
 };
 
 const importedMaster = masterJson as CostingMaster;
+export const SINK_STONE_BOARD_ID = "KITCHEN-SINK-STONE-18";
+export const SINK_STONE_SHEET_PRICE = 2004;
+const sinkStoneBoard: CostingMasterItem = {
+  id: SINK_STONE_BOARD_ID, sNo: 0, elevation: "SINK STONE CARCASS",
+  materialDescription: "STONE SINK CABINET BOARD 2440X1220X18",
+  remark: "Sink cabinets only", unit: "sheet", sqft: 32,
+  price: SINK_STONE_SHEET_PRICE, sqftPrice: SINK_STONE_SHEET_PRICE / 32,
+  group: "Carcass/ Shelf Material", subgroup: "Stone sink board", type: "PRELAM",
+  brand: "", thicknessMm: 18, rateBasis: "SQFT", currentRate: SINK_STONE_SHEET_PRICE / 32,
+};
 export const COSTING_MASTER: CostingMaster = {
   ...importedMaster,
-  items: importedMaster.items.map((item) => ({
+  items: [...importedMaster.items.map((item) => ({
     ...item,
     sourceMaterialDescription: item.materialDescription,
     // Existing BOM and costing consumers use this as the displayed item text.
     materialDescription: item.itemName?.trim() || item.materialDescription,
-  })),
+  })), sinkStoneBoard],
 };
 export const COSTING_ITEMS = COSTING_MASTER.items;
 
