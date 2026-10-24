@@ -1792,6 +1792,8 @@ interface AccessoryRow {
   lengthMeters?: number;
   /** Number of pieces or runs, always a whole number. */
   qty: number;
+  /** Cabinet count retained when several J cuts form one elevation run. */
+  fixingPlateCabinetQty?: number;
   elevation: string;
   straight: number; // skirting connectors
   lconn: number;
@@ -1918,6 +1920,13 @@ const HANDLE_HARDWARE = {
 function requiredHandleHardware(kind: "c-handle" | "j-handle") {
   return HANDLE_HARDWARE[kind].map((id) => COSTING_ITEMS.find((item) => item.id === id)!);
 }
+function handleHardwareQuantities(row: AccessoryRow) {
+  if (row.kind !== "c-handle" && row.kind !== "j-handle") return [];
+  const [leftCap, rightCap, fixingPlate] = requiredHandleHardware(row.kind);
+  const capQty = row.kind === "j-handle" && row.fixingPlateCabinetQty !== undefined ? 1 : row.qty;
+  const plateQty = 2 * (row.fixingPlateCabinetQty ?? row.qty);
+  return [{ item: leftCap, qty: capQty }, { item: rightCap, qty: capQty }, { item: fixingPlate, qty: plateQty }];
+}
 function accessoryMeters(row: AccessoryRow): number {
   return Math.max(0, Number(row.size) || 0) * Math.max(0, row.qty);
 }
@@ -1943,9 +1952,12 @@ function mergeJHandleRuns(rows: AccessoryRow[]): AccessoryRow[] {
   rows.forEach((row) => {
     if (row.kind !== "j-handle") { result.push(row); return; }
     const previous = merged.get(row.elevation);
-    if (previous) previous.size = (accessoryMeters(previous) + accessoryMeters(row)).toFixed(3);
+    if (previous) {
+      previous.size = (accessoryMeters(previous) + accessoryMeters(row)).toFixed(3);
+      previous.fixingPlateCabinetQty = (previous.fixingPlateCabinetQty ?? 0) + row.qty;
+    }
     else {
-      const run = { ...row, size: accessoryMeters(row).toFixed(3), qty: 1 };
+      const run = { ...row, size: accessoryMeters(row).toFixed(3), qty: 1, fixingPlateCabinetQty: row.qty };
       merged.set(row.elevation, run);
       result.push(run);
     }
@@ -2053,10 +2065,10 @@ function buildAccessoryRows(accs: AccessoryRow[], project: ProjectLine[], so: st
       out.push({ SO: so, "Carcass Items": carcass, Accessory: ACC_LABEL[a.kind], Selected: "yes",
         "Item Name": item.materialDescription, Size: `${a.size} m × ${a.qty}`, Elevation: a.elevation,
         Total: meters, "Actual Qty": meters, "Zoho Item ID": item.id });
-      requiredHandleHardware(a.kind).forEach((hardware) => out.push({
-        SO: so, "Carcass Items": carcass, Accessory: `${ACC_LABEL[a.kind]} hardware — quantity pending`, Selected: "yes",
+      handleHardwareQuantities(a).forEach(({ item: hardware, qty }) => out.push({
+        SO: so, "Carcass Items": carcass, Accessory: `${ACC_LABEL[a.kind]} hardware`, Selected: "yes",
         "Item Name": hardware.materialDescription, Size: "Pcs", Elevation: a.elevation,
-        Total: "", "Actual Qty": "", "Zoho Item ID": hardware.id,
+        Total: qty, "Actual Qty": qty, "Zoho Item ID": hardware.id,
       }));
     } else {
       const q = a.qty;
@@ -2107,7 +2119,7 @@ function mergeAccessoryExportRows(rows: AccessoryExportRow[]): AccessoryExportRo
       typeof left === "number" && typeof right === "number" ? r3(left + right) : left === "" ? right : right === "" ? left : left;
     previous.Total = sum(previous.Total, row.Total);
     previous["Actual Qty"] = sum(previous["Actual Qty"], row["Actual Qty"]);
-    if (row.Size && row.Total !== "") previous.Size = previous.Size ? `${previous.Size} + ${row.Size}` : row.Size;
+    if (row.Size && row.Size !== "Pcs" && row.Total !== "") previous.Size = previous.Size ? `${previous.Size} + ${row.Size}` : row.Size;
   }
   return [...grouped.values()];
 }
@@ -3124,8 +3136,8 @@ function computeCosting(
       const item = HANDLE_ITEMS[accessory.kind];
       const meters = accessoryMeters(accessory);
       addAccessoryDetail(item.materialDescription, `${accessory.size}m × ${accessory.qty} handle pieces`, meters, meters, "RMT");
-      requiredHandleHardware(accessory.kind).forEach((hardware) =>
-        unpriced.add(`${hardware.materialDescription} (quantity pending)`));
+      handleHardwareQuantities(accessory).forEach(({ item: hardware, qty }) =>
+        addAccessoryDetail(hardware.materialDescription, `${qty} pcs for ${accessory.kind} handles`, qty, qty, "nos"));
     } else {
       const qty = accessory.qty;
       const netM = accessoryMeters(accessory);
@@ -3147,10 +3159,14 @@ function computeCosting(
         previous.qty += qty;
         previous.cost += cost;
         previous.unitCost = previous.qty ? previous.cost / previous.qty : 0;
-        previous.details[0].netQty += details[0].netQty;
-        previous.details[0].billableQty += details[0].billableQty;
-        previous.details[0].amount += details[0].amount;
-        previous.details[0].specification += ` + ${details[0].specification}`;
+        details.forEach((detail) => {
+          const matching = previous.details.find((saved) => saved.itemCode === detail.itemCode && saved.rate === detail.rate && saved.uom === detail.uom);
+          if (!matching) { previous.details.push(detail); return; }
+          matching.netQty += detail.netQty;
+          matching.billableQty += detail.billableQty;
+          matching.amount += detail.amount;
+          if (detail.uom === "RMT") matching.specification += ` + ${detail.specification}`;
+        });
       } else {
         const line = { label, qty, unitCost: qty ? cost / qty : cost, cost, details };
         handleCostLines.set(key, line);
@@ -4564,11 +4580,12 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
                       </div>];
                   })} />
 
-                <h4>Wastage % (fixed defaults)</h4>
+                <h4>Wastage % (editable)</h4>
                 <div className="g3" style={{ maxWidth: 420 }}>
                   {(["carcass", "shutter", "profile"] as const).map((k) => (
                     <label key={k} style={{ fontSize: 11, color: "var(--mut)" }}>{k}
-                      <input type="number" value={waste[k]} readOnly />
+                      <input type="number" min={0} max={100} step="0.1" value={waste[k]}
+                        onChange={(event) => setWaste((current) => ({ ...current, [k]: Math.min(100, Math.max(0, Number(event.target.value) || 0)) }))} />
                     </label>
                   ))}
                 </div>

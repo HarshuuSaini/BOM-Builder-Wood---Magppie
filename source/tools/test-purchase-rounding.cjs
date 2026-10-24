@@ -10,7 +10,7 @@ Module._resolveFilename = function (name, ...args) {
 };
 for (const ext of ['.ts', '.tsx']) require.extensions[ext] = (mod, file) => {
   let source = fs.readFileSync(file, 'utf8').replace(/import\.meta\.url/g, '"file:///test"');
-  if (file.endsWith('WoodBomBuilder.tsx')) source += '\nexport {computeCosting, buildBoardTotals, buildModel, blindOpeningError, cabinetFillers, cabinetAccessories, buildExtrasBom, calculatedAccessories, buildMasterAccessoryRows, buildAccessoryRows, restoreAccessoryRow, restoreLegacyBom, restoreProjectSetup, kitchenCostingSnapshot, countertopMaterialItem, countertopMaterialId, counterPlyAreaSqft, DEFAULT_RATES, DEFAULT_LAMINATE_PRICES};';
+  if (file.endsWith('WoodBomBuilder.tsx')) source += '\nexport {computeCosting, buildBoardTotals, buildModel, blindOpeningError, cabinetFillers, cabinetAccessories, buildExtrasBom, calculatedAccessories, mergeJHandleRuns, mergeAccessoryExportRows, buildMasterAccessoryRows, buildAccessoryRows, restoreAccessoryRow, restoreLegacyBom, restoreProjectSetup, projectSetupRows, kitchenCostingSnapshot, countertopMaterialItem, countertopMaterialId, counterPlyAreaSqft, DEFAULT_RATES, DEFAULT_LAMINATE_PRICES};';
   mod._compile(ts.transpileModule(source, { compilerOptions: {
     module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true, target: ts.ScriptTarget.ES2020,
   } }).outputText, file);
@@ -358,6 +358,13 @@ for (const [savedRates, expectedRate] of [[{}, 12.6], [{ 'Counter Ply': 15.75 },
   assert(purchasedProcessing, 'Imported Counter Ply processing must appear in the costing snapshot');
   near(purchasedProcessing.amount, processing.amount);
 }
+const editableWaste = { carcass: 7.5, shutter: 12, profile: 5 };
+const restoredWaste = b.restoreProjectSetup(b.projectSetupRows({
+  name: 'Editable waste kitchen', project: [], fillers: [], visiblePanels: [], countertops: [],
+  accessories: [], masterAccessories: [], waste: editableWaste,
+  pricing: b.restoreProjectSetup(importedCounterRows({})).pricing, rawSelections: [],
+}));
+assert.deepEqual(restoredWaste.waste, editableWaste);
 const otherRows = [
   { id: 1, kind: 'elenor', size: '1.75', qty: 3, elevation: 'AA', straight: 0, lconn: 0, driver: '' },
   { id: 2, kind: 'c-handle', size: '0.375', qty: 2, elevation: 'AA', straight: 0, lconn: 0, driver: '' },
@@ -379,12 +386,37 @@ near(otherExport.find(r => r['Item Name'] === 'PVC SKIRTING PROFILE 100MM').Tota
 assert.equal(otherExport.find(r => r['Item Name'] === 'PVC SKIRTING PROFILE 100MM').Size, '3.2 m × 2');
 near(otherExport.find(r => r['Item Name'].includes('LIGHT EXTENSION WIRE')).Total, 6);
 near(otherExport.find(r => r['Zoho Item ID'] === 'KITCHEN-050')['Actual Qty'], 0.75);
-const pendingHardware = otherExport.filter(r => r.Accessory.includes('quantity pending'));
-assert.equal(pendingHardware.length, 6);
-assert(pendingHardware.every(r => r.Total === '' && r['Actual Qty'] === ''));
-assert.deepEqual(pendingHardware.map(r => r['Zoho Item ID']), ['HARDWARE-022', 'HARDWARE-023', 'HARDWARE-026', 'HARDWARE-024', 'HARDWARE-025', 'HARDWARE-026']);
-assert.equal(otherCost.unpriced.filter(r => r.includes('(quantity pending)')).length, 5);
-assert(!otherCost.purchases.some(r => pendingHardware.some(h => h['Zoho Item ID'] === r.itemCode)));
+const handleHardware = otherExport.filter(r => r['Zoho Item ID'].startsWith('HARDWARE-02'));
+assert.deepEqual(handleHardware.map(r => [r['Zoho Item ID'], r['Actual Qty']]),
+  [['HARDWARE-022', 2], ['HARDWARE-023', 2], ['HARDWARE-026', 4],
+   ['HARDWARE-024', 2], ['HARDWARE-025', 2], ['HARDWARE-026', 4]]);
+assert.equal(otherCost.unpriced.filter(r => r.includes('(quantity pending)')).length, 0);
+for (const [id, qty] of [['HARDWARE-022', 2], ['HARDWARE-023', 2], ['HARDWARE-024', 2],
+  ['HARDWARE-025', 2], ['HARDWARE-026', 8]]) {
+  const purchase = otherCost.purchases.find(r => r.itemCode === id);
+  assert(purchase, `Missing priced handle hardware ${id}`);
+  near(purchase.quantity, qty);
+  near(purchase.rate, id === 'HARDWARE-026' ? 6 : 8);
+  near(purchase.amount, qty * purchase.rate);
+}
+const automaticHandleRows = [
+  { ...otherRows[2], id: -1, size: '0.6', qty: 2, automaticKey: 'cabinet:1:j-handle' },
+  { ...otherRows[2], id: -2, size: '0.45', qty: 1, automaticKey: 'cabinet:2:j-handle' },
+  { ...otherRows[1], id: -3, size: '0.45', qty: 1, automaticKey: 'cabinet:2:c-handle' },
+];
+const mergedHandles = b.mergeJHandleRuns(automaticHandleRows);
+assert.equal(mergedHandles[0].qty, 1);
+assert.equal(mergedHandles[0].fixingPlateCabinetQty, 3);
+const mergedExport = b.mergeAccessoryExportRows(b.buildAccessoryRows(mergedHandles, [], ''));
+const hardwareQty = id => mergedExport.find(row => row['Zoho Item ID'] === id)['Actual Qty'];
+assert.equal(hardwareQty('HARDWARE-024'), 1);
+assert.equal(hardwareQty('HARDWARE-025'), 1);
+assert.equal(hardwareQty('HARDWARE-022'), 1);
+assert.equal(hardwareQty('HARDWARE-023'), 1);
+assert.equal(hardwareQty('HARDWARE-026'), 8);
+const mergedHandleCost = b.computeCosting([], [], [], [], [], mergedHandles, [], config.shType, config.shType,
+  b.DEFAULT_RATES, { carcass: 10, shutter: 20, profile: 20 }, {});
+near(mergedHandleCost.purchases.find(row => row.itemCode === 'HARDWARE-026').quantity, 8);
 const legacyLightRow = b.restoreAccessoryRow({...otherRows[0], lengthMeters: undefined, size: '1000', qty: 2}, 1, []);
 assert.equal(legacyLightRow.size, '1');
 assert.equal(legacyLightRow.qty, 2);
