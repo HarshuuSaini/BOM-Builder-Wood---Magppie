@@ -1,3 +1,5 @@
+import { COSTING_ITEMS, SINK_STONE_BOARD_ID, SINK_STONE_SLAB_SQFT } from "@/lib/costing";
+
 export const KITCHEN_ZONES = ["Base", "Sink", "Wall", "Tall", "Loft", "Mid"] as const;
 export type KitchenZone = (typeof KITCHEN_ZONES)[number];
 export type MaterialSource = KitchenZone | "All" | "Own";
@@ -27,33 +29,88 @@ export type MaterialChoice = {
   frontSheetPrice: string;
   backSheetPrice: string;
   boardSheetPrice?: string;
+  boardFinish?: string;
+  slabSqft?: string;
+  slabLengthMm?: string;
+  slabWidthMm?: string;
 };
 
+export type EdgeBandChoice = {
+  finish: string;
+  carcassPricePerRmt: string;
+  shutterPricePerRmt: string;
+  byMaterial?: Partial<Record<MaterialField, { finish: string; pricePerRmt: string }>>;
+};
 
-export type BoardPriceOverride = { itemId: string; sheetPrice: string };
+export function edgeBandForMaterial(choice: EdgeBandChoice | undefined, field: MaterialField) {
+  return choice?.byMaterial?.[field] ?? {
+    finish: choice?.finish ?? "White 0.8mm",
+    pricePerRmt: field === "shutter" || field === "visible"
+      ? choice?.shutterPricePerRmt ?? "10.3" : choice?.carcassPricePerRmt ?? "6",
+  };
+}
+
+
+export type BoardPriceOverride = { itemId: string; sheetPrice: string; finish?: string; slabSqft?: string; slabLengthMm?: string; slabWidthMm?: string };
 export type BoardPriceOverrides = Partial<Record<MaterialField, BoardPriceOverride>>;
 
 export function validBoardSheetPrice(value: unknown): value is string {
   return typeof value === "string" && /^(?:\d{1,7})(?:\.\d{1,6})?$/.test(value) && Number(value) <= 1000000;
 }
 
+export function stoneSlabSqft(value: unknown): number {
+  const number = Number(value);
+  return typeof value === "string" && Number.isFinite(number) && number > 0 && number <= 1000 ? number : SINK_STONE_SLAB_SQFT;
+}
+
+export function stoneSlabAreaFromDimensions(lengthMm: number, widthMm: number): string {
+  return String(Math.max(1, Math.round(lengthMm * widthMm / 92903.04)));
+}
+
+export function validStoneDimension(value: unknown): value is string {
+  return typeof value === "string" && /^\d{1,5}$/.test(value) && Number(value) > 0 && Number(value) <= 10000;
+}
+
 export function boardPricesFromMaterials(choices?: ZoneMaterials): BoardPriceOverrides {
   return Object.fromEntries(MATERIAL_FIELDS.flatMap((field) => {
     const choice = choices?.[field];
-    return choice && validBoardSheetPrice(choice.boardSheetPrice)
-      ? [[field, { itemId: choice.itemId, sheetPrice: choice.boardSheetPrice }]] : [];
+    if (!choice) return [];
+    const sheetPrice = validBoardSheetPrice(choice.boardSheetPrice) ? choice.boardSheetPrice
+      : choice.boardFinish || choice.slabSqft ? String((COSTING_ITEMS.find((item) => item.id === choice.itemId)?.currentRate ?? 0) *
+          (choice.itemId === SINK_STONE_BOARD_ID ? SINK_STONE_SLAB_SQFT : 32)) : undefined;
+    return sheetPrice !== undefined
+      ? [[field, { itemId: choice.itemId, sheetPrice,
+        ...(choice.boardFinish ? { finish: choice.boardFinish } : {}),
+        ...(choice.itemId === SINK_STONE_BOARD_ID && choice.slabSqft ? { slabSqft: choice.slabSqft } : {}),
+        ...(choice.itemId === SINK_STONE_BOARD_ID && choice.slabLengthMm ? { slabLengthMm: choice.slabLengthMm } : {}),
+        ...(choice.itemId === SINK_STONE_BOARD_ID && choice.slabWidthMm ? { slabWidthMm: choice.slabWidthMm } : {}) }]] : [];
   }));
+}
+
+export function selectedBoardFinish(itemId: string, override: BoardPriceOverride | undefined, fallback: string): string {
+  return override?.itemId === itemId && override.finish?.trim() ? override.finish.trim()
+    : itemId === SINK_STONE_BOARD_ID ? "Pearl White HG" : fallback;
 }
 
 export function selectedBoardRate(item: { id: string; type: string; currentRate: number }, override?: BoardPriceOverride): number {
   return /^(?:prelam|postlam)$/i.test(item.type) && override?.itemId === item.id && validBoardSheetPrice(override.sheetPrice)
-    ? Number(override.sheetPrice) / 32 : item.currentRate;
+    ? Number(override.sheetPrice) / (item.id === SINK_STONE_BOARD_ID ? stoneSlabSqft(override.slabSqft) : 32) : item.currentRate;
 }
 
 export type ZoneMaterials = Record<MaterialField, MaterialChoice> & {
   /** Glass-shutter cabinets use the same carcass board, but may laminate its faces differently. */
   glassCarcassLaminate?: { frontSheetPrice: string; backSheetPrice: string };
+  edgeBand?: EdgeBandChoice;
 };
+
+export type SpecialWallMaterials = {
+  carcass: MaterialChoice;
+  back: MaterialChoice;
+  visible: MaterialChoice;
+  glass?: { itemId: string; pricePerSqft: string };
+  edgeBand?: EdgeBandChoice;
+};
+export type SpecialWallSource = "Wall" | "Own";
 
 const GLASS_CABINET_FAMILIES = new Set(["WGL", "SHFG", "DPNG", "PPNG", "BLNG", "LOWSG", "LGL"]);
 export const isGlassCabinetFamily = (family?: string) => !!family && GLASS_CABINET_FAMILIES.has(family);
@@ -88,7 +145,21 @@ export type KitchenMaterials = Record<KitchenZone, ZoneMaterials> & {
   _hingeChoice?: string;
   _drawerBrand?: string;
   _handleDefaults?: HandleDefaults;
+  _wallOpen?: SpecialWallMaterials;
+  _wallGlass?: SpecialWallMaterials;
+  _wallSpecialSources?: { open: SpecialWallSource; glass: SpecialWallSource };
+  _sinkStoneFullBack?: boolean;
 };
+
+export function materialChoicesForCabinet(materials: KitchenMaterials | undefined, code: string, family: string): ZoneMaterials | undefined {
+  if (!materials) return undefined;
+  const zone = materials[kitchenZoneForCode(code, family)] ?? materials.Base;
+  const special = code === "WC" && family === "WOP" ? materials._wallOpen
+    : code === "WC" && family === "WGL" ? materials._wallGlass : undefined;
+  return special ? { ...zone, carcass: special.carcass, back: special.back, visible: special.visible,
+    edgeBand: special.edgeBand ?? zone.edgeBand,
+    glassCarcassLaminate: undefined } : zone;
+}
 
 export function kitchenZoneForCode(code: string, family?: string): KitchenZone {
   if (/^(BC|BCL|BB|BBL)$/.test(code) && family === "SK") return "Sink";

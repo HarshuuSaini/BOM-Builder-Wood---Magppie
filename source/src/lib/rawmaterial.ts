@@ -14,6 +14,7 @@ import type {
 } from "@/lib/types";
 import { isComposite, collectMappedItemIds, getCfValue } from "@/lib/stock";
 import { normalizePartOrPanelName } from "@/lib/naming";
+import { quantityWithWaste } from "@/lib/wastage";
 
 /* ------------------------------------------------------------------ */
 /*  Zoho matching tokens                                               */
@@ -506,7 +507,7 @@ export async function resolveRawMaterials(
         const panels = await findAllBoardsInBomChain(itemId, soQty, itemsCache, compositesCache);
         if (panels.length > 0) {
           for (const panel of panels) {
-            const sqft = panel.quantity * (1 + panel.wastePercent / 100);
+            const sqft = quantityWithWaste(panel.quantity, panel.wastePercent);
             totalSqft += sqft;
           }
         } else {
@@ -514,7 +515,7 @@ export async function resolveRawMaterials(
           const panelH = parseFloat(getCfValue(item, "cf_height")) || 0;
           const panelW = parseFloat(getCfValue(item, "cf_width")) || 0;
           const waste = parseFloat(getCfValue(item, "cf_waste_percentage")) || 0;
-          const sqft = (panelH * panelW * (1 + waste / 100)) / (304.8 * 304.8);
+          const sqft = quantityWithWaste(panelH * panelW / (304.8 * 304.8), waste);
           totalSqft = sqft * soQty;
         }
 
@@ -580,7 +581,7 @@ export async function resolveRawMaterials(
         );
         const key = `${profileCategory}|${profileCode}|${finish}|${height}`.toLowerCase();
         const waste = parseFloat(getCfValue(item, "cf_waste_percentage")) || 0;
-        const length = (parseFloat(height) || 0) * soQty * (1 + waste / 100);
+        const length = quantityWithWaste((parseFloat(height) || 0) * soQty, waste);
 
         const result = await findBoardInBomChain(itemId, soQty, itemsCache, compositesCache);
 

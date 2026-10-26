@@ -1,6 +1,7 @@
 export type PurchaseDetail = {
   category: string; itemCode: string; item: string;
   billableQty: number; uom: string; rate: number; amount: number;
+  purchaseAreaSqft?: number;
   allocatedBillableQty?: number;
 };
 
@@ -31,12 +32,12 @@ function purchaseBasis(detail: PurchaseDetail) {
   const processing = /processing$/i.test(detail.category);
   const sheet = detail.uom === "sqft" && !processing &&
     (/board|laminate|counter ply/i.test(detail.category)) && !/glass/i.test(detail.category);
-  const divisor = sheet ? 32 : detail.uom === "gm" ? 1000 : 1;
-  const unit = sheet ? "sheet" : detail.uom === "gm" ? "kg" : detail.uom;
+  const divisor = sheet ? detail.purchaseAreaSqft ?? 32 : detail.uom === "gm" ? 1000 : 1;
+  const unit = sheet ? detail.purchaseAreaSqft !== undefined ? "slab" : "sheet" : detail.uom === "gm" ? "kg" : detail.uom;
   const rate = Number((detail.rate * divisor).toPrecision(14));
   // Categories and waste percentages do not split the same purchased item.
   // Distinct quoted prices remain separate (e.g. different laminate selections).
-  const identity = detail.itemCode === "—" || detail.itemCode.startsWith("CUSTOM")
+  const identity = detail.itemCode === "—" || detail.itemCode.startsWith("CUSTOM") || /board$/i.test(detail.category)
     ? `${detail.itemCode}|${detail.item}` : detail.itemCode;
   const key = JSON.stringify([identity, unit, rate, processing]);
   // Whole-unit rounding stays disabled; round consolidated quantities to two decimals.

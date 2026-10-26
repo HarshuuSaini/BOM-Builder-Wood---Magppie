@@ -20,14 +20,23 @@ export type CostingMaster = {
 const importedMaster = masterJson as CostingMaster;
 export const SINK_STONE_BOARD_ID = "KITCHEN-SINK-STONE-18";
 export const SINK_STONE_SHEET_PRICE = 2004;
+export const SINK_STONE_SLAB_SQFT = 21;
 const sinkStoneBoard: CostingMasterItem = {
   id: SINK_STONE_BOARD_ID, sNo: 0, elevation: "SINK STONE CARCASS",
-  materialDescription: "STONE SINK CABINET BOARD 2440X1220X18",
-  remark: "Sink cabinets only", unit: "sheet", sqft: 32,
-  price: SINK_STONE_SHEET_PRICE, sqftPrice: SINK_STONE_SHEET_PRICE / 32,
-  group: "Carcass/ Shelf Material", subgroup: "Stone sink board", type: "PRELAM",
-  brand: "", thicknessMm: 18, rateBasis: "SQFT", currentRate: SINK_STONE_SHEET_PRICE / 32,
+  materialDescription: "STONE 15MM POLISHED GLAZED",
+  remark: "Default Pearl White HG IBIS · 2400×800 mm · 21 sqft slab", unit: "slab", sqft: SINK_STONE_SLAB_SQFT,
+  price: SINK_STONE_SHEET_PRICE, sqftPrice: SINK_STONE_SHEET_PRICE / SINK_STONE_SLAB_SQFT,
+  group: "Carcass/ Shelf Material", subgroup: "Stone sink slab", type: "PRELAM",
+  brand: "IBIS", thicknessMm: 15, rateBasis: "SQFT", currentRate: SINK_STONE_SHEET_PRICE / SINK_STONE_SLAB_SQFT,
 };
+const stoneSinkAdhesives: CostingMasterItem[] = [
+  { id: "KITCHEN-SINK-BONDTITE", sNo: 0, elevation: "SINK CARCASS", materialDescription: "GLUE BONDTITE FAST & CLEAR FOR STONE XX AGG",
+    remark: "0.05 pcs per stone sink unit", unit: "Pcs", sqft: null, price: 2440, sqftPrice: null,
+    group: "Consumable", subgroup: "Stone pasting", type: "BONDTITE", brand: "", thicknessMm: null, rateBasis: "PCS", currentRate: 2440 },
+  { id: "KITCHEN-SINK-SILICONE", sNo: 0, elevation: "SINK CARCASS", materialDescription: "GLUE SILICONE XX TRANSPERENT DOWSIL 789 AGG",
+    remark: "0.5 pcs per stone sink unit", unit: "Pcs", sqft: null, price: 255, sqftPrice: null,
+    group: "Consumable", subgroup: "Stone pasting", type: "SILICONE", brand: "", thicknessMm: null, rateBasis: "PCS", currentRate: 255 },
+];
 export const COSTING_MASTER: CostingMaster = {
   ...importedMaster,
   items: [...importedMaster.items.map((item) => ({
@@ -35,7 +44,7 @@ export const COSTING_MASTER: CostingMaster = {
     sourceMaterialDescription: item.materialDescription,
     // Existing BOM and costing consumers use this as the displayed item text.
     materialDescription: item.itemName?.trim() || item.materialDescription,
-  })), sinkStoneBoard],
+  })), sinkStoneBoard, ...stoneSinkAdhesives],
 };
 export const COSTING_ITEMS = COSTING_MASTER.items;
 

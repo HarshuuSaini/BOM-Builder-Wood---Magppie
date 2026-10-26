@@ -8,12 +8,16 @@ const cache = new Map();
 function load(name) {
   if (cache.has(name)) return cache.get(name);
   const code = ts.transpileModule(fs.readFileSync(path.join(lib, `${name}.ts`), "utf8"), {
-    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true },
   }).outputText;
   const module = { exports: {} };
   cache.set(name, module.exports);
   new Function("require", "module", "exports", code)(
-    (id) => id === "./kitchen-materials" ? load("kitchen-materials") : require(id), module, module.exports,
+    (id) => id === "./kitchen-materials" ? load("kitchen-materials")
+      : id === "./costing" ? load("costing")
+      : id === "@/lib/costing" ? load("costing")
+      : id === "@/data/costing_master.json" ? require(path.join(__dirname, "../src/data/costing_master.json"))
+      : require(id), module, module.exports,
   );
   cache.set(name, module.exports);
   return module.exports;
@@ -25,7 +29,7 @@ const cabinet = {
   drawerBoardId: "KITCHEN-023", shType: "KITCHEN-008", visibleSideMaterialId: "KITCHEN-008",
   hingeChoice: "Hafele Soft Close", drawerModel: "Hettich", handle: "HANDLE", handlePrice: "150", handleBrand: "",
   boardPrices: {
-    back: { itemId: "KITCHEN-031", sheetPrice: "1121.28" },
+    back: { itemId: "KITCHEN-031", sheetPrice: "1121.28", finish: "Walnut" },
     drawer: { itemId: "KITCHEN-023", sheetPrice: "2112" },
   },
   carcassLamFrontSheetPrice: "550", carcassLamBackSheetPrice: "550",
@@ -37,6 +41,7 @@ const cabinet = {
 const { materials, conflictingZones } = materialsFromImportedCabinets([cabinet]);
 assert.equal(materials.Base.carcass.itemId, "KITCHEN-001");
 assert.equal(materials.Base.back.itemId, "KITCHEN-031");
+assert.equal(materials.Base.back.boardFinish, "Walnut");
 assert.equal(materials.Base.drawer.itemId, "KITCHEN-023");
 assert.equal(materials.Base.shutter.itemId, "KITCHEN-008");
 assert.equal(materials.Base.back.boardSheetPrice, "1121.28");
@@ -71,4 +76,35 @@ const mixedHardware = materialsFromImportedCabinets([
 assert.deepEqual(mixedHardware.conflictingHandleZones, ["Wall"]);
 assert.equal(mixedHardware.conflictingHinges, true);
 assert.equal(mixedHardware.conflictingDrawerBrands, true);
+const special = materialsFromImportedCabinets([
+  { ...cabinet, zk: "WC", fk: "WOP", board: "KITCHEN-014" },
+  { ...cabinet, zk: "WC", fk: "WGL", board: "KITCHEN-014", glassType: "KITCHEN-GLASS-5-CLEAR", glassPricePerSqft: "210" },
+  { ...cabinet, zk: "BC", fk: "SK", sinkStoneFullBack: false,
+    edgeBand: { finish: "Oak 0.8mm", carcassPricePerRmt: "8", shutterPricePerRmt: "14.2" } },
+], materials);
+assert.equal(special.materials.Wall.carcass.itemId, materials.Wall.carcass.itemId);
+assert.equal(special.materials._wallOpen.carcass.itemId, "KITCHEN-014");
+assert.equal(special.materials._wallGlass.glass.pricePerSqft, "210");
+assert.equal(special.materials._sinkStoneFullBack, false);
+assert.equal(special.materials.Sink.edgeBand.finish, "Oak 0.8mm");
+const olderOpen = materialsFromImportedCabinets([
+  { ...cabinet, zk: "WC", fk: "WOP", board: "KITCHEN-007", shType: "KITCHEN-014" },
+  { ...cabinet, zk: "WC", fk: "WGL", board: "KITCHEN-007", shType: "KITCHEN-014", glassType: "KITCHEN-GLASS-5-CLEAR", glassPricePerSqft: "210" },
+], materials);
+assert.equal(olderOpen.materials._wallOpen.carcass.itemId, materials.Wall.shutter.itemId);
+assert.equal(olderOpen.materials._wallGlass.carcass.itemId, materials.Wall.shutter.itemId);
+assert.equal(olderOpen.materials._wallGlass.glass.pricePerSqft, "210");
+const missingGlass = materialsFromImportedCabinets([
+  { ...cabinet, zk: "WC", fk: "WGL", board: "KITCHEN-007", shType: "KITCHEN-014", glassType: undefined, glassPricePerSqft: undefined },
+]);
+assert.equal(missingGlass.materials._wallGlass.carcass.itemId, missingGlass.materials.Wall.shutter.itemId);
+assert.equal(missingGlass.materials._wallGlass.glass.itemId, "KITCHEN-GLASS-5-TINTED");
+const missingBoardSelections = materialsFromImportedCabinets([{ ...cabinet,
+  board: undefined, backBoardId: undefined, drawerBoardId: undefined, shType: undefined,
+  visibleSideMaterialId: undefined, carcassLamFrontSheetPrice: undefined,
+  carcassLamBackSheetPrice: undefined, shutterLamFrontSheetPrice: undefined,
+}], materials);
+assert.equal(missingBoardSelections.materials.Base.carcass.itemId, materials.Base.carcass.itemId);
+assert.equal(missingBoardSelections.materials.Base.shutter.itemId, materials.Base.shutter.itemId);
+assert.equal(missingBoardSelections.materials.Base.carcass.frontSheetPrice, materials.Base.carcass.frontSheetPrice);
 console.log("Imported material selection: OK");

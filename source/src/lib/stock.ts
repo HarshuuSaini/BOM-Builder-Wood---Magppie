@@ -9,6 +9,7 @@ import type {
   ZohoCustomField,
 } from "./types";
 import { normalizePartOrPanelName } from "./naming";
+import { quantityWithWaste } from "./wastage";
 
 const MAX_BOM_DEPTH = 6;
 
@@ -240,7 +241,7 @@ function expandComposite(
     const cf = extractItemCustomFields(masterDetail);
     const ownWaste = cf.cfWastePercent;
     const displayWaste = childIsComposite ? 0 : ownWaste > 0 ? ownWaste : parentWastePct;
-    const actualQty = childIsComposite ? totalQty : totalQty + totalQty * (displayWaste / 100);
+    const actualQty = childIsComposite ? totalQty : quantityWithWaste(totalQty, displayWaste);
 
     const rawStock = getRawStock(masterDetail ?? child);
     if (ctx.globalConsumed[childId] === undefined) ctx.globalConsumed[childId] = 0;
