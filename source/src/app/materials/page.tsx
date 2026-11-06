@@ -1,7 +1,7 @@
 import { requireUser, userSession, sessionMaterials, isOpenCostingAccess } from "@/lib/user-session";
 import { COSTING_ITEMS, SINK_STONE_BOARD_ID, SINK_STONE_SLAB_SQFT } from "@/lib/costing";
 import { MaterialSelection } from "@/components/MaterialSelection";
-import { isLocalCostingsEnabled } from "@/lib/local-costing-store";
+import { costingPortalEnabled as isLocalCostingsEnabled } from "@/lib/costing-storage-mode";
 
 export default async function MaterialsPage({ searchParams }: { searchParams: Promise<{ new?: string }> }) {
   await requireUser();

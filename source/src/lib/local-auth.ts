@@ -22,10 +22,10 @@ export function configuredAccounts(env: AuthEnvironment): Account[] {
   if (validCredentials(env.USER_LOGIN_NAME, env.USER_LOGIN_PASSWORD)) {
     accounts.push({
       username: env.USER_LOGIN_NAME!, password: env.USER_LOGIN_PASSWORD!, source: "primary",
-      role: env.NODE_ENV === "development" && env.USER_LOGIN_ROLE === "admin" ? "admin" : "user",
+      role: env.USER_LOGIN_ROLE === "admin" ? "admin" : "user",
     });
   }
-  // Local accounts and preview administrator privileges must never activate outside development.
+  // Extra localhost accounts never activate outside development. The primary account's role is explicitly configured server-side.
   if (env.NODE_ENV !== "development" || !env.USER_LOCAL_ACCOUNTS) return accounts;
   try {
     const entries: unknown = JSON.parse(env.USER_LOCAL_ACCOUNTS);

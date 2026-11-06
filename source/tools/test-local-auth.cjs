@@ -41,7 +41,8 @@ assert.equal(auth.authenticateAccount({ NODE_ENV: "development", USER_LOCAL_ACCO
 for (const mode of ["production", "test", undefined]) {
   const production = { ...env, NODE_ENV: mode };
   assert.equal(auth.authenticateAccount(production, "Sudha@31", "Sudha@31"), null);
-  assert.equal(auth.authenticateAccount(production, "preview", "preview-test-password").role, "user");
+  assert.equal(auth.authenticateAccount(production, "preview", "preview-test-password").role, "admin");
+  assert.equal(auth.authenticateAccount({ ...production, USER_LOGIN_ROLE: undefined }, "preview", "preview-test-password").role, "user");
   assert.equal(auth.identityForSession(production, { user: sudha.username, credentialVersion: sudha.credentialVersion }), null);
 }
 for (const invalid of ["invalid JSON", "null", "{}", '[{"username":"bad","password":"p","role":"owner"}]', JSON.stringify([...localAccounts, localAccounts[0]]), JSON.stringify([{ ...localAccounts[0], username: "preview" }])]) {
@@ -95,6 +96,7 @@ async function main() {
   });
   const route = load("src/app/api/user-session/route.ts", env, {
     "@/lib/user-session": userSession,
+    "@/lib/costing-storage-mode": load("src/lib/costing-storage-mode.ts", env),
     "next/server": { NextResponse: { json: (body, init) => Response.json(body, init) } },
   });
   const request = (user, password, origin = "http://localhost:3000") => new Request("http://localhost:3000/api/user-session", {

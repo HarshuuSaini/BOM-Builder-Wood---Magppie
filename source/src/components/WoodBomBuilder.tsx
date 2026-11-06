@@ -1,4 +1,5 @@
 "use client";
+import { costingFetch as fetch } from "@/lib/costing-client";
 
 /**
  * WoodBomBuilder — plywood/carcass kitchens.

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { authenticateUserCredentials, currentIdentity, isOpenCostingAccess, userLoginConfigured, userSession } from "@/lib/user-session";
+import { costingPortalEnabled } from "@/lib/costing-storage-mode";
 
 export const dynamic = "force-dynamic";
 
@@ -22,7 +23,7 @@ export async function POST(request: Request) {
   if (isOpenCostingAccess()) {
     const identity = await currentIdentity();
     return NextResponse.json({ user: identity?.username, role: "admin", openAccess: true,
-      localCostingsEnabled: process.env.NODE_ENV === "development" && process.env.LOCAL_COSTINGS_ENABLED === "1" }, { headers: { "Cache-Control": "no-store" } });
+      localCostingsEnabled: costingPortalEnabled() }, { headers: { "Cache-Control": "no-store" } });
   }
   if (!process.env.USER_SESSION_SECRET || process.env.USER_SESSION_SECRET.length < 32 || !userLoginConfigured()) {
     return NextResponse.json({ error: "User login is not configured on this server." }, { status: 503 });
@@ -41,7 +42,7 @@ export async function POST(request: Request) {
   delete session.materialsCompressed;
   await session.save();
   return NextResponse.json({ user: identity.username, role: identity.role,
-    localCostingsEnabled: process.env.NODE_ENV === "development" && process.env.LOCAL_COSTINGS_ENABLED === "1",
+    localCostingsEnabled: costingPortalEnabled(),
   }, { headers: { "Cache-Control": "no-store" } });
 }
 

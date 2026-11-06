@@ -1,4 +1,6 @@
 "use client";
+import { costingFetch as fetch } from "@/lib/costing-client";
+import { browserCostingsEnabled } from "@/lib/costing-storage-mode";
 
 import { useEffect, useRef, useState } from "react";
 import { UserSignOut } from "@/components/UserSignOut";
@@ -29,6 +31,16 @@ export function CostingLibrary({ initial, actor }: { initial: SavedCostingSummar
   const detailsHeading = useRef<HTMLHeadingElement>(null);
   const comparisonPanel = useRef<HTMLDivElement>(null);
   const viewTrigger = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    if (!browserCostingsEnabled()) return;
+    let alive = true;
+    void fetch("/api/saved-costings").then(async response => {
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Could not load browser costings.");
+      if (alive) setCostings(result.costings);
+    }).catch(error => { if (alive) setError(error instanceof Error ? error.message : "Could not load browser costings."); });
+    return () => { alive = false; };
+  }, []);
   useEffect(() => { if (viewing) detailsHeading.current?.focus(); }, [viewing]);
   useEffect(() => { if (comparison) comparisonPanel.current?.focus(); }, [comparison]);
   const filtered = costings.filter((costing) => `${costing.name} ${costing.owner} ${costing.sourceName ?? ""}`.toLowerCase().includes(query.toLowerCase()));
@@ -127,14 +139,17 @@ export function CostingLibrary({ initial, actor }: { initial: SavedCostingSummar
       .costing-menu-item svg{flex-shrink:0;color:#708478}.costing-menu-item:hover,.costing-menu-item:focus-visible{background:#edf4ef;color:#15645a;outline:0}.costing-menu-item:focus-visible{box-shadow:inset 0 0 0 2px #15645a55}
       .costing-menu-item.costing-menu-danger{margin-top:6px;border-top:1px solid #e3eae5;border-radius:0 0 8px 8px;padding-top:13px;color:#a44135}.costing-menu-danger svg{color:inherit}.costing-menu-danger:hover,.costing-menu-danger:focus-visible{background:#fcf0ed;color:#993d31}
       .costing-menu-item:disabled{opacity:.45;cursor:wait}
+      .costing-print-link{display:inline-flex;align-items:center;padding:8px 12px;border:1px solid #c7d8cd;border-radius:8px;background:white;color:#24594b;font-weight:600;text-decoration:none;white-space:nowrap}
+      .costing-print-link:hover{background:#edf5ef;border-color:#8eaf9b}.costing-print-link:focus-visible{outline:2px solid #15645a;outline-offset:3px}
     `}</style>
     <section style={{ maxWidth: 1400, margin: "0 auto", background: "white", border: "1px solid #d9e0dc", borderRadius: 12, padding: 24 }}>
       <header style={{ display: "flex", justifyContent: "space-between", gap: 20, flexWrap: "wrap" }}>
         <div><h1 style={{ margin: "0 0 6px" }}>{actor.role === "admin" ? "Admin — saved costings" : "My saved costings"}</h1>
-          <p style={{ margin: 0, color: "#607168" }}>Signed in as {actor.username} · {actor.role === "admin" ? "All users’ costings" : "Your costings only"} · Saved on this computer</p></div>
+          <p style={{ margin: 0, color: "#607168" }}>Signed in as {actor.username} · {actor.role === "admin" ? "All users’ costings" : "Your costings only"} · {browserCostingsEnabled() ? "Saved in this browser on this computer" : "Saved on this computer"}</p></div>
         <nav style={{ display: "flex", alignItems: "center", gap: 18 }}><button type="button" disabled={!!busy} onClick={addCosting}>+ Add costing</button>{admin && <a href="/production">Production batch / Opti</a>}<a href="/materials">Material selection</a><a href="/builder">Builder</a><UserSignOut /></nav>
       </header>
       <p>Saved totals and rates remain as quoted. Edit costing restores its cabinets, materials, accessories and pricing settings.</p>
+      {browserCostingsEnabled() && <p>Kitchen data stays in this browser. Keep exported PDFs as backups; clearing site data removes saved kitchens. Other browsers and computers have separate lists.</p>}
       <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", margin: "16px 0" }}>
         <button disabled={!!busy} aria-pressed={!bin} onClick={() => void switchList(false)}>Active costings</button>
         <button disabled={!!busy} aria-pressed={bin} onClick={() => void switchList(true)}>Bin</button>
@@ -159,6 +174,7 @@ export function CostingLibrary({ initial, actor }: { initial: SavedCostingSummar
             <CostingActions name={costing.name} busy={!!busy} bin={bin} editLabel={admin ? "Admin edit" : "Edit costing"}
               onView={() => void load(costing.id, false)} onEdit={() => void load(costing.id, true)} onClone={() => void action("clone", [costing.id])}
               onBin={() => void action("bin", [costing.id])} onRestore={() => void action("restore", [costing.id])} />
+            {!bin && <a className="costing-print-link" href={`/costings/${encodeURIComponent(costing.id)}/print`} target="_blank" rel="noopener noreferrer" aria-label={`Print PDF of ${costing.name}`}>Print PDF</a>}
           </div></td>
           <td style={{ padding: 12, borderBottom: "1px solid #e4e9e5" }}><strong>{costing.name}</strong>{costing.sourceName && <small style={{ display: "block", color: "#607168" }}>{costing.sourceName}</small>}</td>
           <td>{costing.owner}</td><td>{costing.areaSqft.toFixed(2)}</td>

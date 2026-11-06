@@ -1,4 +1,5 @@
 "use client";
+import { costingFetch as fetch } from "@/lib/costing-client";
 
 import { useEffect, useMemo, useState } from "react";
 import { ProductionOptiSummary } from "@/components/ProductionOptiSummary";

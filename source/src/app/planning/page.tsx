@@ -1,6 +1,6 @@
 import { WoodBomBuilder } from "@/components/WoodBomBuilder";
 import { requireIdentity, userSession, sessionMaterials, isOpenCostingAccess } from "@/lib/user-session";
-import { isLocalCostingsEnabled } from "@/lib/local-costing-store";
+import { costingPortalEnabled as isLocalCostingsEnabled } from "@/lib/costing-storage-mode";
 import { showsProjectPricing } from "@/lib/costing-visibility";
 import { redirect } from "next/navigation";
 

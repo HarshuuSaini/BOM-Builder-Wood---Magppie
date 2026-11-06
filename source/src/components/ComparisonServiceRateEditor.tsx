@@ -1,4 +1,5 @@
 "use client";
+import { costingFetch as fetch } from "@/lib/costing-client";
 import { useState } from "react";
 import type { CostingComparisonData } from "@/lib/costing-comparison";
 import { validServiceRates, servicePriceTotals, type ProjectServiceRates } from "@/lib/project-service-rates";

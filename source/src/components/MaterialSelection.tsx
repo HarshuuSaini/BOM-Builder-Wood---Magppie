@@ -322,7 +322,8 @@ export function MaterialSelection({ options, initial }: { options: Option[]; ini
   };
 
   function materialCards(section: KitchenZone | "All", choices: ZoneMaterials, disabled: boolean) {
-    const fields = MATERIAL_FIELDS.filter((field) => section !== "Sink" || field !== "drawer");
+    const stoneSink = section === "Sink" && choices.carcass.itemId === SINK_STONE_BOARD_ID;
+    const fields = MATERIAL_FIELDS.filter((field) => section !== "Sink" || field !== "drawer" && (!stoneSink || field !== "back"));
     return <div style={{ display: "grid", gridTemplateColumns: `repeat(${fields.length},minmax(225px,1fr))`, gap: 12, minWidth: fields.length * 225 + (fields.length - 1) * 12 }}>
       {fields.map((field) => {
         const meta = GROUPS[field];
@@ -405,7 +406,7 @@ export function MaterialSelection({ options, initial }: { options: Option[]; ini
             <input aria-label={`${section} ${meta.label} back laminate sheet price`} type="number" min="0" max="1000000" step="0.01" inputMode="decimal" value={selected.backSheetPrice} disabled={disabled}
               onChange={(event) => update(section, field, { backSheetPrice: event.target.value })} style={fieldStyle} />
           </label>}
-          {edgeBandFields(`${section} ${meta.label}`, edgeBandForMaterial(choices.edgeBand ?? defaultEdgeBand(options), field),
+          {selected.itemId !== SINK_STONE_BOARD_ID && edgeBandFields(`${section} ${meta.label}`, edgeBandForMaterial(choices.edgeBand ?? defaultEdgeBand(options), field),
             (change) => updateEdgeBand(section, field, change), disabled)}
         </div>;
       })}
@@ -428,10 +429,10 @@ export function MaterialSelection({ options, initial }: { options: Option[]; ini
       </header>
       {zone === "Sink" && inherited && <p style={{ margin: "0 0 12px", color: "#607168" }}>To choose Stone for sink cabinets, change “Materials from” to “Choose separately.”</p>}
       <div style={{ overflowX: "auto" }}>{materialCards(zone, effective(zone), inherited)}</div>
-      {zone === "Sink" && <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 12 }}>
+      {zone === "Sink" && effective(zone).carcass.itemId === SINK_STONE_BOARD_ID && <><p style={{ color: "#607168", margin: "12px 0" }}>The carcass back uses the same stone slab, finish and rate as the sink carcass. Stone panels do not use edge band.</p><label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 12 }}>
         <input type="checkbox" checked={sinkStoneFullBack} onChange={(event) => setSinkStoneFullBack(event.target.checked)} />
         Stone sink cabinet: include full stone back by default
-      </label>}
+      </label></>}
     </div>;
   }
 
