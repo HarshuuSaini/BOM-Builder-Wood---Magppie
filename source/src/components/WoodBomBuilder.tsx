@@ -16,6 +16,7 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
+import { WastageControls } from "@/components/WastageControls";
 import * as XLSX from "xlsx-js-style";
 import { searchBoardItems, searchLaminateItems, searchHardwareItems } from "@/lib/rawmaterial";
 import boardFinishesData from "@/data/board_finishes.json";
@@ -24,19 +25,37 @@ import edgebandFinishesData from "@/data/edgeband_finishes.json";
 import accessoryCatalogData from "@/data/accessory_catalog.json";
 import hardwarePacksData from "@/data/hardware_packs.json";
 import { getPartBaseName, getPanelBaseName, normalizePartOrPanelName } from "@/lib/naming";
-import { exportBomWorkbook, exportBomCsv, exportCostingWorkbook, exportBulkCostingWorkbook, type AccessoryExportRow, type ProjectSetupRow } from "@/lib/export";
+import { exportBomWorkbook, exportBomCsv, exportCostingWorkbook, exportBulkCostingWorkbook, exportDesignerCostingWorkbook, exportDesignerBulkCostingWorkbook, type AccessoryExportRow, type ProjectSetupRow } from "@/lib/export";
 import { COSTING_ITEMS, DEFAULT_RATES, DEFAULT_BOARD_PROCESSING_RATES, SINK_STONE_BOARD_ID, findCostingItem, costingItemNames, type CostingMasterItem, type CostingRates } from "@/lib/costing";
 import { quantityWithWaste } from "@/lib/wastage";
+import { accessoryWastePercent } from "@/lib/accessory-wastage";
+import { profileFinishCost, type ProfileFinishes } from "@/lib/profile-finishes";
+import { modernMembraneConstruction, PVC_FOIL_RATE, PVC_FOIL_ROLL_WIDTH_MM } from "@/lib/modern-membrane";
+import { summarizeProcessingCosts } from "@/lib/processing-summary";
+import { stripDesignerProjectRows } from "@/lib/costing-visibility";
 import { MATERIAL_MASTER, laminatePrice } from "@/lib/material-master";
 import { boardPricesFromMaterials, selectedBoardRate, selectedBoardFinish, stoneSlabSqft, validStoneDimension, validBoardSheetPrice, edgeBandForMaterial, MATERIAL_FIELDS, HANDLE_TYPES, DRAWER_BRANDS, handleSettingFor, carcassLaminateForCabinet, materialChoicesForCabinet, isGlassCabinetFamily, type BoardPriceOverride, type BoardPriceOverrides, type EdgeBandChoice, type MaterialField, kitchenZoneForCode, type KitchenMaterials, type ZoneMaterials } from "@/lib/kitchen-materials";
 import { materialsFromImportedCabinets } from "@/lib/imported-kitchen-materials";
 import { UserSignOut } from "@/components/UserSignOut";
+import { SavedCostingControls } from "@/components/SavedCostingControls";
+import { PriceReasonInput } from "@/components/PriceChangeReview";
+import { priceChangesFor } from "@/lib/price-change-audit";
+import { savedAccessorySelection, type SavedAccessoryItem } from "@/lib/accessory-master";
+import { conversionMarginTotals, validConversionMargin } from "@/lib/conversion-margin";
+import { stripLegacyProfit } from "@/lib/normalize-margin-pricing";
+import { TopFillerRuns } from "@/components/TopFillerRuns";
+import { OptiMaterialOptions } from "@/components/OptiMaterialOptions";
+import { productionGroups, validOptiSettings, type StockSettings } from "@/lib/production-optimizer";
+import { DEFAULT_TOP_FILLERS, validTopFillerSettings, validTopFillerMerges, topFillerPieces,
+  type TopFillerSettings, type TopFillerMerge, type TopFillerSegment } from "@/lib/top-fillers";
 import { encodeProjectPrintData, readPrintedProjectPdf } from "@/lib/print-project";
 import type { BomReportRow } from "@/lib/types";
 import { allocatePurchaseCosts, roundQuantity, sheetQuantityInput, type PurchaseTotal } from "@/lib/purchase-rounding";
 import { activeKitchenId, kitchenNameFromPdfFilename, readKitchenWorkspace, setActiveKitchenId, writeKitchenWorkspace, type KitchenWorkspaceEntry, type KitchenCostingSnapshot } from "@/lib/kitchen-workspace";
 import { parseManualCosting, type ManualCostingImport } from "@/lib/manual-costing-import";
 import { blindOpeningLimits, isDoubleShutterWidth, shelfCodeToken, tallApplianceDrawerCode } from "@/lib/cabinet-rules";
+import type { ProductionInput, ProductionPart } from "@/lib/production-optimizer";
+import { optiFingerprint, runBuilderOpti, cuttingChartHtml, type BuilderOpti } from "@/lib/builder-opti";
 
 /* ------------------------------------------------------------------ */
 /*  Types & Interfaces  (identical shapes to stone)                    */
@@ -93,6 +112,7 @@ interface Consumable {
 }
 
 interface FillerRow {
+  topFillerLabel?: string;
   id: number;
   /** Cabinet-created fillers follow the linked cabinet's height and quantity. */
   linkedLineId?: number;
@@ -277,6 +297,10 @@ const EDGE_ADH_G_PER_M = 6;                           // g/running metre
 const PU_RATE = { epoxy: 15, primer: 30, top: 50 };  // g/sqft/side
 const MEMB_OVER = 50;                                // mm per edge
 const MEMB_ADH: number | null = null;                // rate not yet supplied
+const LIFT_UP_HARDWARE = [
+  { itemId: "HARDWARE-032", name: "Push Open Fitting Magnetic Pom-40-Gr Ebc", qty: 1 },
+  { itemId: "HARDWARE-033", name: "Huwil Lift Duo For Normal Doors 009.024.02173 Grs", qty: 2 },
+] as const;
 
 const WASTE = { carcass: 10, shutter: 20, profile: 20, edgeBand: 3 };
 
@@ -313,8 +337,25 @@ const sqft = (w: number, h: number) => (w * h) / SQDIV;
 const cabinetAreaHeight = (zoneKey: string, height: number) =>
   height + (ZONES[zoneKey]?.mount === "legs" ? 100 : 0);
 const perim = (w: number, h: number) => (2 * (w + h) + 4 * BAND_EDGE_ALLOWANCE) / 1000;
+
+/** Packets show net use per cabinet; costing applies edge-band wastage separately. */
+export function edgeBandCalculation(model: CarcassModel, index: number): string {
+  const row = model.cons[index];
+  if (!row) return "";
+  const adhesive = row.name === "EDGEBAND ADHESIVE";
+  const band = adhesive ? model.cons[index - 1] : row;
+  if (!band || !/^EDGE BAND\b/.test(band.name)) return "";
+  const panels = model.panels.filter(panel => {
+    if (!panel.band || (panel.visibleSide ? "Shutter Pack" : panel.pack) !== band.pack) return false;
+    const field = edgeBandFieldForPanel(panel, model.board, model.backBoardId, model.drawerBoardId);
+    return band.name === `EDGE BAND ${BAND_T}MM ${edgeBandForMaterial(model.edgeBand, field).finish}`;
+  });
+  const net = panels.reduce((sum, panel) => sum + perim(panel.w, panel.h) * panel.qty, 0);
+  if (adhesive) return `${net.toFixed(3)} RMT × ${EDGE_ADH_G_PER_M} g/RMT = ${row.qty.toFixed(2)} gm (using unrounded edge length)`;
+  return panels.map(p => `(2 × (${p.w} + ${p.h}) + 4 × ${BAND_EDGE_ALLOWANCE}) × ${p.qty} ÷ 1000`).join(" + ") + ` = ${row.qty.toFixed(2)} RMT`;
+}
 const r3 = (n: number) => Math.round(n * 1000) / 1000;
-const legCount = (w: number) => (w <= 150 ? 2 : w >= 1050 ? 6 : 4);
+const legCount = (w: number) => (w <= 150 ? 2 : w >= 1000 ? 6 : 4);
 const hingePackCount = (h: number) => (h <= 720 ? 2 : h <= 1050 ? 3 : 5);
 
 type HardwareComponent = { name: string; qty: number; uom: string; pack: string };
@@ -400,6 +441,13 @@ function carcassBoardOf(id: string, backBoardId?: string) {
     back: backItem?.materialDescription ?? "Carcass back board",
     backCoreT: backItem?.thicknessMm ?? T_BACK,
   };
+}
+
+/** Special wall carcasses (and their filler strips) may use a shutter board. */
+function extraPanelMasterItem(panel: Panel, fallbackShutterType = ""): CostingMasterItem | undefined {
+  return panel.pack === "Carcass Pack"
+    ? CARCASS_BOARD_ITEMS.find(item => item.id === panel.materialId) ?? SHUTTER_BOARD_ITEMS.find(item => item.id === panel.materialId)
+    : shutterMasterItem(panel.materialId ?? fallbackShutterType);
 }
 
 /**
@@ -503,6 +551,8 @@ const WALL_FAMILIES: Record<string, any> = {
   WDR: { name: "Wall Dish Rack", p2: "AC", noBottom: true, top: "frame",
          variants: [V("sgl", "Single door (handed)", { p3: "2SX", handed: true }),
                     V("dbl", "Double door", { p3: "2SX", p4: "2HS", both: true })] },
+  WLU: { name: "Wall Lift-up Unit", p2: "LU", liftUp: true,
+         variants: [V("sgl", "Single lift-up shutter", { p3: "0SX", p4: "1HS" })] },
 };
 
 const TALL_FAMILIES: Record<string, any> = {
@@ -618,6 +668,7 @@ const WIDTHS: Record<string, number[]> = {
 const TALL_W = [450, 600];
 
 function defSizes(zoneKey: string, fk: string) {
+  if (zoneKey === "WC" && fk === "WLU") return { w: [1000], h: [400], d: 580 };
   const z = ZONES[zoneKey];
   const w = WIDTHS[fk] ?? (z.tall ? TALL_W : [300, 450, 600, 900]);
   const h = z.tall ? [2400, 2040]
@@ -640,16 +691,14 @@ function shDeduct(isBase: boolean, handle: string, loc: string): number {
   return 3;
 }
 
-/** Share the extra 30mm Gola clearance across both low drawer fronts. */
-function drawerFrontHeight(cls: DrawerClass, loc: string, lowFrontCount: number, isBase: boolean, handle: string, cabinetHeight: number): number {
+/** Keep the CJ clearance on its original front; do not equalise low fronts. */
+function drawerFrontHeight(cls: DrawerClass, loc: string, isBase: boolean, handle: string, cabinetHeight: number): number {
   const slotHeight = loc === "FH" ? cabinetHeight : cls === "LOW" ? 180 : 360;
-  if (cls === "LOW" && lowFrontCount === 2 && isBase && handle === "XCJ") {
-    return slotHeight - 3 - 30 / lowFrontCount;
-  }
   return slotHeight - shDeduct(isBase, handle, loc);
 }
 
 function widthVariant(zoneKey: string, fam: any, variantId: string, width: number): string {
+  if (fam.liftUp) return fam.variants[0].id;
   const single = fam.variants.find((variant: any) => variant.id === "single" || variant.id === "sgl");
   const double = fam.variants.find((variant: any) => variant.id === "double" || variant.id === "dbl");
   if (!single || !double) return variantId;
@@ -676,6 +725,7 @@ function shelfCount(zk: string, fk: string, fam: any, H: number): number {
 function shutSpec(zk: string, fk: string, v: any) {
   const fam = famSetOf(zk)[fk];
   if (fam?.noShutter) return { leaves: 0 };
+  if (fam?.liftUp) return { leaves: 1 };
   const leaves = v.both || v.double ? 2 : 1;
   return { leaves };
 }
@@ -879,7 +929,7 @@ function buildShutters(
   const fam = famSetOf(zk)[fk];
 
   // Drawer-front slots follow the stone construction: Low = 180mm, High =
-  // 360mm. Two low fronts share the additional Gola clearance equally.
+  // 360mm. Each front keeps its own location-based CJ deduction.
   // DPN/DPNG are hinged pantry doors with internal drawers, not five external
   // drawer fronts, so fixedDpn deliberately continues to the hinged branch.
   if (fam.drawers && !fam.fixedDpn) {
@@ -897,9 +947,8 @@ function buildShutters(
     if (v.id === "2dr-mixed" && H !== 720) {
       stubs.push(`1 HB + 1 LB drawer fronts plus the matching fixed low panel occupy 720mm of a ${H}mm cabinet; review the remaining ${H - 720}mm front space.`);
     }
-    const lowFrontCount = fronts.filter((front) => front.cls === "LOW").length;
     fronts.forEach(({ cls, loc, fixed }) => {
-      const frontH = drawerFrontHeight(cls, loc, lowFrontCount, isBase, handle, H);
+      const frontH = drawerFrontHeight(cls, loc, isBase, handle, H);
       panels.push({
         name: `Panels- SH ${fixed ? "Fixed Panel" : "Drawer Front"} ${cls} ${S.t}mm ${W - 3}x${frontH}`,
         w: W - 3, h: frontH, qty: 1, drill: null, pack: "Shutter Pack",
@@ -920,7 +969,7 @@ function buildShutters(
     }
     pkRows.push({ pack: "Shutter Pack", type: "sub_bom", qty: fronts.length + (z.tall && fk === "APP" ? 1 : 0) });
     const totalArea = fronts.reduce((sum, front) => {
-      return sum + sqft(W - 3, drawerFrontHeight(front.cls, front.loc, lowFrontCount, isBase, handle, H));
+      return sum + sqft(W - 3, drawerFrontHeight(front.cls, front.loc, isBase, handle, H));
     }, 0);
     return { leaves: fronts.length, leafW: W - 3, leafH: totalArea * SQDIV / Math.max(1, (W - 3) * fronts.length) };
   }
@@ -948,8 +997,9 @@ function buildShutters(
     if (st === "GLASS") {
       const frame = SH_FRAME[neon];
       panels.push({ name: `Panels- SH Blind Active ${glassItem?.subgroup ?? "Glass"} ${GLASS_T}mm ${activeW}x${activeH}`, w: activeW, h: activeH, qty: 1, drill: hand, pack: "Shutter Pack", t: GLASS_T, mat: glassMat, band: false });
-      profiles.push({ name: `ALU PROF ${NEON_LABEL[neon].toUpperCase()} ${frame}MM`, len: activeH, qty: 2, type: "V", pack: "Shutter Pack" });
-      profiles.push({ name: `ALU PROF ${NEON_LABEL[neon].toUpperCase()} ${frame}MM`, len: activeW, qty: 2, type: "H", pack: "Shutter Pack" });
+      profiles.push({ name: `ALU PROF ${NEON_LABEL[neon].toUpperCase()} ${frame}MM`, len: activeH, qty: handle === "NONE" ? 2 : 1, type: "V", orientation: "vertical", pack: "Shutter Pack" });
+      if (handle !== "NONE") profiles.push({ name: `ALU PROF ${NEON_LABEL[neon].toUpperCase()} ${frame}MM`, len: activeH, qty: 1, type: "H", orientation: "vertical", pack: "Shutter Pack" });
+      profiles.push({ name: `ALU PROF ${NEON_LABEL[neon].toUpperCase()} ${frame}MM`, len: activeW, qty: 2, type: "V", orientation: "horizontal", pack: "Shutter Pack" });
       hardware.push({ name: "CORNER CONNECTOR FOR GLASS SHUTTER", qty: 4, uom: "nos", pack: "Shutter Pack" });
     } else {
       panels.push({ name: `Panels- SH Blind Active ${S.t}mm ${activeW}x${activeH}`, w: activeW, h: activeH, qty: 1, drill: hand, pack: "Shutter Pack", t: S.t, mat: S.mat, band: S.band });
@@ -978,7 +1028,7 @@ function buildShutters(
       drill: null, pack: "Shutter Pack", t: GLASS_T,
       mat: glassMat, band: false,
     });
-    if (z.tall && leaves === 2) {
+    if (handle !== "NONE") {
       // Each tall double-glass leaf has the handle profile on its meeting-side
       // vertical edge. The outer vertical edge and both horizontal edges use
       // the normal shutter profile.
@@ -992,7 +1042,7 @@ function buildShutters(
       });
       profiles.push({
         name: `ALU PROF ${NEON_LABEL[neon].toUpperCase()} ${frame}MM`,
-        len: Math.round(leafW), qty: 2 * leaves, type: "H", orientation: "horizontal", pack: "Shutter Pack",
+        len: Math.round(leafW), qty: 2 * leaves, type: "V", orientation: "horizontal", pack: "Shutter Pack",
       });
     }
     hardware.push({ name: "CORNER CONNECTOR FOR GLASS SHUTTER", qty: 4 * leaves, uom: "nos", pack: "Shutter Pack" });
@@ -1000,12 +1050,16 @@ function buildShutters(
     panels.push({
       name: `Panels- SH ${S.t}mm ${Math.round(leafW)}x${Math.round(leafH)}`,
       w: Math.round(leafW), h: Math.round(leafH), qty: leaves,
-      drill: null, pack: "Shutter Pack", t: S.t,
+      drill: fam.liftUp ? "TOP" : null, pack: "Shutter Pack", t: S.t,
       mat: S.mat, band: S.band,
     });
   }
 
   const hingesPerLeaf = hingePackCount(H);
+  if (fam.liftUp) LIFT_UP_HARDWARE.forEach(part => {
+    const item = COSTING_ITEMS.find(item => item.id === part.itemId);
+    hardware.push({ name: item?.materialDescription ?? part.name, qty: part.qty, uom: "PCS", pack: "Shutter Pack" });
+  });
   if (isGlassShutterFam(fk)) {
     hardware.push({ name: hingeItemFor(hingeChoice, hingeModeFor(zk, fk)), qty: hingesPerLeaf * leaves, uom: "PCS", pack: "Shutter Pack" });
   } else {
@@ -1105,7 +1159,7 @@ function buildCarcassInnerRaw(cfg: {
       panels.push({
         name: `Panels- CR Side ${side} ${sideT}mm ${D}x${H}`,
         w: D, h: H, qty: 1, drill: side, pack: PK, t: sideT,
-        mat: visible ? visibleBoard.materialDescription : carc, band: visible || !stoneSink,
+        mat: visible ? visibleBoard.materialDescription : carc, band: visible ? shutterFamily(visibleBoard) !== "MEMBRANE" : !stoneSink,
         visibleSide: visible, materialId: visible ? visibleBoard.id : undefined,
       });
     }
@@ -1131,9 +1185,16 @@ function buildCarcassInnerRaw(cfg: {
     stubs.push("MD back panel height — parked at the construction stage. With no bottom panel the back is grooved on three edges only, so the +9 allowance does not apply symmetrically.");
   } else if (fam.backStrips) {
     add(`Panels- CR Back Strip ${B.backCoreT}mm ${bw}x75`, bw, 75, 2, B.backCoreT, B.back, false);
+  } else if (fam.special === "APP") {
+    // Match the stone appliance opening, retaining wood's grooved back width
+    // and selected back-board thickness. Never close the recess with a full back.
+    const upperHeight = H - 1349;
+    const lowerHeight = v.id === "1dw" ? 286 : 686;
+    if (upperHeight > 0) add(`Panels- CR Back Upper ${B.backCoreT}mm ${bw}x${upperHeight}`, bw, upperHeight, 1, B.backCoreT, B.back, false);
+    else stubs.push("APP upper back requires cabinet height above 1349mm; upper back withheld until height is corrected.");
+    add(`Panels- CR Back Lower ${B.backCoreT}mm ${bw}x${lowerHeight}`, bw, lowerHeight, 1, B.backCoreT, B.back, false);
   } else {
     if (fam.special === "REF") stubs.push("REF short back wall — stone uses H − 1874 to clear the fridge recess. Wood equivalent not yet defined; a full-height back is emitted meanwhile.");
-    if (fam.special === "APP") stubs.push("APP twin back walls — stone splits upper/lower at H − 1349. Wood equivalent not yet defined; a single back is emitted meanwhile.");
     add(`Panels- CR Back ${B.backCoreT}mm ${bw}x${bh}`, bw, bh, 1, B.backCoreT, B.back, false);
   }
 
@@ -1167,6 +1228,11 @@ function buildCarcassInnerRaw(cfg: {
         ? "HARDWARE PACK CABINET JOINT BASE"
         : "";
   if (jointPack) hardware.push({ name: jointPack, qty: 1, uom: "set", pack: PK });
+  if (!z.tall && !z.kind) {
+    hardware.push({ name: "HANGING BRACKET W/CVR AND BAR CRY", qty: 1, uom: "set", pack: PK });
+  } else if (z.kind === "wall" && D === 560) {
+    hardware.push({ name: "HANGING BRACKET BASE CABINET", qty: 1, uom: "set", pack: PK });
+  }
 
   const baseProfilePack = `HARDWARE PACK BASE CABINET ${W}MM TOP PROFILE`;
   if (!z.tall && !z.kind) {
@@ -1222,8 +1288,10 @@ function buildCarcassInnerRaw(cfg: {
   const visibleSqft = merged.filter((p) => p.visibleSide).reduce((a, p) => a + sqft(p.w, p.h) * p.qty, 0);
 
   if (stoneSink) {
-    cons.push({ name: "GLUE BONDTITE FAST & CLEAR FOR STONE XX AGG", qty: 0.05, uom: "pcs", pack: "Stone pasting" });
-    cons.push({ name: "GLUE SILICONE XX TRANSPERENT DOWSIL 789 AGG", qty: 0.5, uom: "pcs", pack: "Stone pasting" });
+    const stoneArea = merged.filter((panel) => panel.pack === PK && !panel.visibleSide && panel.mat === B.core)
+      .reduce((area, panel) => area + sqft(panel.w, panel.h) * panel.qty, 0);
+    cons.push({ name: "GLUE BONDTITE FAST & CLEAR FOR STONE XX AGG", qty: r3(stoneArea * 10), uom: "gm", pack: "Stone pasting" });
+    cons.push({ name: "GLUE SILICONE XX TRANSPERENT DOWSIL 789 AGG", qty: r3(stoneArea * 40), uom: "gm", pack: "Stone pasting" });
   }
 
   const bandGroups = new Map<string, { pack: string; finish: string; metres: number }>();
@@ -1260,6 +1328,10 @@ function buildCarcassInnerRaw(cfg: {
       cons.push({ name: "LAMINATE ADHESIVE", qty: r3(shSqft * LAM_ADH * 2), uom: "gm", pack: "Shutter Pack" });
     }
     if (shFamOf(st) === "MEMBRANE") {
+      const membrane = modernMembraneConstruction(shutterMasterItem(st));
+      if (membrane) {
+        cons.push({ name: "MODERN MEMBRANE PVC FOIL", qty: r3(shSqft * membrane.faces), uom: "sqft", pack: "Shutter Pack" });
+      } else {
       const mf = sqft(sh.leafW + 2 * MEMB_OVER, sh.leafH + 2 * MEMB_OVER) * sh.leaves;
       cons.push({ name: "MEMBRANE FOIL", qty: r3(mf), uom: "sqft", pack: "Shutter Pack" });
       if (MEMB_ADH === null) {
@@ -1267,6 +1339,7 @@ function buildCarcassInnerRaw(cfg: {
         cons.push({ name: "MEMBRANE ADHESIVE", qty: r3(shSqft), uom: "sqft", pack: "Shutter Pack" });
       } else {
         cons.push({ name: "MEMBRANE ADHESIVE", qty: r3(shSqft * MEMB_ADH), uom: "gm", pack: "Shutter Pack" });
+      }
       }
     }
     if (shFamOf(st) === "PU1" || shFamOf(st) === "PU2") {
@@ -1282,7 +1355,9 @@ function buildCarcassInnerRaw(cfg: {
       cons.push({ name: "VISIBLE SIDE LAMINATE 0.8MM", qty: r3(visibleSqft * 2), uom: "sqft", pack: PK });
       cons.push({ name: "LAMINATE ADHESIVE", qty: r3(visibleSqft * LAM_ADH * 2), uom: "gm", pack: PK });
     } else if (visibleFamily === "MEMBRANE") {
-      stubs.push("Visible-side membrane wrapping allowance has not been specified; foil and adhesive quantities withheld.");
+      const membrane = modernMembraneConstruction(shutterMasterItem(visibleSideMaterialId));
+      if (membrane) cons.push({ name: "MODERN MEMBRANE PVC FOIL", qty: r3(visibleSqft * membrane.faces), uom: "sqft", pack: PK });
+      else stubs.push("Visible-side membrane wrapping allowance has not been specified; foil and adhesive quantities withheld.");
     } else if (visibleFamily === "PU1" || visibleFamily === "PU2") {
       const faces = visibleFamily === "PU2" ? 2 : 1;
       cons.push({ name: "PU EPOXY", qty: r3(visibleSqft * PU_RATE.epoxy * faces), uom: "gm", pack: PK });
@@ -1311,6 +1386,9 @@ function buildModel(cfg: {
   W: number; H: number; D: number; shelfQty?: number; fillerWidth?: number; fillerSides?: "LH" | "RH" | "BOTH"; fillerWidthRH?: number; blindOpeningWidth?: number; spotLight?: boolean; drawerModel: string; finish?: string;
 }): CarcassModel {
   cfg = { ...cfg,
+    handle: cfg.zk === "WC" && cfg.fk === "WLU" ? "PUSH" : cfg.handle,
+    handlePrice: cfg.zk === "WC" && cfg.fk === "WLU" ? "" : cfg.handlePrice,
+    handleBrand: cfg.zk === "WC" && cfg.fk === "WLU" ? "Ebco" : cfg.handleBrand,
     carcassLamBackSheetPrice: isGlassShutterFam(cfg.fk) ? cfg.carcassLamBackSheetPrice : cfg.carcassLamFrontSheetPrice,
     backLamBackSheetPrice: cfg.backLamFrontSheetPrice,
     drawerLamBackSheetPrice: cfg.drawerLamFrontSheetPrice,
@@ -1379,9 +1457,7 @@ function exportPanelCalculatorWorkbook(project: ProjectLine[], extraPanels: Pane
   extraPanels.forEach((panel, index) => {
     const category = panel.extraMaterialRole === "visible" ? "Visible side"
       : panel.pack === "Carcass Pack" ? "Carcass" : "Shutter";
-    const item = panel.pack === "Carcass Pack"
-      ? CARCASS_BOARD_ITEMS.find((candidate) => candidate.id === panel.materialId)
-      : shutterMasterItem(panel.materialId ?? "");
+    const item = extraPanelMasterItem(panel);
     records.push({ code: `EXTRA-${index + 1}`, elevation: "", category, panel,
       cabinetQty: 1, materialType: item?.type ?? "Unknown" });
   });
@@ -1611,6 +1687,13 @@ function boardCostKey(mat: string, thickness: number, finish: string, rate: numb
   return JSON.stringify([mat, thickness, finish, Number(rate.toPrecision(14)), sheetAreaSqft]);
 }
 
+export function builderOptiFingerprint(project: ProjectLine[], panels: Panel[], counters: CountertopRow[], materials: KitchenMaterials | undefined, batch: number, options: Record<string, Partial<StockSettings>> = {}) {
+  return optiFingerprint({ batch, panels, counters, materials, ...(Object.keys(options).length ? { options } : {}), cabinets: project.map(({ m, qty, elevation }) => ({
+    qty, elevation, code: m.code, panels: m.panels, board: m.board, back: m.backBoardId, drawer: m.drawerBoardId,
+    shutter: m.shType, visible: m.visibleSideMaterialId, prices: m.boardPrices, finish: m.finish,
+  })) });
+}
+
 function buildBoardTotals(project: ProjectLine[], wst: WastePct = WASTE, extraPanels: Panel[] = []): BoardTotal[] {
   const map = new Map<string, BoardTotal>();
   const fold = (p: Panel, mult: number, finish: string, rate: number, model?: CarcassModel, sheetAreaSqft = 32) => {
@@ -1633,15 +1716,20 @@ function buildBoardTotals(project: ProjectLine[], wst: WastePct = WASTE, extraPa
       : carcassMasterItem(m.board, m.backBoardId, m.drawerBoardId, p);
     const field = p.visibleSide ? "visible" : p.pack === "Shutter Pack" ? "shutter"
       : p.pack === "Drawer Pack" ? "drawer" : item?.group === "Carcass Back Material" ? "back" : "carcass";
-    const rate = item ? p.pack === "Shutter Pack" && /glass/i.test(p.mat ?? "") && m.zk === "WC" && m.fk === "WGL" && m.glassPricePerSqft !== undefined
+    const membrane = modernMembraneConstruction(item);
+    const override = m.boardPrices?.[field];
+    const rate = membrane ? override?.itemId === item?.id && validBoardSheetPrice(override?.sheetPrice) ? Number(override.sheetPrice) / 32 : membrane.board.currentRate
+      : item ? p.pack === "Shutter Pack" && /glass/i.test(p.mat ?? "") && m.zk === "WC" && m.fk === "WGL" && m.glassPricePerSqft !== undefined
       ? Number(m.glassPricePerSqft) : selectedBoardRate(item, m.boardPrices?.[field]) : 0;
     const sheetArea = item?.id === SINK_STONE_BOARD_ID ? stoneSlabSqft(m.boardPrices?.[field]?.slabSqft) : 32;
-    fold(p, l.qty, item ? selectedBoardFinish(item.id, m.boardPrices?.[field], m.finish) : m.finish, rate, m, sheetArea);
+    fold(membrane ? { ...p, mat: membrane.board.itemName ?? membrane.board.materialDescription } : p, l.qty, item ? selectedBoardFinish(item.id, m.boardPrices?.[field], m.finish) : m.finish, rate, m, sheetArea);
   }));
   extraPanels.forEach((p) => {
-    const item = p.pack === "Carcass Pack" ? CARCASS_BOARD_ITEMS.find((candidate) => candidate.id === p.materialId)
-      : shutterMasterItem(p.materialId ?? "");
-    fold(p, 1, p.extraFinish ?? "White", item ? selectedBoardRate(item, p.extraBoardPrice) : 0);
+    const item = extraPanelMasterItem(p);
+    const membrane = modernMembraneConstruction(item);
+    const rate = membrane ? p.extraBoardPrice?.itemId === item?.id && validBoardSheetPrice(p.extraBoardPrice?.sheetPrice) ? Number(p.extraBoardPrice.sheetPrice) / 32 : membrane.board.currentRate
+      : item ? selectedBoardRate(item, p.extraBoardPrice) : 0;
+    fold(membrane ? { ...p, mat: membrane.board.itemName ?? membrane.board.materialDescription } : p, 1, p.extraFinish ?? "White", rate);
   });
   return [...map.values()].map((b) => ({
     ...b,
@@ -1706,7 +1794,45 @@ function cabinetFillers(project: ProjectLine[]): FillerRow[] {
   });
 }
 
+/** Derive widths once from cabinets and side fillers; never use generated top panels as inputs. */
+export function automaticTopFillers(project: ProjectLine[], fillers: FillerRow[], settings: TopFillerSettings, merges: TopFillerMerge[] = []) {
+  const segments: TopFillerSegment[] = [];
+  const zoneOf = (code: string) => FILLER_ZKS.tall.includes(code) ? "tall" : FILLER_ZKS.wall.includes(code) ? "wall" : undefined;
+  const add = (id: string, label: string, width: number, qty: number, line: ProjectLine, zone: "wall" | "tall", elevation: string, shade: string) => {
+    if (!(width > 0 && Number.isFinite(width) && Number.isSafeInteger(qty) && qty > 0)) return;
+    const m = line.m;
+    const finish = selectedBoardFinish(m.shType, m.boardPrices?.shutter, shade || m.finish);
+    const runKey = JSON.stringify([zone, elevation, Number(settings.heightMm), m.shType, finish, m.boardPrices?.shutter,
+      m.shutterLamFrontSheetPrice, m.shutterLamBackSheetPrice, edgeBandForMaterial(m.edgeBand, "shutter")]);
+    for (let i = 0; i < qty; i++) segments.push({ id: `${id}:${i}`, runKey, label: `${label}${qty > 1 ? ` #${i + 1}` : ""}`,
+      width, height: Number(settings.heightMm), zone, elevation, lineId: line.id, finish });
+  };
+  if (settings.enabled && validTopFillerSettings(settings)) {
+    for (const line of project) {
+      const zone = zoneOf(line.m.zk);
+      if (zone && settings.cabinetTypes.includes(zone)) add(`cabinet:${line.id}`, line.m.code, line.m.W, line.qty, line, zone, line.elevation, line.m.finish);
+    }
+    for (const filler of fillers) {
+      if (filler.fillerType && !["filler", "chimney-panel"].includes(filler.fillerType)) continue;
+      if (filler.zone !== "wall" && filler.zone !== "tall" || !settings.cabinetTypes.includes(filler.zone)) continue;
+      const line = filler.linkedLineId === undefined ? project.find(l => l.elevation === filler.elevation && zoneOf(l.m.zk) === filler.zone)
+        : project.find(l => l.id === filler.linkedLineId && zoneOf(l.m.zk) === filler.zone);
+      if (!line) continue;
+      add(filler.linkedLineId === undefined ? `filler:${filler.id}` : `side:${filler.linkedLineId}:${filler.fillerSide ?? "LH"}`,
+        `${line.m.code} · ${filler.fillerType === "chimney-panel" ? "Chimney panel" : `${filler.fillerSide ?? "Side"} filler`}`, Number(filler.customWidth) || FILLER_DEF_W, filler.qty || 1,
+        line, filler.zone, filler.elevation, filler.customShade);
+    }
+  }
+  const pieces = topFillerPieces(segments, merges);
+  const rows: FillerRow[] = pieces.map((piece, index) => ({ id: -200000 - index, fillerType: "top-filler", linkedLineId: piece.members[0].lineId,
+    topFillerLabel: `Top Filler ${piece.members[0].zone === "wall" ? "Wall" : "Tall"} ${index + 1}`,
+    zone: piece.members[0].zone, elevation: piece.members[0].elevation, customShade: piece.members[0].finish,
+    qty: 1, customHeight: String(piece.height), customWidth: String(piece.width), customDepth: "" }));
+  return { segments, pieces, rows };
+}
+
 function fillerPanelCount(filler: FillerRow): number {
+  if (filler.fillerType === "top-filler") return 1;
   return filler.fillerType === "cover-panel" ? 5 : filler.zone === "wall" && filler.linkedLineId !== undefined ? 3 : 1;
 }
 
@@ -1740,7 +1866,7 @@ function buildExtrasBom(
     const fin = r.customShade || globalFinish;
     const fillerType = kind === "Filler" ? r.fillerType ?? "filler" : "filler";
     const baseLabel = kind === "Visible" ? "Visible Panel" : FILLER_TYPES.find((type) => type.value === fillerType)?.label ?? "Filler";
-    const label = fillerType === "filler" && r.fillerSide ? `${baseLabel} ${r.fillerSide}` : baseLabel;
+    const label = r.topFillerLabel ?? (fillerType === "filler" && r.fillerSide ? `${baseLabel} ${r.fillerSide}` : baseLabel);
     const depth = parseFloat(r.customDepth ?? "") || linkedCabinet?.m.D || defZoneDepth(zone, project);
     const materialZone = ({ base: "Base", wall: "Wall", tall: "Tall", loft: "Loft", mid: "Mid" } as const)[zone as "base" | "wall" | "tall" | "loft" | "mid"] ?? "Base";
     const matchingLine = linkedCabinet ?? project.find((line) => line.elevation === r.elevation && (FILLER_ZKS[zone] ?? []).includes(line.m.zk));
@@ -1763,7 +1889,7 @@ function buildExtrasBom(
       back: matchingLine?.m.shutterLamBackSheetPrice ?? selected?.backSheetPrice ?? fallbackShutterLaminate.back,
     };
     const partPanels: Panel[] = [frontPanel];
-    if (kind === "Filler" && fillerType !== "cover-panel" && zone === "wall" && linkedCabinet) {
+    if (kind === "Filler" && fillerType !== "cover-panel" && fillerType !== "top-filler" && zone === "wall" && linkedCabinet) {
       const selectedMaterials = zoneMaterials?.carcass;
       const boardId = matchingLine?.m.board ?? selectedMaterials?.itemId ?? fallbackBoardId;
       const carcassBoard = carcassBoardOf(boardId);
@@ -1869,12 +1995,13 @@ function buildExtrasBom(
 /* --- Accessories — everything opt-in (CHAT_SUMMARY §17) --- */
 
 // Keep the saved "elenor" key so older project exports still reopen as a light row.
-type AccessoryKind = "skirting" | "elenor" | "c-handle" | "j-handle";
+type AccessoryKind = "skirting" | "elenor" | "c-handle" | "j-handle" | "g-handle";
 interface AccessoryRow {
   id: number;
   kind: AccessoryKind;
   /** Stable source for an editable, automatically calculated row. */
   automaticKey?: string;
+  openingSide?: "LH" | "RH";
   disabled?: boolean;
   /** Cutting size of one accessory piece, in metres. */
   size: string;
@@ -1890,6 +2017,7 @@ interface AccessoryRow {
   driver: string;   // light driver master ID (legacy labels also accepted)
 }
 interface MasterAccessoryRow {
+  customMasterId?: string;
   id: number;
   linkedLineId?: number;
   sourceItemId?: string;
@@ -1899,12 +2027,14 @@ interface MasterAccessoryRow {
   elevation: string;
   /** Blank uses the Kitchen master rate; a non-negative value overrides this row only. */
   manualRate?: string;
+  priceChangeReason?: string;
   /** Project-specific item when it is not in the Kitchen master or reference catalog. */
   customName?: string;
   customUnit?: "PCS" | "SET" | "MTR";
   customBrand?: string;
 }
 interface LinkedAccessoryEdit {
+  customMasterId?: string;
   linkedLineId: number;
   sourceItemId: string;
   disabled?: boolean;
@@ -1912,6 +2042,7 @@ interface LinkedAccessoryEdit {
   qty?: number;
   elevation?: string;
   manualRate?: string;
+  priceChangeReason?: string;
   customName?: string;
   customUnit?: "PCS" | "SET" | "MTR";
   customBrand?: string;
@@ -1957,12 +2088,14 @@ function cabinetAccessories(project: ProjectLine[], edits: LinkedAccessoryEdit[]
     const linked = itemIds.filter((id): id is string => !!id && MASTER_ACCESSORY_ITEMS.some((item) => item.id === id))
       .map((itemId, index) => applyEdit({ id: -(line.id * 10 + index + 1), linkedLineId: line.id, sourceItemId: itemId,
         itemId, qty: line.qty, elevation: line.elevation, manualRate: "" }));
+    // The named master push-open fitting is already part of lift-up hardware.
+    if (line.m.fk === "WLU" || isGlassCabinetFamily(line.m.fk)) return linked;
     const handleType = line.m.handle;
     const fronts = line.m.panels.filter((panel) => panel.pack === "Shutter Pack" && !panel.visibleSide &&
       /\bSH\b/i.test(panel.name) && !/\b(?:Fixed|Filler|Visible)\b/i.test(panel.name))
       .reduce((sum, panel) => sum + panel.qty, 0);
     if (!["PUSH", "KNOB", "HANDLE"].includes(handleType) || fronts === 0) return linked;
-    const handleName = handleType === "PUSH" ? "Push to Open" : handleType === "KNOB" ? "Knob" : "Handle";
+    const handleName = handleType === "PUSH" ? line.m.fk === "WLU" ? "TIP-ON Push to Open" : "Push to Open" : handleType === "KNOB" ? "Knob" : "Handle";
     return [...linked, applyEdit({ id: -(line.id * 10 + 9), linkedLineId: line.id, sourceItemId: "CUSTOM", itemId: "CUSTOM", qty: fronts * line.qty,
       elevation: line.elevation, customName: handleName, customUnit: "PCS" as const,
       customBrand: handleType === "PUSH" ? line.m.handleBrand || "Hettich" : "",
@@ -1994,14 +2127,16 @@ function groupLinkedAccessories(rows: MasterAccessoryRow[]): MasterAccessoryRow[
   return [...groups.values()];
 }
 const ACC_LABEL: Record<AccessoryKind, string> = {
-  skirting: "PVC Skirting Profile",
+  skirting: "Skirting Profile",
   elenor: "LED Profile Light",
   "c-handle": "C Type handle",
   "j-handle": "J Type handle",
+  "g-handle": "G Type handle",
 };
 const HANDLE_ITEMS = {
   "c-handle": COSTING_ITEMS.find((item) => item.id === "KITCHEN-050")!,
   "j-handle": COSTING_ITEMS.find((item) => item.id === "KITCHEN-049")!,
+  "g-handle": COSTING_ITEMS.find((item) => item.id === "KITCHEN-051")!,
 };
 const HANDLE_HARDWARE = {
   "c-handle": ["HARDWARE-022", "HARDWARE-023", "HARDWARE-026"],
@@ -2069,7 +2204,7 @@ function selectedDriver(value: string): CostingMasterItem | undefined {
     ?? (value.includes("2A 24W") ? DRIVER_ITEMS.find((item) => item.id === "KITCHEN-089") : undefined)
     ?? (value.includes("5A 60W") ? DRIVER_ITEMS.find((item) => item.id === "KITCHEN-088") : undefined);
 }
-const SKIRT_WASTE = 0.10;
+const SKIRT_WASTE = 0.25;
 
 /** Default skirting run: base and tall cabinet widths, metres. */
 function defSkirtMeters(project: ProjectLine[]): number {
@@ -2083,12 +2218,12 @@ function calculatedAccessories(project: ProjectLine[], fillers: FillerRow[]): Ac
   const elevations = [...new Set([...project.map((line) => line.elevation), ...fillers.map((filler) => filler.elevation)])];
   return elevations.flatMap((elevation, index) => {
     const zoneLines = project.filter((line) => line.elevation === elevation);
-    const zoneFillers = fillers.filter((filler) => filler.elevation === elevation);
+    const zoneFillers = fillers.filter((filler) => filler.elevation === elevation && filler.fillerType !== "top-filler");
     const skirtingCabinetWidths = zoneLines.reduce((total, line) => total +
       (FILLER_ZKS.base.includes(line.m.zk) || FILLER_ZKS.tall.includes(line.m.zk) ? line.m.W * line.qty : 0), 0);
     const wallWidths = zoneLines.reduce((total, line) => total + (FILLER_ZKS.wall.includes(line.m.zk) ? line.m.W * line.qty : 0), 0);
     const extraSkirting = zoneFillers.reduce((total, filler) => total +
-      ((filler.linkedLineId !== undefined && filler.zone === "base") || filler.fillerType === "dishwasher-panel" ? panelWidth(filler) : 0), 0);
+      ((filler.linkedLineId !== undefined && (filler.zone === "base" || filler.zone === "tall")) || filler.fillerType === "dishwasher-panel" ? panelWidth(filler) : 0), 0);
     const chimneyWidth = zoneFillers.reduce((total, filler) => total + (filler.fillerType === "chimney-panel" ? panelWidth(filler) : 0), 0);
     const row = (kind: AccessoryKind, offset: number, millimetres: number): AccessoryRow => ({
       id: -1000 - index * 2 - offset, kind, size: (millimetres / 1000).toFixed(3), qty: 1,
@@ -2097,11 +2232,28 @@ function calculatedAccessories(project: ProjectLine[], fillers: FillerRow[]): Ac
     const profiles = [row("skirting", 1, skirtingCabinetWidths + extraSkirting), row("elenor", 2, Math.max(0, wallWidths - chimneyWidth))]
       .filter((item) => Number(item.size) > 0);
     const handles = zoneLines.flatMap((line) => {
-      if (!FILLER_ZKS.base.includes(line.m.zk) || line.m.handle !== "XCJ") return [];
+      const tallShutterDrawer = FILLER_ZKS.tall.includes(line.m.zk) && line.m.fk === "APP";
+      const tallOther = FILLER_ZKS.tall.includes(line.m.zk) && !tallShutterDrawer && !isGlassCabinetFamily(line.m.fk);
+      if (tallOther && line.m.handle === "XCJ") {
+        const family = famSetOf(line.m.zk)[line.m.fk];
+        const variant = family?.variants.find((candidate: { id: string }) => candidate.id === line.m.vid) ?? family?.variants[0];
+        const leaves = variant ? shutSpec(line.m.zk, line.m.fk, variant).leaves : 0;
+        const sides: Array<"LH" | "RH"> = leaves >= 2 ? ["LH", "RH"] : leaves === 1 ? [line.m.hand === "RHS" ? "RH" : "LH"] : [];
+        const height = line.m.panels.find(panel => panel.pack === "Shutter Pack" && !/Fixed/i.test(panel.name))?.h ?? line.m.H - 3;
+        return sides.map((openingSide, index): AccessoryRow => ({
+          id: -(line.id * 10 + 3 + index), kind: "g-handle", size: (height / 1000).toFixed(3), qty: line.qty,
+          openingSide, elevation: line.elevation, straight: 0, lconn: 0, driver: "",
+          automaticKey: `cabinet:${line.id}:g-handle:${openingSide}`,
+        }));
+      }
+      if ((!FILLER_ZKS.base.includes(line.m.zk) && !tallShutterDrawer) || line.m.handle !== "XCJ") return [];
       const handleRow = (kind: "c-handle" | "j-handle", offset: number): AccessoryRow => ({
         id: -(line.id * 10 + offset), kind, size: (line.m.W / 1000).toFixed(3), qty: line.qty,
         elevation: line.elevation, straight: 0, lconn: 0, driver: "", automaticKey: `cabinet:${line.id}:${kind}`,
       });
+      // The appliance separates the upper shutter from the bottom drawer:
+      // each front requires its own full-width C profile.
+      if (tallShutterDrawer) return [{ ...handleRow("c-handle", 2), qty: 2 * line.qty }];
       return [handleRow("j-handle", 1), ...(famSetOf(line.m.zk)[line.m.fk]?.drawers ? [handleRow("c-handle", 2)] : [])];
     });
     return [...profiles, ...handles];
@@ -2130,17 +2282,22 @@ function restoreAccessoryRow(row: AccessoryRow, version: number, project: Projec
   return { ...row, size: String(row.qty), qty: 1, lengthMeters: undefined };
 }
 
-function buildAccessoryRows(accs: AccessoryRow[], project: ProjectLine[], so: string): AccessoryExportRow[] {
+function skirtingMasterItem(profileFinishes?: ProfileFinishes) {
+  return COSTING_ITEMS.find(item => item.id === (profileFinishes?.skirtingMaterial === "Aluminium" ? "KITCHEN-ALU-SKIRTING" : "KITCHEN-092"))!;
+}
+
+function buildAccessoryRows(accs: AccessoryRow[], project: ProjectLine[], so: string, wasteOverrides: Record<string, number> = {}, profileFinishes?: ProfileFinishes): AccessoryExportRow[] {
   const out: AccessoryExportRow[] = [];
   const carcass = project.map((l) => l.m.code.split("-").slice(0, 3).join("-")).join(", ");
   accs.forEach((a) => {
     if (a.kind === "skirting") {
+      const item = skirtingMasterItem(profileFinishes);
       const mtr = accessoryMeters(a);
       const withWaste = r3(quantityWithWaste(mtr, SKIRT_WASTE * 100));
       out.push({
         SO: so, "Carcass Items": carcass, Accessory: ACC_LABEL.skirting, Selected: "yes",
-        "Item Name": "PVC SKIRTING PROFILE 100MM", Size: `${a.size} m × ${a.qty}`,
-        Elevation: a.elevation, Total: mtr, "Actual Qty": withWaste, "Zoho Item ID": "",
+        "Item Name": item.materialDescription, Size: `${a.size} m × ${a.qty}`,
+        Elevation: a.elevation, Total: mtr, "Actual Qty": withWaste, "Zoho Item ID": item.id,
       });
       if (a.straight > 0) out.push({
         SO: so, "Carcass Items": carcass, Accessory: ACC_LABEL.skirting, Selected: "yes",
@@ -2152,12 +2309,12 @@ function buildAccessoryRows(accs: AccessoryRow[], project: ProjectLine[], so: st
         "Item Name": "SKIRTING L CONNECTOR", Size: "", Elevation: a.elevation,
         Total: a.lconn, "Actual Qty": a.lconn, "Zoho Item ID": "",
       });
-    } else if (a.kind === "c-handle" || a.kind === "j-handle") {
+    } else if (a.kind === "c-handle" || a.kind === "j-handle" || a.kind === "g-handle") {
       const item = HANDLE_ITEMS[a.kind];
       const meters = accessoryMeters(a);
       out.push({ SO: so, "Carcass Items": carcass, Accessory: ACC_LABEL[a.kind], Selected: "yes",
-        "Item Name": item.materialDescription, Size: `${a.size} m × ${a.qty}`, Elevation: a.elevation,
-        Total: meters, "Actual Qty": meters, "Zoho Item ID": item.id });
+        "Item Name": item.materialDescription, Size: `${a.size} m × ${a.qty}${a.openingSide ? ` · ${a.openingSide}` : ""}`, Elevation: a.elevation,
+        Total: meters, "Actual Qty": r3(quantityWithWaste(meters, accessoryWastePercent(item.id))), "Zoho Item ID": item.id });
       handleHardwareQuantities(a).forEach(({ item: hardware, qty }) => out.push({
         SO: so, "Carcass Items": carcass, Accessory: `${ACC_LABEL[a.kind]} hardware`, Selected: "yes",
         "Item Name": hardware.materialDescription, Size: "Pcs", Elevation: a.elevation,
@@ -2186,17 +2343,22 @@ function buildAccessoryRows(accs: AccessoryRow[], project: ProjectLine[], so: st
       });
     }
   });
-  return out;
+  return out.map(row => {
+    const item = COSTING_ITEMS.find(item => item.id === row["Zoho Item ID"]) ?? otherAccessoryMasterItem(row["Item Name"]);
+    const waste = item ? wasteOverrides[item.id] : undefined;
+    return item?.rateBasis === "MTR" && waste !== undefined && waste >= 0 && waste < 100 && typeof row.Total === "number"
+      ? { ...row, "Actual Qty": quantityWithWaste(row.Total, waste) } : row;
+  });
 }
 
-function buildMasterAccessoryRows(accs: MasterAccessoryRow[], so: string): AccessoryExportRow[] {
+function buildMasterAccessoryRows(accs: MasterAccessoryRow[], so: string, wasteOverrides: Record<string, number> = {}): AccessoryExportRow[] {
   return accs.flatMap((row) => {
     const item = selectedMasterAccessory(row);
     if (!item) return [];
     return [{
       SO: so, "Carcass Items": "", Accessory: item.subgroup, Selected: "yes",
       "Item Name": item.materialDescription, Size: item.type, Elevation: row.elevation,
-      Total: row.qty, "Actual Qty": row.qty, "Zoho Item ID": item.priced ? item.id : "",
+      Total: row.qty, "Actual Qty": item.rateBasis === "MTR" ? quantityWithWaste(row.qty, wasteOverrides[item.id] ?? accessoryWastePercent(item.id)) : row.qty, "Zoho Item ID": item.priced ? item.id : "",
     }];
   });
 }
@@ -2220,6 +2382,7 @@ function mergeAccessoryExportRows(rows: AccessoryExportRow[]): AccessoryExportRo
 /* --- Costing — rupee totals for the user; factors stay on /admin --- */
 
 type CostDetail = {
+  exactQuantity?: boolean;
   boardQuantityKey?: string;
   purchaseAreaSqft?: number;
   category: string;
@@ -2233,7 +2396,15 @@ type CostDetail = {
   rate: number;
   amount: number;
   allocatedBillableQty?: number;
+  glassSize?: string;
 };
+function glassPieceDetail(detail: CostDetail, panel: Panel, pieces: number): CostDetail {
+  const size = `${panel.w} × ${panel.h} mm`;
+  return { ...detail, glassSize: size, item: `${detail.item} · ${size}`,
+    specification: `${detail.specification} · ${size} · cut pieces`,
+    netQty: pieces, billableQty: pieces, uom: "nos", wastePct: 0,
+    rate: pieces > 0 ? detail.amount / pieces : 0 };
+}
 function laminateCostDetail(group: "Carcass" | "Drawer" | "Shutter" | "Visible side", sheetPrice: string, panelSqft: number, wastePct: number,
   face: "both" | "front" | "back" = "both"): CostDetail {
   const material = group === "Shutter" || group === "Visible side" ? "SHUTTER" : "CARCASS";
@@ -2245,18 +2416,34 @@ function laminateCostDetail(group: "Carcass" | "Drawer" | "Shutter" | "Visible s
     netQty, wastePct, billableQty, uom: "sqft", rate, amount: billableQty * rate };
 }
 type LineCost = { label: string; code?: string; qty: number; unitCost: number; cost: number; details: CostDetail[] };
+function membraneFoilCostDetail(area: number, faces: number, wastePct: number, foilRate?: string, visible = false): CostDetail {
+  const netQty = area * faces;
+  const billableQty = quantityWithWaste(netQty, wastePct);
+  const rate = validBoardSheetPrice(foilRate) ? Number(foilRate) : PVC_FOIL_RATE;
+  return { category: `${visible ? "Visible side" : "Shutter"} PVC foil laminate`, itemCode: "PVC-FOIL-MODERN", item: "MODERN MEMBRANE PVC FOIL",
+    specification: `${faces} face(s) · ${PVC_FOIL_ROLL_WIDTH_MM} mm wide roll · variable length · ₹${rate} / sqft · no sheet conversion`, netQty, wastePct, billableQty,
+    uom: "sqft", rate, amount: billableQty * rate };
+}
 type CostingResult = { lines: LineCost[]; total: number; unpriced: string[]; purchases: PurchaseTotal[] };
+function displayedItemCostBreakdown(costing: CostingResult, cabinetCount: number, fillers: FillerRow[]) {
+  const panelCount = fillers.reduce((sum, filler) => sum + fillerPanelCount(filler), 0);
+  const fillerCost = costing.lines.slice(cabinetCount, cabinetCount + panelCount).reduce((sum, line) => sum + line.cost, 0);
+  return { baseItemCost: costing.total - fillerCost, fillerCost };
+}
 type ChargeMode = "sqft" | "direct";
 type NumericInput = number | "";
 type ServiceCharge = { mode: ChargeMode; value: NumericInput };
 type ProjectPricingInputs = {
+  batchQuantity?: number;
+  boardOpti?: BuilderOpti;
   conversionPct: NumericInput;
-  profitPct: NumericInput;
+  conversionModel?: "margin";
   transportation: ServiceCharge;
   installation: ServiceCharge;
   loading: ServiceCharge;
   includeTax: boolean;
   processingRates: Record<string, number>;
+  wasteOverrides?: Record<string, number>;
 };
 
 const PROCESSING_CATEGORIES = [
@@ -2291,12 +2478,14 @@ const materialItemsForCategory = (category: ProcessingCategory): CostingMasterIt
 
 function processingBoardForPanel(p: Panel, m: CarcassModel): ProcessingBoard | undefined {
   if (p.visibleSide) {
-    const item = shutterMasterItem(p.materialId ?? m.visibleSideMaterialId);
+    const selected = shutterMasterItem(p.materialId ?? m.visibleSideMaterialId);
+    const item = modernMembraneConstruction(selected)?.board ?? selected;
     return item?.rateBasis === "SQFT" ? { category: "Visible side material", item } : undefined;
   }
   if (p.pack === "Shutter Pack") {
     if (/glass/i.test(p.mat ?? "")) return undefined;
-    const item = shutterMasterItem(m.shType);
+    const selected = shutterMasterItem(m.shType);
+    const item = modernMembraneConstruction(selected)?.board ?? selected;
     return item?.rateBasis === "SQFT" ? { category: "Shutter material", item } : undefined;
   }
   if (/glass/i.test(p.mat ?? "")) return undefined;
@@ -2326,24 +2515,41 @@ function usedProcessingTypes(boards: ProcessingBoard[]): Array<{ category: Proce
 
 function extraProcessingBoard(panel: Panel): ProcessingBoard | undefined {
   const carcass = panel.pack === "Carcass Pack";
-  const item = carcass ? CARCASS_BOARD_ITEMS.find((candidate) => candidate.id === panel.materialId)
-    : shutterMasterItem(panel.materialId ?? "");
+  const selected = extraPanelMasterItem(panel);
+  const item = modernMembraneConstruction(selected)?.board ?? selected;
   if (!item || item.rateBasis !== "SQFT" || /glass/i.test(panel.mat ?? "")) return undefined;
   return { category: carcass ? "Carcass / shelf material"
     : panel.extraMaterialRole === "visible" ? "Visible side material" : "Shutter material", item };
 }
 
 const DEFAULT_PROJECT_PRICING: ProjectPricingInputs = {
-  conversionPct: "",
-  profitPct: "",
-  transportation: { mode: "direct", value: "" },
-  installation: { mode: "direct", value: "" },
-  loading: { mode: "direct", value: "" },
+  batchQuantity: 20,
+  conversionPct: 40,
+  conversionModel: "margin",
+  transportation: { mode: "sqft", value: 15 },
+  installation: { mode: "sqft", value: 95 },
+  loading: { mode: "sqft", value: 5 },
   includeTax: false,
   processingRates: {},
 };
 
+/** Service allocations may be supplied when pricing a single elevation. */
+function calculateProjectPricing(baseCost: number, totalSqft: number, factors: ProjectPricingInputs,
+  allocatedServices?: { transportation: number; installation: number; loading: number }) {
+  const charge = (service: ServiceCharge) => Number(service.value || 0) * (service.mode === "sqft" ? totalSqft : 1);
+  const { transportation, installation, loading } = allocatedServices ?? {
+    transportation: charge(factors.transportation), installation: charge(factors.installation), loading: charge(factors.loading),
+  };
+  const combinedSubtotal = baseCost + transportation + installation + loading;
+  const { conversion, subtotal, tax, total } = conversionMarginTotals(combinedSubtotal, factors.conversionPct, factors.includeTax);
+  return { baseCost, combinedSubtotal, conversion, convertedCost: subtotal, transportation, installation, loading,
+    subtotal, tax, grandTotal: total };
+}
+
 type ProjectRestore = {
+  optiSettings?: Record<string, Partial<StockSettings>>;
+  topFillerSettings?: TopFillerSettings;
+  topFillerMerges?: TopFillerMerge[];
   name?: string;
   project: ProjectLine[];
   fillers: FillerRow[];
@@ -2374,7 +2580,9 @@ function projectSetupRows(data: Omit<ProjectRestore, "notice">): ProjectSetupRow
   const row = (kind: string, value: unknown): ProjectSetupRow => ({ "Record Type": kind, Data: JSON.stringify(value) });
   return [
     row("format", { name: PROJECT_FILE_FORMAT, version: 2 }),
-    row("settings", { name: data.name ?? "", waste: data.waste, pricing: data.pricing, current: data.current }),
+    row("settings", { name: data.name ?? "", waste: data.waste, pricing: stripLegacyProfit(data.pricing), current: data.current,
+      batchQuantity: data.pricing.batchQuantity ?? 20, boardOpti: data.pricing.boardOpti,
+      topFillerSettings: data.topFillerSettings, topFillerMerges: data.topFillerMerges, optiSettings: data.optiSettings }),
     ...data.project.map((line) => row("cabinet", { id: line.id, config: cabinetConfig(line.m), qty: line.qty, elevation: line.elevation })),
     ...data.fillers.map((item) => row("filler", item)),
     ...(data.linkedFillerEdits ?? []).filter((item) => data.project.some((line) => line.id === item.linkedLineId)).map((item) => row("linked-filler-edit", item)),
@@ -2543,16 +2751,31 @@ function restoreProjectSetup(rows: Record<string, unknown>[], pdfMaterials?: Kit
   const format = records.find((record) => record.kind === "format")?.data;
   if (!isRecord(format) || format.name !== PROJECT_FILE_FORMAT || ![1, 2].includes(Number(format.version))) throw new Error("Unsupported Project Setup format.");
   const settings = records.find((record) => record.kind === "settings")?.data;
-  if (!isRecord(settings) || !isRecord(settings.waste) || !isRecord(settings.pricing)) throw new Error("Project settings are missing.");
+  if (isRecord(settings) && settings.optiSettings !== undefined && !validOptiSettings(settings.optiSettings)) throw new Error("Saved Opti material settings are invalid.");
+  if (isRecord(settings) && settings.topFillerSettings !== undefined && !validTopFillerSettings(settings.topFillerSettings)) throw new Error("Saved top-filler settings are invalid.");
+  if (isRecord(settings) && settings.topFillerMerges !== undefined && !validTopFillerMerges(settings.topFillerMerges)) throw new Error("Saved top-filler merges are invalid.");
+  if (!isRecord(settings) || !isRecord(settings.waste) || (!isRecord(settings.pricing) && !isRecord(settings.itemProcessingRates))) throw new Error("Project settings are missing.");
   const waste = { ...WASTE, ...settings.waste } as WastePct;
   if (![waste.carcass, waste.shutter, waste.profile, waste.edgeBand].every((n) => typeof n === "number" && Number.isFinite(n) && n >= 0 && n < 100)) throw new Error("Saved wastage settings must be below 100%.");
-  const pricing = settings.pricing as ProjectPricingInputs;
+  const pricing = (isRecord(settings.pricing) ? stripLegacyProfit(settings.pricing) : {
+    ...DEFAULT_PROJECT_PRICING, processingRates: settings.itemProcessingRates,
+    ...(settings.itemWasteOverrides ? { wasteOverrides: settings.itemWasteOverrides } : {}),
+  }) as ProjectPricingInputs;
+  pricing.conversionModel = "margin";
+  pricing.batchQuantity ??= typeof settings.batchQuantity === "number" ? settings.batchQuantity : 20;
+  if (!pricing.boardOpti && settings.boardOpti) pricing.boardOpti = settings.boardOpti as BuilderOpti;
   const validNumberInput = (value: unknown) => value === "" || (typeof value === "number" && Number.isFinite(value) && value >= 0);
   if (![pricing.transportation, pricing.installation, pricing.loading].every((charge) => isRecord(charge) && ["direct", "sqft"].includes(charge.mode as string) && validNumberInput(charge.value)) ||
-      !validNumberInput(pricing.conversionPct) || !validNumberInput(pricing.profitPct) || typeof pricing.includeTax !== "boolean") {
+      !validConversionMargin(pricing.conversionPct) || typeof pricing.includeTax !== "boolean") {
     throw new Error("Saved pricing settings are invalid.");
   }
   if (pricing.processingRates === undefined) pricing.processingRates = {};
+  if (pricing.batchQuantity !== undefined && (!Number.isSafeInteger(pricing.batchQuantity) || pricing.batchQuantity < 1)) throw new Error("Saved batch quantity must be a positive whole number.");
+  if (pricing.boardOpti !== undefined && (!isRecord(pricing.boardOpti) || typeof pricing.boardOpti.fingerprint !== "string" || !Number.isSafeInteger(pricing.boardOpti.batch) || pricing.boardOpti.batch < 1 || !isRecord(pricing.boardOpti.allocations) ||
+    Object.values(pricing.boardOpti.allocations).some(a => !isRecord(a) || ![a.sheets, a.netSqft, a.wastePct, a.batchSheets].every(n => typeof n === "number" && Number.isFinite(n) && n >= 0) || Number(a.wastePct) >= 100))) throw new Error("Saved Opti data is invalid.");
+  if (pricing.wasteOverrides !== undefined && (!isRecord(pricing.wasteOverrides) || Object.entries(pricing.wasteOverrides).some(([key, value]) =>
+      !["foil:shutter", "foil:visible", ...COSTING_ITEMS.filter(item => item.rateBasis === "MTR").map(item => item.id)].includes(key) ||
+      typeof value !== "number" || !Number.isFinite(value) || value < 0 || value >= 100))) throw new Error("Saved item wastage must be below 100%.");
   if (!isRecord(pricing.processingRates) || Object.entries(pricing.processingRates).some(([key, value]) =>
     (key !== "Counter Ply" && (!PROCESSING_CATEGORIES.some((category) => key.startsWith(`${category}|`)) ||
     ![...PROCESSING_TYPES, ...COSTING_ITEMS.filter((item) => item.rateBasis === "SQFT").map((item) => item.id)]
@@ -2580,6 +2803,7 @@ function restoreProjectSetup(rows: Record<string, unknown>[], pdfMaterials?: Kit
         typeof value.sourceItemId !== "string" || !project.some((line) => line.id === value.linkedLineId) ||
         (value.qty !== undefined && (typeof value.qty !== "number" || !Number.isFinite(value.qty) || value.qty < 0)) ||
         (value.manualRate !== undefined && !validAccessoryManualRate(value.manualRate)) ||
+        (value.priceChangeReason !== undefined && typeof value.priceChangeReason !== "string") ||
         (value.itemId !== undefined && typeof value.itemId !== "string") ||
         (value.elevation !== undefined && typeof value.elevation !== "string") ||
         (value.disabled !== undefined && typeof value.disabled !== "boolean")) {
@@ -2617,6 +2841,7 @@ function restoreProjectSetup(rows: Record<string, unknown>[], pdfMaterials?: Kit
     }
     if (kind === "accessory") {
       if (!validAccessoryManualRate(record.data.manualRate)) throw new Error("An accessory has an invalid manual price.");
+      if (record.data.priceChangeReason !== undefined && typeof record.data.priceChangeReason !== "string") throw new Error("An accessory has an invalid price-change reason.");
       if (record.data.itemId === "CUSTOM") {
         if (typeof record.data.customName !== "string" || !record.data.customName.trim() ||
             !["PCS", "SET", "MTR"].includes(String(record.data.customUnit ?? "PCS")) ||
@@ -2638,6 +2863,9 @@ function restoreProjectSetup(rows: Record<string, unknown>[], pdfMaterials?: Kit
   });
   return {
     name: typeof settings.name === "string" ? settings.name : "",
+    optiSettings: settings.optiSettings as Record<string, Partial<StockSettings>> | undefined,
+    topFillerSettings: pdfMaterials?._topFillers ?? settings.topFillerSettings as TopFillerSettings | undefined,
+    topFillerMerges: settings.topFillerMerges as TopFillerMerge[] | undefined,
     project, fillers: values<FillerRow>("filler"), linkedFillerEdits, visiblePanels: values<VisiblePanelRow>("visible-panel"),
     countertops: values<CountertopRow>("countertop"),
     accessories: values<AccessoryRow>("other-accessory").map((row) => restoreAccessoryRow(row, Number(format.version), project)),
@@ -2813,7 +3041,7 @@ function restoreCostingWorkbook(workbook: XLSX.WorkBook): ProjectRestore {
     const value = (name: string) => pricingRows.find((row) => row[0] === name)?.[1];
     const number = (name: string) => Number(value(name)) || 0;
     restored.pricing = {
-      ...restored.pricing, conversionPct: number("Conversion (%)"), profitPct: number("Profit (%)"),
+      ...restored.pricing, conversionPct: number("Conversion (%)"),
       transportation: { mode: value("Transportation method") === "sqft" ? "sqft" : "direct", value: number("Transportation rate / amount") },
       installation: { mode: value("Installation method") === "sqft" ? "sqft" : "direct", value: number("Installation rate / amount") },
       loading: { mode: value("Loading / Unloading method") === "sqft" ? "sqft" : "direct", value: number("Loading / Unloading rate / amount") },
@@ -2876,9 +3104,7 @@ function restoreLegacyPrintedPdf(pages: string[], pdfMaterials?: KitchenMaterial
   if (wasteMatch) restored.waste = { ...restored.waste, carcass: Number(wasteMatch[1]), shutter: Number(wasteMatch[2]), profile: Number(wasteMatch[3]) };
   const pricingText = allText.split("Project pricing factors")[1]?.split("Cabinet / item Billable sqft")[0] ?? "";
   const conversion = pricingText.match(/Conversion \(%\)\s*(\d+(?:\.\d+)?)/)?.[1];
-  const profit = pricingText.match(/Profit \(%\)\s*(\d+(?:\.\d+)?)/)?.[1];
   if (conversion !== undefined) restored.pricing.conversionPct = Number(conversion);
-  if (profit !== undefined) restored.pricing.profitPct = Number(profit);
   for (const [label, key] of [["Transportation", "transportation"], ["Installation", "installation"], ["Loading / Unloading", "loading"]] as const) {
     const section = pricingText.split(`${label}\n`)[1]?.split("\n")[0] ?? "";
     const value = section.match(/(Direct price|Per[- ]sqft|Per square foot)\s+(\d+(?:\.\d+)?)/i);
@@ -3036,10 +3262,23 @@ function computeCosting(
   globalShType: string, countertopShType: string, rates: CostingRates, wst: WastePct,
   processingRates: Record<string, number>,
   wholeProjectPurchases?: PurchaseTotal[],
-  boardQuantityOverrides: Record<string, { sheets: number; netSqft: number }> = {},
+  boardQuantityOverrides: Record<string, { sheets: number; netSqft: number; wastePct?: number }> = {},
+  profileFinishes?: ProfileFinishes,
+  counterPlyRates: Record<string, string> = {},
+  wasteOverrides: Record<string, number> = {},
 ): CostingResult {
   const lines: LineCost[] = [];
   const unpriced = new Set<string>();
+  const itemWaste = (key: string, fallback: number) => {
+    const value = wasteOverrides[key];
+    return typeof value === "number" && Number.isFinite(value) && value >= 0 && value < 100 ? value : fallback;
+  };
+  const finishDetail = (itemId: string, netMetres: number): CostDetail[] => {
+    const finish = profileFinishCost(itemId, netMetres, profileFinishes);
+    return finish ? [{ category: "Profile surface finishing", itemCode: `${itemId}-FINISH-${finish.finish}`,
+      item: `${itemId} · ${finish.finish}`, specification: `${netMetres.toFixed(3)}m × ${finish.width}mm developed width`,
+      netQty: finish.area, wastePct: 0, billableQty: finish.area, uom: "sqft", rate: finish.rate, amount: finish.amount }] : [];
+  };
 
 
   // Compatibility fallback for filler/visible-panel rows outside a cabinet.
@@ -3050,7 +3289,8 @@ function computeCosting(
     const st = isGlassShutterFam(m.fk) ? "GLASS" : m.shType;
     const details: CostDetail[] = [];
     let currentBoardQuantityKey: string | undefined;
-    const addDetail = (detail: CostDetail) => {
+    const addDetail = (input: CostDetail, glassPanel?: Panel, glassPieces?: number) => {
+      const detail = glassPanel && glassPieces !== undefined ? glassPieceDetail(input, glassPanel, glassPieces) : input;
       if (/board$/i.test(detail.category)) detail.boardQuantityKey = currentBoardQuantityKey;
       const existing = details.find((row) => row.boardQuantityKey === detail.boardQuantityKey && row.category === detail.category && row.itemCode === detail.itemCode && row.item === detail.item && row.rate === detail.rate && row.wastePct === detail.wastePct);
       if (existing) {
@@ -3076,16 +3316,21 @@ function computeCosting(
       const a = sqft(p.w, p.h) * p.qty * l.qty;
       if (p.pack === "Shutter Pack" || p.visibleSide) {
         const panelShutterType = p.visibleSide ? (p.materialId ?? m.visibleSideMaterialId) : /glass/i.test(p.mat ?? "") ? "GLASS" : m.shType;
-        const masterItem = panelShutterType === "GLASS" ? glassShutterItemOf(m.glassType) : shutterMasterItem(panelShutterType);
+        const selectedItem = panelShutterType === "GLASS" ? glassShutterItemOf(m.glassType) : shutterMasterItem(panelShutterType);
+        const membrane = modernMembraneConstruction(selectedItem);
+        const masterItem = membrane?.board ?? selectedItem;
         if (!masterItem) { unpriced.add(`${shOf(panelShutterType).label} shutter board`); return; }
         const billed = quantityWithWaste(a, wst.shutter);
+        const membranePrice = m.boardPrices?.[p.visibleSide ? "visible" : "shutter"];
         const rate = panelShutterType === "GLASS" && m.zk === "WC" && m.fk === "WGL" &&
           m.glassPricePerSqft !== undefined ? Number(m.glassPricePerSqft)
-          : selectedBoardRate(masterItem, m.boardPrices?.[p.visibleSide ? "visible" : "shutter"]);
-        const boardFinish = selectedBoardFinish(masterItem.id, m.boardPrices?.[p.visibleSide ? "visible" : "shutter"], m.finish);
-        currentBoardQuantityKey = boardCostKey(p.mat ?? "Board", p.t ?? T, boardFinish, rate);
-        addDetail({ category: p.visibleSide ? "Visible side board" : panelShutterType === "GLASS" ? "Shutter glass" : "Shutter board", itemCode: masterItem.id, item: panelShutterType === "GLASS" ? masterItem.materialDescription : `${masterItem.materialDescription} · ${boardFinish}`, specification: `${masterItem.subgroup} · ${masterItem.thicknessMm ?? "—"}mm${p.visibleSide ? ` · ${p.drill ?? "side"}` : ""}${panelShutterType === "GLASS" ? "" : ` · ${boardFinish}`}`, netQty: a, wastePct: wst.shutter, billableQty: billed, uom: "sqft", rate, amount: billed * rate });
-        if (isPostlamItem(masterItem)) {
+          : membrane && membranePrice && membranePrice.itemId === selectedItem?.id && validBoardSheetPrice(membranePrice.sheetPrice)
+            ? Number(membranePrice.sheetPrice) / 32 : selectedBoardRate(masterItem, m.boardPrices?.[p.visibleSide ? "visible" : "shutter"]);
+        const boardFinish = selectedBoardFinish(selectedItem?.id ?? masterItem.id, m.boardPrices?.[p.visibleSide ? "visible" : "shutter"], m.finish);
+        currentBoardQuantityKey = boardCostKey(membrane ? masterItem.itemName ?? masterItem.materialDescription : p.mat ?? "Board", p.t ?? T, boardFinish, rate);
+        addDetail({ category: p.visibleSide ? "Visible side board" : panelShutterType === "GLASS" ? "Shutter glass" : "Shutter board", itemCode: masterItem.id, item: panelShutterType === "GLASS" ? masterItem.materialDescription : `${masterItem.materialDescription} · ${boardFinish}`, specification: `${masterItem.subgroup} · ${masterItem.thicknessMm ?? "—"}mm${p.visibleSide ? ` · ${p.drill ?? "side"}` : ""}${panelShutterType === "GLASS" ? "" : ` · ${boardFinish}`}`, netQty: a, wastePct: wst.shutter, billableQty: billed, uom: "sqft", rate, amount: billed * rate }, panelShutterType === "GLASS" ? p : undefined, p.qty * l.qty);
+        if (membrane) addDetail(membraneFoilCostDetail(a, membrane.faces, itemWaste(p.visibleSide ? "foil:visible" : "foil:shutter", wst.shutter), membranePrice?.itemId === selectedItem?.id ? membranePrice?.pvcFoilRate : undefined, !!p.visibleSide));
+        else if (isPostlamItem(masterItem)) {
           addLaminateCost(p.visibleSide ? "Visible side" : "Shutter",
             p.visibleSide ? m.visibleLamFrontSheetPrice : m.shutterLamFrontSheetPrice,
             p.visibleSide ? m.visibleLamBackSheetPrice : m.shutterLamBackSheetPrice, masterItem, a, wst.shutter);
@@ -3102,7 +3347,7 @@ function computeCosting(
         const sheetAreaSqft = masterItem.id === SINK_STONE_BOARD_ID ? stoneSlabSqft(m.boardPrices?.carcass?.slabSqft) : 32;
         currentBoardQuantityKey = boardCostKey(p.mat ?? "Board", p.t ?? T, boardFinish, rate, sheetAreaSqft);
         addDetail({ category, itemCode: masterItem.id, item: category === "Glass shelf" ? masterItem.materialDescription : `${masterItem.materialDescription} · ${boardFinish}`, specification: `${masterItem.subgroup} · ${masterItem.thicknessMm ?? "—"}mm${category === "Glass shelf" ? "" : ` · ${boardFinish}`}`, netQty: a, wastePct: boardWaste, billableQty: billed, uom: "sqft", rate, amount: billed * rate,
-          ...(masterItem.id === SINK_STONE_BOARD_ID ? { purchaseAreaSqft: sheetAreaSqft } : {}) });
+          ...(masterItem.id === SINK_STONE_BOARD_ID ? { purchaseAreaSqft: sheetAreaSqft } : {}) }, category === "Glass shelf" ? p : undefined, p.qty * l.qty);
         if (isPostlamItem(masterItem)) {
           const group = category === "Drawer board" ? "Drawer" : "Carcass";
           const frontPrice = category === "Drawer board" ? m.drawerLamFrontSheetPrice
@@ -3125,6 +3370,9 @@ function computeCosting(
     });
     m.panels.filter((panel) => panel.band).forEach((panel) => {
       const field = edgeBandFieldForPanel(panel, m.board, m.backBoardId, m.drawerBoardId);
+      const selected = field === "visible" ? shutterMasterItem(panel.materialId ?? m.visibleSideMaterialId)
+        : field === "shutter" ? shutterMasterItem(m.shType) : undefined;
+      if (selected && shutterFamily(selected) === "MEMBRANE") return;
       const shutter = field === "shutter" || field === "visible";
       const master = findCostingItem({ group: "Edge Band", subgroup: shutter ? "Shutter" : "Carcass", rateBasis: "MTR" });
       if (!master) return;
@@ -3132,20 +3380,22 @@ function computeCosting(
       const billed = quantityWithWaste(bandM, edgeBandWaste(wst));
       const selection = edgeBandForMaterial(m.edgeBand, field);
       const rate = Number(selection.pricePerRmt);
-      addDetail({ category: shutter ? "Shutter edge band" : "Carcass edge band", itemCode: master.id, item: `${master.materialDescription} · ${selection.finish}`, specification: `${field} · ${master.thicknessMm ?? "—"}mm · ${selection.finish}`, netQty: bandM, wastePct: edgeBandWaste(wst), billableQty: billed, uom: "RMT", rate, amount: billed * rate });
+      addDetail({ category: field === "visible" ? "Visible side edge band" : shutter ? "Shutter edge band" : "Carcass edge band", itemCode: master.id, item: `${master.materialDescription} · ${selection.finish}`, specification: `${field} · ${master.thicknessMm ?? "—"}mm · ${selection.finish}`, netQty: bandM, wastePct: edgeBandWaste(wst), billableQty: billed, uom: "RMT", rate, amount: billed * rate });
     });
     m.profiles.forEach((profile) => {
       const masterProfile = profileMasterItem(profile, m.neon);
       if (!masterProfile) unpriced.add(`${profile.name} (${profile.type})`);
       const netM = profile.len / 1000 * profile.qty * l.qty;
-      const billedM = quantityWithWaste(netM, wst.profile);
+      const profileWaste = itemWaste(masterProfile?.id ?? "", wst.profile);
+      const billedM = quantityWithWaste(netM, profileWaste);
+      if (masterProfile) finishDetail(masterProfile.id, netM).forEach(detail => addDetail(detail));
       addDetail({
         category: "Profile",
         itemCode: masterProfile?.id ?? `UNPRICED-${hardwareNameKey(profile.name)}`,
         item: masterProfile?.materialDescription ?? profile.name,
         specification: `${masterProfile?.type ?? "Rate required — BOM profile"} · ${profile.orientation ?? (profile.type === "V" ? "vertical" : "horizontal")} · ${profile.len}mm × ${profile.qty} per cabinet`,
         netQty: netM,
-        wastePct: wst.profile,
+        wastePct: profileWaste,
         billableQty: billedM,
         uom: "RMT",
         rate: masterProfile?.currentRate ?? 0,
@@ -3181,8 +3431,9 @@ function computeCosting(
       addDetail({ category: masterHardware?.group ?? "Hardware", itemCode: masterHardware?.id ?? `UNPRICED-${hardwareNameKey(h.name)}`, item: masterHardware?.materialDescription ?? h.name, specification: h.pack, netQty: h.qty * l.qty, wastePct: 0, billableQty: h.qty * l.qty, uom: masterHardware?.rateBasis === "MTR" || /^(Mtr|RMT)$/i.test(h.uom) ? "RMT" : masterHardware?.rateBasis === "KG" ? "kg" : masterHardware?.rateBasis === "SET" ? "set" : "nos", rate, amount: h.qty * l.qty * rate });
     });
     // Board-face laminate and edge band already have detailed cost lines above.
-    // Every remaining consumable must stay visible, even without a matching price.
-    m.cons.filter((c) => !/^EDGE BAND /i.test(c.name) && !/^(CARCASS(?: FRONT| BACK)?|DRAWER|SHUTTER|VISIBLE SIDE) LAMINATE /i.test(c.name)).forEach((c) => {
+    // PU/Membrane are finished-material rates: coating, epoxy, polish and
+    // wrapping consumables remain in the production BOM, not as extra charges.
+    m.cons.filter((c) => !/^(?:PU|MEMBRANE|MODERN MEMBRANE PVC FOIL)\b/i.test(c.name) && !/^EDGE BAND /i.test(c.name) && !/^(CARCASS(?: FRONT| BACK)?|DRAWER|SHUTTER|VISIBLE SIDE) LAMINATE /i.test(c.name)).forEach((c) => {
       const item = COSTING_ITEMS.find((candidate) => costingItemNames(candidate).some((name) => hardwareNameKey(name) === hardwareNameKey(c.name)));
       const unit = c.uom.toLowerCase();
       const uom: CostDetail["uom"] = unit === "gm" ? "gm" : unit === "kg" ? "kg" : unit === "ml" ? "ml" : unit === "sqft" ? "sqft" : /^(rmt|mtr)$/.test(unit) ? "RMT" : unit === "set" ? "set" : "nos";
@@ -3204,18 +3455,20 @@ function computeCosting(
   extrasPanels.forEach((p) => {
     const st = p.materialId ?? globalShType;
     const isCarcassSide = p.pack === "Carcass Pack";
-    const boardItem = isCarcassSide
-      ? CARCASS_BOARD_ITEMS.find((item) => item.id === p.materialId)
-      : shutterMasterItem(p.materialId ?? st);
-    const rate = boardItem ? selectedBoardRate(boardItem, p.extraBoardPrice) : 0;
+    const selectedItem = extraPanelMasterItem(p, st);
+    const membrane = modernMembraneConstruction(selectedItem);
+    const boardItem = membrane?.board ?? selectedItem;
+    const rate = membrane && p.extraBoardPrice && p.extraBoardPrice.itemId === selectedItem?.id && validBoardSheetPrice(p.extraBoardPrice.sheetPrice)
+      ? Number(p.extraBoardPrice.sheetPrice) / 32 : boardItem ? selectedBoardRate(boardItem, p.extraBoardPrice) : 0;
     const net = sqft(p.w, p.h) * p.qty;
     const boardWaste = isCarcassSide ? wst.carcass : wst.shutter;
     const billed = quantityWithWaste(net, boardWaste);
     const category = isCarcassSide ? "Carcass board" : p.extraMaterialRole === "visible" ? "Visible side board" : "Shutter board";
     const panelFinish = p.extraFinish ?? "White";
     const details: CostDetail[] = [{ category, itemCode: boardItem?.id ?? "—", item: `${boardItem?.materialDescription ?? p.mat ?? shOf(st).mat} · ${panelFinish}`, specification: `${boardItem?.subgroup ?? (isCarcassSide ? "Carcass" : shOf(st).label)} · ${boardItem?.thicknessMm ?? p.t ?? "—"}mm · ${panelFinish}`, netQty: net, wastePct: boardWaste, billableQty: billed, uom: "sqft", rate, amount: billed * rate }];
-    details[0].boardQuantityKey = boardCostKey(p.mat ?? "Board", p.t ?? T, panelFinish, rate);
-    if (isPostlamItem(boardItem)) {
+    details[0].boardQuantityKey = boardCostKey(membrane && boardItem ? boardItem.itemName ?? boardItem.materialDescription : p.mat ?? "Board", p.t ?? T, panelFinish, rate);
+    if (membrane) details.push(membraneFoilCostDetail(net, membrane.faces, itemWaste(p.extraMaterialRole === "visible" ? "foil:visible" : "foil:shutter", boardWaste), p.extraBoardPrice?.itemId === selectedItem?.id ? p.extraBoardPrice?.pvcFoilRate : undefined, p.extraMaterialRole === "visible"));
+    else if (isPostlamItem(boardItem)) {
       const laminate = isCarcassSide ? p.extraCarcassLaminate : p.extraLaminate;
       const frontPrice = laminate?.front;
       const backPrice = laminate?.back;
@@ -3235,14 +3488,14 @@ function computeCosting(
         details.push({ category: `${extraBoard.category} processing`, itemCode: `${extraBoard.item.id}-PROC`, item: extraBoard.item.materialDescription, specification: "Processing cost per billable board sqft", netQty: net, wastePct: boardWaste, billableQty: processingSqft, uom: "sqft", rate: processingRate, amount: processingSqft * processingRate });
       }
     }
-    if (p.band) {
+    if (p.band && (!selectedItem || shutterFamily(selectedItem) !== "MEMBRANE")) {
       const band = perim(p.w, p.h) * p.qty;
       const bandBilled = quantityWithWaste(band, edgeBandWaste(wst));
       const bandItem = findCostingItem({ group: "Edge Band", subgroup: isCarcassSide ? "Carcass" : "Shutter", rateBasis: "MTR" });
       const field = p.extraMaterialRole ?? (isCarcassSide ? "carcass" : "shutter");
       const selection = edgeBandForMaterial(p.extraEdgeBand, field);
       const bandRate = Number(selection.pricePerRmt);
-      details.push({ category: "Edge band", itemCode: bandItem?.id ?? "—", item: `${bandItem?.materialDescription ?? `${isCarcassSide ? "Carcass" : "Shutter matching"} edge band`} · ${selection.finish}`, specification: `${field} · 0.8mm · ${selection.finish}`, netQty: band, wastePct: edgeBandWaste(wst), billableQty: bandBilled, uom: "RMT", rate: bandRate, amount: bandBilled * bandRate });
+      details.push({ category: field === "visible" ? "Visible side edge band" : field === "shutter" ? "Shutter edge band" : "Carcass edge band", itemCode: bandItem?.id ?? "—", item: `${bandItem?.materialDescription ?? `${isCarcassSide ? "Carcass" : "Shutter matching"} edge band`} · ${selection.finish}`, specification: `${field} · 0.8mm · ${selection.finish}`, netQty: band, wastePct: edgeBandWaste(wst), billableQty: bandBilled, uom: "RMT", rate: bandRate, amount: bandBilled * bandRate });
     }
     const cost = details.reduce((sum, detail) => sum + detail.amount, 0);
     lines.push({ label: `${p.name}`, qty: p.qty, unitCost: p.qty ? cost / p.qty : cost, cost, details });
@@ -3259,7 +3512,7 @@ function computeCosting(
     }
     const qty = Math.max(1, countertop.qty || 1);
     const netQty = counterPlyCostSqft(countertop);
-    const rate = selected?.currentRate ?? Number(countertop.ratePerSqft);
+    const rate = selected && validBoardSheetPrice(counterPlyRates[selected.id]) ? Number(counterPlyRates[selected.id]) : selected?.currentRate ?? Number(countertop.ratePerSqft);
     const material = selected?.materialDescription ?? (countertop.material.trim() || "Unspecified material");
     const label = `Counter Ply ${material} ${thickness}mm ${length}x${depth}`;
     const processingRate = processingRates["Counter Ply"] ?? DEFAULT_BOARD_PROCESSING_RATES["Counter Ply"];
@@ -3278,6 +3531,7 @@ function computeCosting(
     lines.push({ label, qty, unitCost: (amount + processingDetail.amount) / qty, cost: amount + processingDetail.amount, details: [{
       category: "Counter Ply", itemCode: selected?.id ?? `CT-${length}x${depth}x${thickness}`,
       item: material, specification: `${selected?.subgroup ?? "Custom material"} · ${length}×${depth}×${thickness}mm · bought-in`,
+      boardQuantityKey: boardCostKey(material, thickness, "Raw", rate),
       netQty, wastePct: 0, billableQty: netQty, uom: "sqft", rate, amount,
     }, processingDetail] });
   });
@@ -3288,7 +3542,12 @@ function computeCosting(
     const addAccessoryDetail = (name: string, specification: string, netQty: number, billableQty: number, uom: CostDetail["uom"], wastePct = 0) => {
       const item = otherAccessoryMasterItem(name);
       const rate = item?.currentRate ?? 0;
+      if (item && uom === "RMT") {
+        wastePct = itemWaste(item.id, accessoryWastePercent(item.id));
+        billableQty = quantityWithWaste(netQty, wastePct);
+      }
       if (!item) unpriced.add(name);
+      if (item && uom === "RMT") details.push(...finishDetail(item.id, netQty));
       details.push({
         category: "Other accessory",
         itemCode: item?.id ?? `UNPRICED-${hardwareNameKey(name)}`,
@@ -3304,13 +3563,13 @@ function computeCosting(
     };
     if (accessory.kind === "skirting") {
       const netM = accessoryMeters(accessory);
-      addAccessoryDetail("PVC SKIRTING PROFILE 100MM", `${accessory.size}m × ${accessory.qty} skirting pieces`, netM, quantityWithWaste(netM, SKIRT_WASTE * 100), "RMT", SKIRT_WASTE * 100);
+      addAccessoryDetail(skirtingMasterItem(profileFinishes).materialDescription, `${accessory.size}m × ${accessory.qty} skirting pieces`, netM, quantityWithWaste(netM, SKIRT_WASTE * 100), "RMT", SKIRT_WASTE * 100);
       if (accessory.straight > 0) addAccessoryDetail("SKIRTING STRAIGHT CONNECTOR", "Straight connector", accessory.straight, accessory.straight, "nos");
       if (accessory.lconn > 0) addAccessoryDetail("SKIRTING L CONNECTOR", "L connector", accessory.lconn, accessory.lconn, "nos");
-    } else if (accessory.kind === "c-handle" || accessory.kind === "j-handle") {
+    } else if (accessory.kind === "c-handle" || accessory.kind === "j-handle" || accessory.kind === "g-handle") {
       const item = HANDLE_ITEMS[accessory.kind];
       const meters = accessoryMeters(accessory);
-      addAccessoryDetail(item.materialDescription, `${accessory.size}m × ${accessory.qty} handle pieces`, meters, meters, "RMT");
+      addAccessoryDetail(item.materialDescription, `${accessory.size}m × ${accessory.qty} handle pieces${accessory.openingSide ? ` · ${accessory.openingSide}` : ""}`, meters, meters, "RMT");
       handleHardwareQuantities(accessory).forEach(({ item: hardware, qty }) =>
         addAccessoryDetail(hardware.materialDescription, `${qty} pcs for ${accessory.kind} handles`, qty, qty, "nos"));
     } else {
@@ -3326,7 +3585,7 @@ function computeCosting(
     }
     const cost = details.reduce((sum, detail) => sum + detail.amount, 0);
     const qty = accessory.qty;
-    const label = `${accessory.elevation ? `${accessory.elevation} · ` : ""}${ACC_LABEL[accessory.kind]}`;
+    const label = `${accessory.elevation ? `${accessory.elevation} · ` : ""}${ACC_LABEL[accessory.kind]}${accessory.openingSide ? ` · ${accessory.openingSide}` : ""}`;
     if (accessory.kind === "c-handle" || accessory.kind === "j-handle") {
       const key = `${accessory.elevation}\u0000${accessory.kind}`;
       const previous = handleCostLines.get(key);
@@ -3389,13 +3648,23 @@ function computeCosting(
     lines.push(line);
   });
 
+  for (const line of accessoryCostLines.values()) {
+    const detail = line.details[0];
+    if (detail.uom === "RMT") {
+      detail.wastePct = itemWaste(detail.itemCode, accessoryWastePercent(detail.itemCode));
+      detail.billableQty = quantityWithWaste(detail.netQty, detail.wastePct);
+      detail.amount = detail.billableQty * detail.rate;
+    }
+    if (detail.uom === "RMT") line.details.push(...finishDetail(detail.itemCode, detail.netQty));
+  }
   for (const line of lines) for (const detail of line.details) {
-    if (!detail.boardQuantityKey || !/board$/i.test(detail.category)) continue;
+    if (!detail.boardQuantityKey || !(/board$/i.test(detail.category) || detail.category === "Counter Ply")) continue;
     const override = boardQuantityOverrides[detail.boardQuantityKey];
     if (!override || !Number.isFinite(override.sheets) || override.sheets < 0 || override.netSqft <= 0) continue;
     const factor = override.sheets * (detail.purchaseAreaSqft ?? 32) / override.netSqft;
     detail.billableQty = detail.netQty * factor;
-    detail.wastePct = factor > 0 ? (1 - 1 / factor) * 100 : 0;
+    detail.wastePct = override.wastePct ?? (factor > 0 ? (1 - 1 / factor) * 100 : 0);
+    detail.exactQuantity = override.wastePct !== undefined;
     detail.amount = detail.billableQty * detail.rate;
   }
   const purchases = allocatePurchaseCosts(lines, wholeProjectPurchases);
@@ -3403,12 +3672,13 @@ function computeCosting(
 }
 
 function kitchenCostingSnapshot(restored: ProjectRestore, materials: KitchenMaterials | undefined, rates: CostingRates,
-  boardSheetInputs: Record<string, string> = {}): KitchenCostingSnapshot {
+  boardSheetInputs: Record<string, string> = {}, onCosting?: (costing: CostingResult) => void): KitchenCostingSnapshot {
   const project = restored.project;
   const linkedFillers = cabinetFillers(project).map((filler) => ({
     ...filler, ...restored.linkedFillerEdits?.find((edit) => edit.linkedLineId === filler.linkedLineId && (edit.fillerSide ?? "LH") === filler.fillerSide),
   })).filter((filler) => !filler.disabled);
-  const fillers = [...restored.fillers, ...linkedFillers];
+  const sideFillers = [...restored.fillers, ...linkedFillers];
+  const fillers = [...sideFillers, ...automaticTopFillers(project, sideFillers, materials?._topFillers ?? restored.topFillerSettings ?? DEFAULT_TOP_FILLERS, restored.topFillerMerges).rows];
   const linkedAccessories = cabinetAccessories(project, restored.linkedAccessoryEdits ?? []).filter((row) => !row.disabled);
   const masterAccessories = [...restored.masterAccessories, ...linkedAccessories];
   const edits = new Map(restored.accessories.filter((row) => row.automaticKey).map((row) => [row.automaticKey, row]));
@@ -3429,14 +3699,17 @@ function kitchenCostingSnapshot(restored: ProjectRestore, materials: KitchenMate
       back: current?.shutterLamBackSheetPrice ?? DEFAULT_LAMINATE_PRICES.shutterLamBackSheetPrice },
     { itemId: current?.visibleSideMaterialId ?? MATERIAL_MASTER.visibleSideShutterMaterialId,
       front: current?.visibleLamFrontSheetPrice ?? "550", back: current?.visibleLamBackSheetPrice ?? "550" });
-  const boardOverrides = Object.fromEntries(buildBoardTotals(project, restored.waste, extras.panels).flatMap((board) => {
+  const savedOpti = restored.pricing.boardOpti;
+  const autoOverrides = savedOpti?.fingerprint === builderOptiFingerprint(project, extras.panels, restored.countertops, materials, restored.pricing.batchQuantity ?? 20, restored.optiSettings) ? savedOpti.allocations : {};
+  const boardOverrides = { ...autoOverrides, ...Object.fromEntries(buildBoardTotals(project, restored.waste, extras.panels).flatMap((board) => {
     const key = board.key;
     const input = boardSheetInputs[key];
     return board.sheets !== null && input !== undefined && input.trim() !== "" && Number.isFinite(Number(input)) && Number(input) >= 0
       ? [[key, { sheets: roundQuantity(Number(input)), netSqft: board.sqft }]] : [];
-  }));
+  })) };
   const costing = computeCosting(project, fillers, restored.visiblePanels, restored.countertops, extras.panels, accessories,
-    masterAccessories, shutterType, counterShutterType, rates, restored.waste, restored.pricing.processingRates, undefined, boardOverrides);
+    masterAccessories, shutterType, counterShutterType, rates, restored.waste, restored.pricing.processingRates, undefined, boardOverrides, materials?._profileFinishes, materials?._counterPlyRates, restored.pricing.wasteOverrides);
+  onCosting?.(costing);
   const cabinetArea = project.reduce((sum, line) => sum + sqft(line.m.W, cabinetAreaHeight(line.m.zk, line.m.H)) * line.qty, 0);
   let panelIndex = 0;
   const fillerArea = fillers.reduce((sum, filler) => {
@@ -3450,25 +3723,142 @@ function kitchenCostingSnapshot(restored: ProjectRestore, materials: KitchenMate
   }, 0);
   const areaSqft = cabinetArea + fillerArea + counterArea;
   const factor = restored.pricing;
-  const conversion = costing.total * Number(factor.conversionPct || 0) / 100;
-  const profit = (costing.total + conversion) * Number(factor.profitPct || 0) / 100;
-  const charge = (value: ServiceCharge) => value.mode === "sqft" ? Number(value.value || 0) * areaSqft : Number(value.value || 0);
-  const transportation = charge(factor.transportation);
-  const installation = charge(factor.installation);
-  const loading = charge(factor.loading);
-  const subtotal = costing.total + conversion + profit + transportation + installation + loading;
-  const tax = factor.includeTax ? subtotal * 0.18 : 0;
-  return { areaSqft, materialCost: costing.total, conversion, profit, transportation, installation, loading,
-    tax, total: subtotal + tax, unpriced: costing.unpriced,
+  const { conversion, transportation, installation, loading, tax, grandTotal } = calculateProjectPricing(costing.total, areaSqft, factor);
+  return { areaSqft, materialCost: costing.total, conversion, conversionModel: "margin", transportation, installation, loading,
+    tax, total: grandTotal, unpriced: costing.unpriced,
     items: costing.purchases.map((item) => ({ category: item.categories.join(", "), itemCode: item.itemCode, item: item.item,
       unit: item.unit, quantity: item.quantity, rate: item.rate, amount: item.amount })) };
 }
 
 /* --- Full BOM → BomReportRow, so export.ts (xlsx) can consume it --- */
 
+function profileStockLengthMm(item: CostingMasterItem | undefined): number | undefined {
+  const text = `${item?.materialDescription ?? ""} ${item?.type ?? ""}`;
+  const mm = text.match(/\b(\d{4,5})\s*[xX×]/);
+  if (mm) return Number(mm[1]);
+  const metres = text.match(/\b(\d+(?:\.\d+)?)\s*(?:MTR|METRE|METER)\b/i);
+  return metres ? Number(metres[1]) * 1000 : undefined;
+}
+
+/** Reuse the builder's actual panel and hardware rules; no saved quote is modified. */
+export function productionInputFromEntry(entry: KitchenWorkspaceEntry): ProductionInput {
+  const restored = restoreProjectSetup(entry.rows, entry.materials);
+  const result: ProductionInput = { id: entry.id, name: entry.name, version: entry.savedCostingVersion ?? 0,
+    parts: [], supplies: [], foilCosting: [], warnings: [] };
+  const addPanel = (panel: Panel, selected: CostingMasterItem | undefined, price: BoardPriceOverride | undefined,
+    finish: string, qty: number, cabinet: string, elevation: string, role: string, bandFinish: string) => {
+    if (!selected) throw new Error(`Production material missing: ${entry.name} / ${panel.name}`);
+    const membrane = modernMembraneConstruction(selected);
+    const board = membrane?.board ?? selected;
+    const rate = membrane && price?.itemId === selected.id && validBoardSheetPrice(price.sheetPrice)
+      ? Number(price.sheetPrice) / 32 : selectedBoardRate(board, price);
+    const part: ProductionPart = { id: `${entry.id}:${result.parts.length + 1}`, kitchenId: entry.id, kitchen: entry.name,
+      elevation, cabinet, panel: panel.name, role, materialId: board.id, material: board.materialDescription,
+      finish: price?.finish || finish, thickness: panel.t ?? board.thicknessMm ?? 0,
+      length: panel.h, width: panel.w, qty: panel.qty * qty, rate,
+      kind: /glass/i.test(board.materialDescription) ? "glass" : board.id === SINK_STONE_BOARD_ID ? "stone" : "board",
+      edgeBand: panel.band && !membrane ? bandFinish : "", drill: panel.drill ?? "", grainLocked: false,
+      costingKey: boardCostKey(membrane ? board.itemName ?? board.materialDescription : panel.mat ?? "Board", panel.t ?? T,
+        selectedBoardFinish(selected.id, price, finish), rate) };
+    const category: ProcessingCategory = role === "Visible side" ? "Visible side material" : role === "Shutter" ? "Shutter material"
+      : role === "Drawer" ? "Drawer material" : role === "Carcass back" ? "Carcass back material" : "Carcass / shelf material";
+    const type = processingType(board);
+    const rateKey = type ? processingKey(category, type) : "";
+    if (part.kind !== "glass" && (rateKey in restored.pricing.processingRates || `${category}|${board.id}` in restored.pricing.processingRates || rateKey in DEFAULT_BOARD_PROCESSING_RATES)) {
+      part.processingRate = processingRateFor(restored.pricing.processingRates, category, board);
+    }
+    if (part.kind === "stone") { part.stockLengthMm = Number(price?.slabLengthMm || 2400); part.stockWidthMm = Number(price?.slabWidthMm || 800); }
+    result.parts.push(part);
+    if (membrane) result.parts.push({ ...part, id: `${part.id}:foil`, kind: "foil", thickness: 0,
+      materialId: "PVC-FOIL-MODERN", material: "MODERN MEMBRANE PVC FOIL", qty: part.qty * membrane.faces,
+      rate: validBoardSheetPrice(price?.pvcFoilRate) ? Number(price?.pvcFoilRate) : PVC_FOIL_RATE, edgeBand: "", drill: "", processingRate: undefined });
+  };
+  for (const line of restored.project) {
+    const m = line.m;
+    result.warnings.push(...m.stubs.map(warning => `${entry.name} / ${m.code}: ${warning}`));
+    for (const panel of m.panels) {
+      const field = edgeBandFieldForPanel(panel, m.board, m.backBoardId, m.drawerBoardId);
+      const selected = panel.visibleSide ? shutterMasterItem(panel.materialId ?? m.visibleSideMaterialId)
+        : panel.pack === "Shutter Pack" ? /glass/i.test(panel.mat ?? "") ? glassShutterItemOf(m.glassType) : shutterMasterItem(m.shType)
+        : carcassMasterItem(m.board, m.backBoardId, m.drawerBoardId, panel);
+      addPanel(panel, selected, m.boardPrices?.[field], m.finish, line.qty, m.code, line.elevation,
+        panel.visibleSide ? "Visible side" : panel.pack === "Shutter Pack" ? "Shutter" : panel.pack === "Drawer Pack" ? "Drawer" : field === "back" ? "Carcass back" : "Carcass",
+        edgeBandForMaterial(m.edgeBand, field).finish);
+    }
+    for (const profile of m.profiles) {
+      const item = profileMasterItem(profile, m.neon);
+      result.parts.push({ id: `${entry.id}:${result.parts.length + 1}`, kitchenId: entry.id, kitchen: entry.name,
+        elevation: line.elevation, cabinet: m.code, panel: profile.name, role: profile.pack,
+        materialId: item?.id ?? profile.name, material: item?.materialDescription ?? profile.name,
+        finish: entry.materials?._profileFinishes?.handles ?? "Powder coating", thickness: 0,
+        length: profile.len, width: 1, qty: profile.qty * line.qty, rate: item?.currentRate ?? 0,
+        kind: "profile", edgeBand: "", drill: "", grainLocked: true, stockLengthMm: profileStockLengthMm(item) });
+    }
+  }
+  const linked = cabinetFillers(restored.project).map(filler => ({ ...filler,
+    ...restored.linkedFillerEdits?.find(edit => edit.linkedLineId === filler.linkedLineId && (edit.fillerSide ?? "LH") === filler.fillerSide) })).filter(filler => !filler.disabled);
+  const shutterType = restored.current?.config.shType ?? entry.materials?.Base.shutter.itemId ?? DEFAULT_SHTYPE;
+  const current = restored.current?.config ?? (restored.project[0] ? cabinetConfig(restored.project[0].m) : undefined);
+  const sideFillers = [...restored.fillers, ...linked];
+  const topFillers = automaticTopFillers(restored.project, sideFillers, entry.materials?._topFillers ?? restored.topFillerSettings ?? DEFAULT_TOP_FILLERS, restored.topFillerMerges);
+  const extras = buildExtrasBom([...sideFillers, ...topFillers.rows], restored.visiblePanels, [], restored.project, "", shutterType, shutterType,
+    current?.finish ?? "White", restored.waste, entry.materials, current?.board ?? DEFAULT_BOARD_ID,
+    { front: current?.shutterLamFrontSheetPrice ?? "550", back: current?.shutterLamBackSheetPrice ?? "550" },
+    { itemId: current?.visibleSideMaterialId ?? MATERIAL_MASTER.visibleSideShutterMaterialId,
+      front: current?.visibleLamFrontSheetPrice ?? "550", back: current?.visibleLamBackSheetPrice ?? "550" });
+  result.bom = [...restored.project.flatMap(line => buildFullBomData([line], entry.name, line.m.finish, restored.waste)), ...extras.rows]
+    .map(row => Object.fromEntries(Object.entries(row).filter(([key]) => !key.startsWith("_"))));
+  const accessoryEdits = new Map(restored.accessories.filter(row => row.automaticKey).map(row => [row.automaticKey, row]));
+  const automaticAccessories = calculatedAccessories(restored.project, [...restored.fillers, ...linked]).flatMap(row => {
+    const edit = accessoryEdits.get(row.automaticKey);
+    return edit?.disabled ? [] : [{ ...row, ...edit }];
+  });
+  for (const accessory of [...restored.accessories.filter(row => !row.automaticKey), ...mergeJHandleRuns(automaticAccessories)]) {
+    const item = accessory.kind === "skirting" ? skirtingMasterItem(entry.materials?._profileFinishes)
+      : accessory.kind === "elenor" ? COSTING_ITEMS.find(item => item.id === "KITCHEN-084")! : HANDLE_ITEMS[accessory.kind];
+    const length = accessoryMeters(accessory) * 1000 / accessory.qty;
+    if (length <= 0) continue;
+    result.parts.push({ id: `${entry.id}:${result.parts.length + 1}`, kitchenId: entry.id, kitchen: entry.name,
+      elevation: accessory.elevation, cabinet: accessory.automaticKey ?? "Extra accessory", panel: ACC_LABEL[accessory.kind],
+      role: "Profile", materialId: item.id, material: item.materialDescription,
+      finish: accessory.kind === "elenor" ? "Anodised" : accessory.kind === "skirting" ? entry.materials?._profileFinishes?.skirtingMaterial === "Aluminium" ? entry.materials._profileFinishes.skirting : "PVC prefinished" : entry.materials?._profileFinishes?.handles ?? "Powder coating",
+      thickness: 0, length, width: 1, qty: accessory.qty, rate: item.currentRate,
+      kind: "profile", edgeBand: "", drill: "", grainLocked: true, stockLengthMm: profileStockLengthMm(item) });
+  }
+  for (const panel of extras.panels) {
+    const selected = extraPanelMasterItem(panel, shutterType);
+    addPanel(panel, selected, panel.extraBoardPrice, panel.extraFinish ?? "White", 1, "Extra panel", "",
+      panel.extraMaterialRole === "visible" ? "Visible side" : panel.pack === "Carcass Pack" ? "Carcass" : "Shutter",
+      edgeBandForMaterial(panel.extraEdgeBand, panel.extraMaterialRole === "visible" ? "visible" : "shutter").finish);
+  }
+  for (const counter of restored.countertops) {
+    const item = countertopMaterialItem(counter, shutterType);
+    if (!item) throw new Error(`${entry.name} / Counter Ply ${counter.id}: select a master material before generating production cuts.`);
+    addPanel({ name: `Counter Ply ${counter.id}`, h: Number(counter.length), w: Number(counter.depth || 600), t: counterPlyThickness(counter, shutterType), qty: counter.qty, pack: "Counter Ply", drill: null },
+      item, undefined, "Raw", 1, "Counter Ply", "", "Counter Ply", "");
+    const counterRate = entry.materials?._counterPlyRates?.[item.id];
+    if (counterRate !== undefined && validBoardSheetPrice(counterRate)) result.parts[result.parts.length - 1].rate = Number(counterRate);
+    const counterPart = result.parts[result.parts.length - 1];
+    counterPart.processingRate = restored.pricing.processingRates["Counter Ply"] ?? DEFAULT_BOARD_PROCESSING_RATES["Counter Ply"];
+    counterPart.costingKey = boardCostKey(item.materialDescription, counterPart.thickness, "Raw", counterPart.rate);
+  }
+  kitchenCostingSnapshot(restored, entry.materials, DEFAULT_RATES, entry.boardSheetInputs, costing => {
+    for (const line of costing.lines) for (const detail of line.details) {
+      if (/processing$|board$|glass|surface finishing|PVC foil/i.test(detail.category) || detail.category === "Counter Ply") continue;
+      result.supplies.push({ kitchen: entry.name, elevation: line.label.split(" · ")[0], cabinet: line.code ?? line.label,
+        pack: detail.specification || detail.category, itemCode: detail.itemCode, item: detail.item, qty: detail.billableQty,
+        unit: detail.uom, orderFrom: "Unassigned" });
+    }
+    result.foilCosting = costing.purchases.filter(item => item.itemCode === "PVC-FOIL-MODERN").map(item => ({
+      role: item.categories.join(", "), quantity: item.quantity, rate: item.rate, unit: item.unit }));
+    result.warnings.push(...costing.unpriced.map(item => `Rate not defined: ${item}`));
+  });
+  return result;
+}
+
 function toReportRows(rows: FullBomRow[]): BomReportRow[] {
   return rows.map((r) => ({
-    sourceOrderId: "", sourceOrderNumber: r.SO, customerName: "",
+      sourceOrderId: "", sourceOrderNumber: r.SO, customerName: "", elevation: r.Elevation,
     itemId: "", itemName: r.Item, sku: r.SKU || r.Item,
     groupName: r["Sub Group"], masterGroup: r["Main Group"],
     cfGroup: "", cfSubGroup: r["Sub Group"],
@@ -3488,7 +3878,26 @@ function toReportRows(rows: FullBomRow[]): BomReportRow[] {
 /*  Component                                                          */
 /* ------------------------------------------------------------------ */
 
-export function WoodBomBuilder({ soMode = false, planningMode = false, materials: selectedMaterials }: { soMode?: boolean; planningMode?: boolean; materials?: KitchenMaterials } = {}) {
+export function WoodBomBuilder({ soMode = false, planningMode = false, materials: selectedMaterials, localCostingUser, canViewProjectPricing = false, openAccessAdmin = false }: { soMode?: boolean; planningMode?: boolean; materials?: KitchenMaterials; localCostingUser?: { username: string; role: "user" | "admin" }; canViewProjectPricing?: boolean; openAccessAdmin?: boolean } = {}) {
+  const [savedAccessoryItems, setSavedAccessoryItems] = useState<SavedAccessoryItem[]>([]);
+  const [accessoryMasterError, setAccessoryMasterError] = useState("");
+  useEffect(() => {
+    if (!localCostingUser) return;
+    let alive = true, latest = 0;
+    const refresh = async () => {
+      const request = ++latest;
+      try {
+        const response = await fetch("/api/accessory-master", { cache: "no-store" });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || "Could not load saved accessories.");
+        if (alive && request === latest) { setSavedAccessoryItems(result.items); setAccessoryMasterError(""); }
+      } catch (error) { if (alive && request === latest) setAccessoryMasterError(error instanceof Error ? error.message : "Could not load saved accessories."); }
+    };
+    void refresh();
+    window.addEventListener("wood-bom-accessory-master-updated", refresh);
+    window.addEventListener("focus", refresh);
+    return () => { alive = false; window.removeEventListener("wood-bom-accessory-master-updated", refresh); window.removeEventListener("focus", refresh); };
+  }, [localCostingUser?.username]);
   const railRef = useRef<HTMLElement>(null);
   const pdfImportRef = useRef<HTMLInputElement>(null);
   const bulkPdfImportRef = useRef<HTMLInputElement>(null);
@@ -3572,6 +3981,8 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
   /* --- new sections: fillers / visible panels / countertop / accessories --- */
   const [fillers, setFillers] = useState<FillerRow[]>([]);
   const [linkedFillerEdits, setLinkedFillerEdits] = useState<LinkedFillerEdit[]>([]);
+  const [savedTopFillerSettings, setSavedTopFillerSettings] = useState<TopFillerSettings>(DEFAULT_TOP_FILLERS);
+  const [topFillerMerges, setTopFillerMerges] = useState<TopFillerMerge[]>([]);
   const [visiblePanels, setVisiblePanels] = useState<VisiblePanelRow[]>([]);
   const [countertops, setCountertops] = useState<CountertopRow[]>([]);
   const [accessories, setAccessories] = useState<AccessoryRow[]>([]);
@@ -3584,7 +3995,10 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
   })), [project, linkedFillerEdits]);
   const displayedLinkedFillers = visibleSuggestedRows(linkedFillers, showRemovedFillers);
   const removedFillerCount = linkedFillers.length - visibleSuggestedRows(linkedFillers, false).length;
-  const allFillers = useMemo(() => [...fillers, ...linkedFillers.filter((filler) => !filler.disabled)], [fillers, linkedFillers]);
+  const sideFillers = useMemo(() => [...fillers, ...linkedFillers.filter((filler) => !filler.disabled)], [fillers, linkedFillers]);
+  const topFillerSettings = materials?._topFillers ?? savedTopFillerSettings;
+  const topFillerRuns = useMemo(() => automaticTopFillers(project, sideFillers, topFillerSettings, topFillerMerges), [project, sideFillers, topFillerSettings, topFillerMerges]);
+  const allFillers = useMemo(() => [...sideFillers, ...topFillerRuns.rows], [sideFillers, topFillerRuns.rows]);
   const automaticAccessories = useMemo(() => calculatedAccessories(project, allFillers), [project, allFillers]);
   const allAccessories = useMemo(() => {
     const manual = accessories.filter((row) => !row.automaticKey);
@@ -3608,13 +4022,18 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
   const allMasterAccessories = useMemo(() => [...masterAccessories, ...linkedAccessories.filter((row) => !row.disabled)], [masterAccessories, linkedAccessories]);
   const [waste, setWaste] = useState({ ...WASTE });
   const [boardSheetInputs, setBoardSheetInputs] = useState<Record<string, string>>({});
+  const [optiBusy, setOptiBusy] = useState(false);
+  const [optiSettings, setOptiSettings] = useState<Record<string, Partial<StockSettings>>>({});
+  const [optiError, setOptiError] = useState("");
+  const [optiCharts, setOptiCharts] = useState<ReturnType<typeof runBuilderOpti> | null>(null);
   const [projectPricingInputs, setProjectPricingInputs] = useState<ProjectPricingInputs>(DEFAULT_PROJECT_PRICING);
   const [pricingModalOpen, setPricingModalOpen] = useState(false);
-  const [pricingAdminUnlocked, setPricingAdminUnlocked] = useState(false);
+  const [pricingAdminUnlocked, setPricingAdminUnlocked] = useState(openAccessAdmin || localCostingUser?.role === "admin");
   const [pricingAdminPassword, setPricingAdminPassword] = useState("");
   const [pricingAdminError, setPricingAdminError] = useState("");
   const [pricingAdminChecking, setPricingAdminChecking] = useState(false);
   const [draftPricing, setDraftPricing] = useState<ProjectPricingInputs>(DEFAULT_PROJECT_PRICING);
+  const [draftWaste, setDraftWaste] = useState<WastePct>({ ...WASTE });
   const [draftProcessingRates, setDraftProcessingRates] = useState<Record<string, string>>({});
   const [selectedProcessingTypes, setSelectedProcessingTypes] = useState<Partial<Record<ProcessingCategory, ProcessingType>>>({});
   const [replacementTypes, setReplacementTypes] = useState<Partial<Record<ProcessingCategory, ProcessingType>>>({});
@@ -3650,15 +4069,21 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
   const resetAutomaticAcc = (source: AccessoryRow) => setAccessories((current) => current.filter((row) => row.automaticKey !== source.automaticKey));
   const rmAcc = (id: number) => setAccessories((c) => c.filter((r) => r.id !== id));
   const addMasterAcc = () => setMasterAccessories((c) => [...c, { id: nextIdOf(c), itemId: MASTER_ACCESSORY_ITEMS[0]?.id ?? "", qty: 1, elevation: "", manualRate: "" }]);
-  const updMasterAcc = (id: number, p: Partial<MasterAccessoryRow>) => setMasterAccessories((c) => c.map((r) => r.id === id ? { ...r, ...p } : r));
+  const accessorySelection = (itemId: string) => {
+    const saved = savedAccessoryItems.find(item => item.id === itemId);
+    return saved ? savedAccessorySelection(saved) : { itemId, customMasterId: undefined, customName: undefined, customUnit: undefined, customBrand: undefined, manualRate: "", priceChangeReason: "" };
+  };
+  const updMasterAcc = (id: number, p: Partial<MasterAccessoryRow>) => setMasterAccessories((c) => c.map((r) => r.id === id ? { ...r,
+    ...((p.manualRate !== undefined && p.manualRate !== r.manualRate || p.itemId !== undefined && p.itemId !== r.itemId) ? { priceChangeReason: "" } : {}), ...p } : r));
   const updLinkedAcc = (source: MasterAccessoryRow, change: Partial<LinkedAccessoryEdit>) => setLinkedAccessoryEdits((current) => {
     const linkedLineId = source.linkedLineId;
     const sourceItemId = source.sourceItemId;
     if (linkedLineId === undefined || !sourceItemId) return current;
     const existing = current.find((row) => row.linkedLineId === linkedLineId && row.sourceItemId === sourceItemId);
+    const updated = { ...((change.manualRate !== undefined && change.manualRate !== source.manualRate || change.itemId !== undefined && change.itemId !== source.itemId) ? { priceChangeReason: "" } : {}), ...change };
     return existing
-      ? current.map((row) => row === existing ? { ...row, ...change } : row)
-      : [...current, { linkedLineId, sourceItemId, ...change }];
+      ? current.map((row) => row === existing ? { ...row, ...updated } : row)
+      : [...current, { linkedLineId, sourceItemId, ...updated }];
   });
   const resetLinkedAcc = (source: MasterAccessoryRow) => setLinkedAccessoryEdits((current) =>
     current.filter((row) => row.linkedLineId !== source.linkedLineId || row.sourceItemId !== source.sourceItemId));
@@ -3773,7 +4198,7 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
     setShelfOverride(null);
     setVid(fams[f].variants[0].id);
     const s = defSizes(zk, f);
-    setW(s.w[0]); setH(zoneHeights[zk] ?? H); setD(s.d);
+    setW(s.w[0]); setH(f === "WLU" ? s.h[0] : zoneHeights[zk] ?? H); setD(s.d);
     setFillerWidth(null); setFillerSides("LH"); setFillerWidthRH(FILLER_DEF_W);
   }, [zk, fkSafe, fams, materials, applyMaterialChoices, zoneHeights, H]);
 
@@ -3817,8 +4242,8 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
     const loadedFamily = famSetOf(config.zk)[config.fk];
     setVid(loadedFamily ? widthVariant(config.zk, loadedFamily, config.vid, config.W) : config.vid);
     setHand(config.hand);
-    setHandle(config.handle === "XCJ" && /^(WC|WB|LO|LB|MD)/.test(config.zk) ? "NONE" : config.handle);
-    setHandlePrice(config.handlePrice ?? ""); setHandleBrand(config.handleBrand ?? ""); setBoard(config.board); setBackBoardId(config.backBoardId); setDrawerBoardId(config.drawerBoardId); setShType(config.shType);
+    setHandle(config.zk === "WC" && config.fk === "WLU" ? "PUSH" : config.handle === "XCJ" && /^(WC|WB|LO|LB|MD)/.test(config.zk) ? "NONE" : config.handle);
+    setHandlePrice(config.fk === "WLU" && config.handle !== "PUSH" ? "" : config.handlePrice ?? ""); setHandleBrand(config.handleBrand ?? ""); setBoard(config.board); setBackBoardId(config.backBoardId); setDrawerBoardId(config.drawerBoardId); setShType(config.shType);
     setVisibleSides(config.visibleSides); setVisibleSideMaterialId(config.visibleSideMaterialId);
     setCarcassLamFrontSheetPrice(config.carcassLamFrontSheetPrice);
     setCarcassLamBackSheetPrice(config.carcassLamBackSheetPrice);
@@ -3861,6 +4286,8 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
     setLinkedAccessoryEdits(restored.linkedAccessoryEdits ?? []);
     setBoardSheetInputs(boardInputs);
     setFillers(restored.fillers); setVisiblePanels(restored.visiblePanels);
+    setSavedTopFillerSettings(restored.topFillerSettings ?? DEFAULT_TOP_FILLERS); setTopFillerMerges(restored.topFillerMerges ?? []);
+    setOptiSettings(restored.optiSettings ?? {});
     setCountertops(restored.countertops); setAccessories(restored.accessories);
     setMasterAccessories(restored.masterAccessories);
     setWaste(restored.waste); setProjectPricingInputs(restored.pricing);
@@ -3885,6 +4312,7 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
       if (project.length > 0 && !window.confirm("Replace the current project with the imported file?")) return;
       if (restored.hasSavedMaterialSnapshot && restored.project.length) {
         const imported = materialsFromImportedCabinets(restored.project.map((line) => cabinetConfig(line.m)), materials);
+        imported.materials._topFillers ??= restored.topFillerSettings;
         const response = await fetch("/api/kitchen-materials", {
           method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(imported.materials),
         });
@@ -3920,20 +4348,25 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
       shutterLamFrontSheetPrice, shutterLamBackSheetPrice, visibleSideMaterialId, visibleLamFrontSheetPrice, visibleLamBackSheetPrice],
   );
   const boardTotals = useMemo(() => buildBoardTotals(project, waste, extras.panels), [project, waste, extras]);
-  const boardQuantityOverrides = useMemo(() => Object.fromEntries(boardTotals.flatMap((b) => {
+  const batchQuantity = projectPricingInputs.batchQuantity ?? 20;
+  const optiSource = useMemo(() => builderOptiFingerprint(project, extras.panels, countertops, materials, batchQuantity, optiSettings), [project, extras.panels, countertops, materials, batchQuantity, optiSettings]);
+  const validOpti = projectPricingInputs.boardOpti?.fingerprint === optiSource ? projectPricingInputs.boardOpti : undefined;
+  const chartsCurrent = optiCharts?.saved.fingerprint === optiSource && optiCharts.input.id === (activeKitchen || "current")
+    && optiCharts.input.name === `${kitchenName.trim() || "Kitchen"} × ${batchQuantity}`;
+  const boardQuantityOverrides = useMemo(() => ({ ...validOpti?.allocations, ...Object.fromEntries(boardTotals.flatMap((b) => {
     const key = b.key;
     const value = boardSheetInputs[key];
     return b.sheets !== null && value !== undefined && value.trim() !== "" && Number.isFinite(Number(value)) && Number(value) >= 0
       ? [[key, { sheets: roundQuantity(Number(value)), netSqft: b.sqft }]] : [];
-  })), [boardTotals, boardSheetInputs]);
+  })) }), [boardTotals, boardSheetInputs, validOpti]);
   const fullBom = useMemo(
     () => [...buildFullBomData(project, soMode ? "SO" : "", finish, waste), ...extras.rows],
     [project, soMode, finish, waste, extras],
   );
   const accessoryRows = useMemo(() => mergeAccessoryExportRows([
-    ...buildAccessoryRows(allAccessories, project, soMode ? "SO" : ""),
-    ...buildMasterAccessoryRows(allMasterAccessories, soMode ? "SO" : ""),
-  ]), [allAccessories, allMasterAccessories, project, soMode]);
+    ...buildAccessoryRows(allAccessories, project, soMode ? "SO" : "", projectPricingInputs.wasteOverrides, materials?._profileFinishes),
+    ...buildMasterAccessoryRows(allMasterAccessories, soMode ? "SO" : "", projectPricingInputs.wasteOverrides),
+  ]), [allAccessories, allMasterAccessories, project, soMode, projectPricingInputs.wasteOverrides, materials?._profileFinishes]);
   const rawSelections = useMemo(() => Object.entries(rawMap).flatMap(([key, state]) => {
     if (!state.sel) return [];
     const item = state.items.find((candidate) => candidate.item_id === state.sel);
@@ -3941,9 +4374,51 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
   }), [rawMap]);
   const projectSetup = useMemo(() => projectSetupRows({
     name: kitchenName, project, fillers, linkedFillerEdits, visiblePanels, countertops, accessories, masterAccessories, linkedAccessoryEdits,
+    topFillerSettings, topFillerMerges, optiSettings,
     waste, pricing: projectPricingInputs, rawSelections,
     current: W > 0 && H > 0 && D > 0 ? { config: cabinetConfig(m), elevation, qty } : undefined,
-  }), [kitchenName, project, fillers, linkedFillerEdits, visiblePanels, countertops, accessories, masterAccessories, linkedAccessoryEdits, waste, projectPricingInputs, rawSelections, W, H, D, m, elevation, qty]);
+  }), [kitchenName, project, fillers, linkedFillerEdits, visiblePanels, countertops, accessories, masterAccessories, linkedAccessoryEdits, waste, projectPricingInputs, rawSelections, W, H, D, m, elevation, qty, topFillerSettings, topFillerMerges, optiSettings]);
+  const accessoryPriceChanges = useMemo(() => {
+    const previous = kitchens.find(entry => entry.id === activeKitchen);
+    return priceChangesFor({ rows: projectSetup.filter(row => ["accessory", "linked-accessory-edit"].includes(row["Record Type"])),
+      priceChanges: previous?.priceChanges }, previous);
+  }, [projectSetup, kitchens, activeKitchen]);
+  function accessoryReason(rows: MasterAccessoryRow[], linked: boolean, onChange: (reason: string) => void) {
+    const changes = rows.flatMap(row => accessoryPriceChanges.filter(change =>
+      change.key === `${linked ? "linked-accessory-edit" : "accessory"}.${linked ? row.linkedLineId : row.id}.manualRate` &&
+      change.itemCode === row.itemId));
+    if (!changes.length) return null;
+    const reasons = new Set(changes.map(change => change.reason));
+    const value = reasons.size === 1 ? changes[0].reason : "";
+    return <label style={{ display: "grid", gap: 4, marginTop: 6, minWidth: 240 }}>
+      Reason for price change{changes.some(change => !change.legacy) ? " (required)" : ""}
+      <PriceReasonInput value={value} required={changes.some(change => !change.legacy)}
+        label={`Reason for ${rows[0].customName ?? selectedMasterAccessory(rows[0])?.subgroup ?? "accessory"} price`}
+        onChange={onChange} />
+    </label>;
+  }
+  const optiMaterialGroups = useMemo(() => {
+    try { return productionGroups([productionInputFromEntry({ id: activeKitchen || "current", name: kitchenName || "Kitchen", rows: projectSetup, materials })]); }
+    catch { return []; } // Run Opti reports the underlying configuration error.
+  }, [activeKitchen, kitchenName, projectSetup, materials]);
+  async function runCurrentOpti() {
+    setOptiBusy(true); setOptiError("");
+    await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+    try {
+      const input = productionInputFromEntry({ id: activeKitchen || "current", name: kitchenName.trim() || "Kitchen", rows: projectSetup, materials });
+      const result = runBuilderOpti(input, batchQuantity, optiSource, optiSettings);
+      setOptiCharts(result);
+      setProjectPricingInputs(old => ({ ...old, boardOpti: result.saved }));
+      setBoardSheetInputs(old => Object.fromEntries(Object.entries(old).filter(([key]) => !(key in result.saved.allocations))));
+    } catch (error) { setOptiError(error instanceof Error ? error.message : "Opti failed."); }
+    finally { setOptiBusy(false); }
+  }
+  function downloadCurrentChart() {
+    if (!optiCharts || !chartsCurrent) return;
+    const url = URL.createObjectURL(new Blob([cuttingChartHtml(optiCharts.groups, kitchenName || "Kitchen", batchQuantity)], { type: "text/html;charset=utf-8" }));
+    const link = document.createElement("a"); link.href = url; link.download = "Kitchen_Opti_Cutting_Chart.html"; link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
   useEffect(() => {
     const saved = window.sessionStorage.getItem(MATERIAL_EDIT_DRAFT_KEY);
     if (!saved || !materials) return;
@@ -3958,6 +4433,8 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
       setSelectedProjectLineIds([]);
       setLinkedAccessoryEdits(restored.linkedAccessoryEdits ?? []);
       setFillers(restored.fillers); setVisiblePanels(restored.visiblePanels);
+      setSavedTopFillerSettings(restored.topFillerSettings ?? DEFAULT_TOP_FILLERS); setTopFillerMerges(restored.topFillerMerges ?? []);
+      setOptiSettings(restored.optiSettings ?? {});
       setCountertops(restored.countertops); setAccessories(restored.accessories);
       setMasterAccessories(restored.masterAccessories);
       setWaste(restored.waste); setProjectPricingInputs(restored.pricing);
@@ -4010,15 +4487,16 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
   // Initialize the browser-local kitchen workspace only once.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  const printRestoreLines = useMemo(() => encodeProjectPrintData(projectSetup), [projectSetup]);
+  const sharedProjectSetup = useMemo(() => canViewProjectPricing ? projectSetup : stripDesignerProjectRows(projectSetup), [canViewProjectPricing, projectSetup]);
+  const printRestoreLines = useMemo(() => encodeProjectPrintData(sharedProjectSetup), [sharedProjectSetup]);
   const processingBoards = useMemo(() => usedProcessingBoards(project), [project]);
   const processingTypes = useMemo(() => usedProcessingTypes(processingBoards), [processingBoards]);
   const displayedProcessingTypes = PROCESSING_CATEGORIES.flatMap((category) => PROCESSING_TYPES
     .filter((type) => processingTypes.some((row) => row.category === category && row.type === type) || replacementTypes[category] === type)
     .map((type) => ({ category, type })));
   const costing = useMemo(
-    () => computeCosting(project, allFillers, visiblePanels, countertops, extras.panels, allAccessories, allMasterAccessories, shType, countertopShutterType, rates, waste, projectPricingInputs.processingRates, undefined, boardQuantityOverrides),
-    [project, allFillers, visiblePanels, countertops, extras, allAccessories, allMasterAccessories, shType, countertopShutterType, rates, waste, projectPricingInputs.processingRates, boardQuantityOverrides],
+    () => computeCosting(project, allFillers, visiblePanels, countertops, extras.panels, allAccessories, allMasterAccessories, shType, countertopShutterType, rates, waste, projectPricingInputs.processingRates, undefined, boardQuantityOverrides, materials?._profileFinishes, materials?._counterPlyRates, projectPricingInputs.wasteOverrides),
+    [project, allFillers, visiblePanels, countertops, extras, allAccessories, allMasterAccessories, shType, countertopShutterType, rates, waste, projectPricingInputs.processingRates, boardQuantityOverrides, materials?._profileFinishes, materials?._counterPlyRates, projectPricingInputs.wasteOverrides],
   );
   const projectPricing = useMemo(() => {
     const cabinetAreas = project.map((line) => {
@@ -4058,20 +4536,8 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
     });
     const counterPlySqft = counterPlyAreas.reduce((total, line) => total + line.sqft, 0);
     const totalSqft = cabinetSqft + fillerSqft + counterPlySqft;
-    const serviceAmount = (charge: ServiceCharge) => charge.mode === "sqft"
-      ? Number(charge.value || 0) * totalSqft
-      : Number(charge.value || 0);
-    const baseCost = costing.total;
-    const conversionPct = Number(projectPricingInputs.conversionPct || 0);
-    const profitPct = Number(projectPricingInputs.profitPct || 0);
-    const conversion = baseCost * conversionPct / 100;
-    const convertedCost = baseCost + conversion;
-    const profit = convertedCost * profitPct / 100;
-    const transportation = serviceAmount(projectPricingInputs.transportation);
-    const installation = serviceAmount(projectPricingInputs.installation);
-    const loading = serviceAmount(projectPricingInputs.loading);
-    const subtotal = convertedCost + profit + transportation + installation + loading;
-    const tax = projectPricingInputs.includeTax ? subtotal * 0.18 : 0;
+    const totals = calculateProjectPricing(costing.total, totalSqft, projectPricingInputs);
+    const { transportation, installation, loading } = totals;
     const allocate = (line: { label: string; qty: number; eachSqft: number; sqft: number }) => {
       const share = totalSqft > 0 ? line.sqft / totalSqft : 0;
       const allocation = (charge: ServiceCharge, total: number) => charge.mode === "sqft"
@@ -4087,13 +4553,13 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
     const allocatedCharges = cabinetAreas.map(allocate);
     const fillerCharges = fillerAreas.map((line) => ({ ...allocate(line), elevation: line.elevation }));
     const counterPlyCharges = counterPlyAreas.map(allocate);
-    return { cabinetSqft, fillerSqft, counterPlySqft, totalSqft, baseCost, conversion, convertedCost, profit, transportation, installation, loading, subtotal, tax, grandTotal: subtotal + tax, allocatedCharges, fillerCharges, counterPlyCharges, fillerAreaSlots };
+    return { cabinetSqft, fillerSqft, counterPlySqft, totalSqft, ...totals, allocatedCharges, fillerCharges, counterPlyCharges, fillerAreaSlots };
   }, [costing, project, allFillers, countertops, countertopShutterType, extras, projectPricingInputs]);
   const currentCostingSnapshot = useMemo<KitchenCostingSnapshot>(() => ({
     areaSqft: projectPricing.totalSqft,
     materialCost: projectPricing.baseCost,
     conversion: projectPricing.conversion,
-    profit: projectPricing.profit,
+    conversionModel: "margin",
     transportation: projectPricing.transportation,
     installation: projectPricing.installation,
     loading: projectPricing.loading,
@@ -4103,6 +4569,10 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
     items: costing.purchases.map((item) => ({ category: item.categories.join(", "), itemCode: item.itemCode,
       item: item.item, unit: item.unit, quantity: item.quantity, rate: item.rate, amount: item.amount })),
   }), [costing, projectPricing]);
+  const entriesToSave = useMemo(() => kitchens.map((entry) => entry.id === activeKitchen ? {
+    ...entry, name: kitchenName, rows: projectSetup, materials, boardSheetInputs,
+    costing: currentCostingSnapshot, manualCosting: manualCosting ?? undefined,
+  } : entry), [kitchens, activeKitchen, kitchenName, projectSetup, materials, boardSheetInputs, currentCostingSnapshot, manualCosting]);
   const saveActiveKitchen = () => {
     const stored = readKitchenWorkspace();
     const updated = stored.map((entry) => entry.id === activeKitchen ? { ...entry, name: kitchenName,
@@ -4131,6 +4601,8 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
       if (selected.rows.length) applyRestoredKitchen(restoreProjectSetup(selected.rows), selected.boardSheetInputs ?? {});
       else {
         setProject([]); setFillers([]); setLinkedFillerEdits([]); setVisiblePanels([]); setCountertops([]);
+        setSavedTopFillerSettings(DEFAULT_TOP_FILLERS); setTopFillerMerges([]);
+        setOptiSettings({});
         setAccessories([]); setLinkedAccessoryEdits([]); setMasterAccessories([]); setBoardSheetInputs({});
         setWaste({ ...WASTE }); setProjectPricingInputs(DEFAULT_PROJECT_PRICING); setEditingLineId(null);
       }
@@ -4164,9 +4636,10 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
         if (!file.name.toLowerCase().endsWith(".pdf")) throw new Error(`${file.name} is not a PDF.`);
         const restored = await readProjectFile(file, materials);
         restored.name = kitchenNameFromPdfFilename(file.name);
-        const importedMaterials = restored.hasSavedMaterialSnapshot && restored.project.length
+        const inferredMaterials = restored.hasSavedMaterialSnapshot && restored.project.length
           ? materialsFromImportedCabinets(restored.project.map((line) => cabinetConfig(line.m)), materials).materials
           : materials;
+        const importedMaterials = inferredMaterials ? { ...inferredMaterials, _topFillers: inferredMaterials._topFillers ?? restored.topFillerSettings } : undefined;
         additions.push({ id: crypto.randomUUID(), name: restored.name ?? "", sourceName: file.name, rows: projectSetupRows(restored),
           materials: importedMaterials, boardSheetInputs: {}, costing: kitchenCostingSnapshot(restored, importedMaterials, rates) });
       }
@@ -4185,7 +4658,12 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
       if (!populated.length) throw new Error("Import or add a kitchen before downloading bulk costing.");
       if (populated.some((entry) => !entry.name.trim())) throw new Error("Enter a name for every kitchen before downloading bulk costing.");
       if (new Set(populated.map((entry) => entry.name.trim().toLowerCase())).size !== populated.length) throw new Error("Give each kitchen a different name before downloading bulk costing.");
-      exportBulkCostingWorkbook(populated.map((entry) => ({ name: entry.name.trim(), ...entry.costing! })));
+      const exportBulk = canViewProjectPricing ? exportBulkCostingWorkbook : exportDesignerBulkCostingWorkbook;
+      exportBulk(populated.map((entry) => {
+        const restored = restoreProjectSetup(entry.rows);
+        return { name: entry.name.trim(), ...kitchenCostingSnapshot(restored, entry.materials ?? materials, rates, entry.boardSheetInputs ?? {}),
+          factors: restored.pricing };
+      }));
     } catch (error) { setImportError(error instanceof Error ? error.message : "Could not download bulk costing."); }
   };
   const updateManualCosting = (value: ManualCostingImport | null) => {
@@ -4267,17 +4745,21 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
     { itemId: visibleSideMaterialId, front: visibleLamFrontSheetPrice, back: visibleLamBackSheetPrice },
   ), [activeElevation, extras, shownFillers, shownVisiblePanels, project, soMode, shType, countertopShutterType, finish, waste, materials, board,
     shutterLamFrontSheetPrice, shutterLamBackSheetPrice, visibleSideMaterialId, visibleLamFrontSheetPrice, visibleLamBackSheetPrice]);
-  const shownBoardTotals = boardTotals;
+  const shownBoardTotals = boardTotals.map(board => {
+    const override = boardQuantityOverrides[board.key];
+    return override ? { ...board, sheets: override.sheets, billableSqft: override.sheets * board.sheetAreaSqft,
+      waste: "wastePct" in override ? Number(override.wastePct) : override.sheets > 0 ? (1 - board.sqft / (override.sheets * board.sheetAreaSqft)) * 100 : 0 } : board;
+  });
   const shownCosting = useMemo(() => activeElevation === null ? costing : computeCosting(
     shownProject, shownFillers, shownVisiblePanels, countertops, shownExtras.panels, shownAccessories, shownMasterAccessories,
-    shType, countertopShutterType, rates, waste, projectPricingInputs.processingRates, costing.purchases, boardQuantityOverrides,
+    shType, countertopShutterType, rates, waste, projectPricingInputs.processingRates, costing.purchases, boardQuantityOverrides, materials?._profileFinishes, materials?._counterPlyRates, projectPricingInputs.wasteOverrides,
   ), [activeElevation, costing, shownProject, shownFillers, shownVisiblePanels, shownExtras, shownAccessories, shownMasterAccessories,
-    countertops, shType, countertopShutterType, rates, waste, projectPricingInputs.processingRates, boardQuantityOverrides]);
+    countertops, shType, countertopShutterType, rates, waste, projectPricingInputs.processingRates, boardQuantityOverrides, materials?._profileFinishes, materials?._counterPlyRates, projectPricingInputs.wasteOverrides]);
   const shownProcessingCosts = useMemo(() => {
-    return shownCosting.lines.flatMap((line) => line.details
-      .filter((detail) => /processing$/i.test(detail.category))
-      .map((detail) => ({ source: line.label, ...detail })));
+    return summarizeProcessingCosts(shownCosting.lines);
   }, [shownCosting]);
+  const shownItemCostBreakdown = useMemo(() => displayedItemCostBreakdown(shownCosting, shownProject.length, shownFillers),
+    [shownCosting, shownProject.length, shownFillers]);
   const shownPricing = useMemo(() => {
     if (activeElevation === null) return projectPricing;
     const allocatedCharges = projectPricing.allocatedCharges.filter((_, index) => project[index]?.elevation === activeElevation);
@@ -4287,18 +4769,12 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
     const counterPlyCharges = projectPricing.counterPlyCharges;
     const counterPlySqft = projectPricing.counterPlySqft;
     const totalSqft = cabinetSqft + fillerSqft + counterPlySqft;
-    const baseCost = shownCosting.total;
-    const conversion = baseCost * Number(projectPricingInputs.conversionPct || 0) / 100;
-    const convertedCost = baseCost + conversion;
-    const profit = convertedCost * Number(projectPricingInputs.profitPct || 0) / 100;
     const areaCharges = [...allocatedCharges, ...fillerCharges, ...counterPlyCharges];
     const transportation = areaCharges.reduce((sum, line) => sum + line.transportation, 0);
     const installation = areaCharges.reduce((sum, line) => sum + line.installation, 0);
     const loading = areaCharges.reduce((sum, line) => sum + line.loading, 0);
-    const subtotal = convertedCost + profit + transportation + installation + loading;
-    const tax = projectPricingInputs.includeTax ? subtotal * 0.18 : 0;
-    return { cabinetSqft, fillerSqft, counterPlySqft, totalSqft, baseCost, conversion, convertedCost, profit, transportation, installation, loading,
-      subtotal, tax, grandTotal: subtotal + tax, allocatedCharges, fillerCharges, counterPlyCharges };
+    const totals = calculateProjectPricing(shownCosting.total, totalSqft, projectPricingInputs, { transportation, installation, loading });
+    return { cabinetSqft, fillerSqft, counterPlySqft, totalSqft, ...totals, allocatedCharges, fillerCharges, counterPlyCharges };
   }, [activeElevation, projectPricing, project, shownCosting, projectPricingInputs]);
   const allStubs = useMemo(() => [...new Set(project.flatMap((l) => l.m.stubs))], [project]);
 
@@ -4349,6 +4825,8 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
   };
 
   const openPricingModal = () => {
+    if (!canViewProjectPricing) return;
+    setDraftWaste({ ...waste });
     setReplacementTypes({}); setReplacementItems({});
     setSelectedProcessingTypes(Object.fromEntries(PROCESSING_CATEGORIES.flatMap((category) => {
       const first = processingTypes.find((row) => row.category === category)?.type;
@@ -4370,6 +4848,15 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
     setPricingAdminError("");
     setPricingModalOpen(true);
   };
+  const openedSavedPricing = useRef(false);
+  useEffect(() => {
+    if (localCostingUser?.role !== "admin" || !activeKitchen || openedSavedPricing.current ||
+        new URLSearchParams(window.location.search).get("pricing") !== "1") return;
+    openedSavedPricing.current = true;
+    openPricingModal();
+    // Open once after the selected kitchen and its saved pricing have hydrated.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeKitchen, localCostingUser?.role]);
   const unlockPricingModal = async () => {
     if (!pricingAdminPassword.trim()) return;
     setPricingAdminChecking(true); setPricingAdminError("");
@@ -4387,6 +4874,9 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
     finally { setPricingAdminChecking(false); }
   };
   const savePricingModal = () => {
+    if (Object.values(draftPricing.wasteOverrides ?? {}).some(value => !Number.isFinite(value) || value < 0 || value >= 100)) {
+      setPricingAdminError("Wastage must be at least 0% and below 100%."); return;
+    }
     const processingRates: Record<string, number> = {};
     for (const category of PROCESSING_CATEGORIES) {
       const type = replacementTypes[category];
@@ -4409,12 +4899,14 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
     }
     if (counterPlyRaw.trim() !== "" && counterPlyRate !== DEFAULT_BOARD_PROCESSING_RATES["Counter Ply"])
       processingRates["Counter Ply"] = counterPlyRate;
-    const factorValues = [draftPricing.conversionPct, draftPricing.profitPct,
+    const factorValues = [draftPricing.conversionPct,
       draftPricing.transportation.value, draftPricing.installation.value, draftPricing.loading.value];
     if (factorValues.some((value) => value !== "" && (!Number.isFinite(Number(value)) || Number(value) < 0))) {
       setPricingAdminError("Enter valid non-negative costing factors."); return;
     }
+    if (!validConversionMargin(draftPricing.conversionPct)) { setPricingAdminError("Conversion must be at least 0% and below 100%."); return; }
     setProjectPricingInputs({ ...draftPricing, processingRates });
+    setWaste({ ...draftWaste });
     if (Object.values(replacementItems).some(Boolean)) {
       setProject((current) => current.map((line) => {
         const config = cabinetConfig(line.m);
@@ -4475,7 +4967,7 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
         </div>
         <div className="hd-n">
           <span>cabinets<b>{project.reduce((a, l) => a + l.qty, 0)}</b></span>
-          <span>sheets<b>{boardTotals.reduce((a, b) => a + (b.sheets ?? 0), 0).toFixed(2)}</b></span>
+          <span>sheets / kitchen<b>{boardTotals.reduce((a, b) => a + (boardQuantityOverrides[b.key]?.sheets ?? b.sheets ?? 0), 0).toFixed(2)}</b></span>
         </div>
       </header>
       <section style={{ display: "flex", gap: 12, alignItems: "end", flexWrap: "wrap", padding: "12px 20px", background: "#fff", borderBottom: "1px solid #d6dfd8" }}>
@@ -4492,6 +4984,7 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
           <button type="button" className="add" disabled={kitchenBusy} onClick={() => void removeImportedKitchen()}>Remove imported PDF</button>}
         <span style={{ color: "var(--mut)", fontSize: 12 }}>{kitchens.length} kitchen{kitchens.length === 1 ? "" : "s"} in this session</span>
       </section>
+      {localCostingUser && <SavedCostingControls entries={entriesToSave} activeKitchenId={activeKitchen} admin={localCostingUser.role === "admin"} username={localCostingUser.username} />}
       <nav className="kitchen-step-nav" aria-label="Kitchen setup steps">
         <a href="/materials" onClick={(event) => {
           try {
@@ -4503,6 +4996,7 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
           }
         }}>1 · Material selection</a>
         <span aria-current="page">2 · Builder configuration</span>
+        {(openAccessAdmin || localCostingUser?.role === "admin") && <a href="/production">Production batch / Opti</a>}
       </nav>
       {importError && <p className="header-import-error" role="alert">{importError}</p>}
       {importMessage && <p className="header-import-success" role="status">{importMessage}</p>}
@@ -4535,6 +5029,7 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
             </select>
             {fam.variants.some((option: any) => option.id === "single" || option.id === "sgl") && fam.variants.some((option: any) => option.id === "double" || option.id === "dbl") &&
               <Hint>Up to 600 mm: single shutter. Above 600 mm: double shutter.</Hint>}
+            {fam.liftUp && <Hint>Always one lift-up shutter, regardless of width. Includes one push-open fitting and two Huwil Lift Duo mechanisms per unit; no SS handle.</Hint>}
           </Fld>
 
           {zk === "WC" && isGlass && <Fld label="Top spot light">
@@ -4550,11 +5045,11 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
           )}
 
           {showAdvanced && <Fld label="Handle / profile">
-            <select value={handle} onChange={(e) => setHandle(e.target.value)}>
-              {!/^(WC|WB|LO|LB|MD)/.test(zk) && <option value="XCJ">C/J/G Gola</option>}<option value="PUSH">Push to Open</option><option value="KNOB">Knob</option><option value="HANDLE">Handle</option><option value="NONE">No Handle</option>
+            <select value={fam.liftUp ? "PUSH" : handle} disabled={!!fam.liftUp} onChange={(e) => setHandle(e.target.value)}>
+              {isGlass ? <><option value="HANDLE">Handle</option><option value="NONE">No Handle</option></> : fam.liftUp ? <option value="PUSH">TIP-ON Push to Open</option> : <>{!/^(WC|WB|LO|LB|MD)/.test(zk) && <option value="XCJ">C/J/G Gola</option>}<option value="PUSH">Push to Open</option><option value="KNOB">Knob</option><option value="HANDLE">Handle</option><option value="NONE">No Handle</option></>}
             </select>
-            {(["PUSH", "KNOB", "HANDLE"] as string[]).includes(handle) && <input aria-label="Handle price per piece" type="number" min={0} step="0.01" placeholder="Price per piece (₹)" value={handlePrice} onChange={(e) => setHandlePrice(e.target.value)} />}
-            {handle === "PUSH" && <select aria-label="Push to Open brand" value={handleBrand || "Hettich"} onChange={(e) => setHandleBrand(e.target.value)}>
+            {!isGlass && !fam.liftUp && (["PUSH", "KNOB", "HANDLE"] as string[]).includes(handle) && <input aria-label="Handle price per piece" type="number" min={0} step="0.01" placeholder="Price per piece (₹)" value={handlePrice} onChange={(e) => setHandlePrice(e.target.value)} />}
+            {!fam.liftUp && handle === "PUSH" && <select aria-label="Push to Open brand" value={handleBrand || "Hettich"} onChange={(e) => setHandleBrand(e.target.value)}>
               {["Hettich", "Hafele", "Blum", "Magppie"].map((brand) => <option key={brand} value={brand}>{brand}</option>)}
             </select>}
             {handle === "XCJ" && <Hint>Top depth cuts to {D - CJ_CUT}. Base shutters lose 33mm.</Hint>}
@@ -4741,8 +5236,10 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
                 rows={m.hardware.flatMap(expandHardwarePack).map((h) => [h.pack, h.name, r3(h.qty), h.uom])} />
               {m.cons.length > 0 && <>
                 <h4>Consumables</h4>
-                <Tbl head={["Pack", "Item", "Qty", "Unit"]} num={[2]}
-                  rows={m.cons.map((c) => [c.pack, c.name, r3(c.qty).toFixed(2), c.uom])} />
+                <p className="hint">Edge band per panel (RMT) = [2 × (W + H) + 4 × {BAND_EDGE_ALLOWANCE}mm allowance] × panel quantity ÷ 1000. Only banded panels are included; membrane panels have no edge band. Quantities below are net usage for one cabinet, before wastage. Costing edge band = net RMT ÷ (1 − {edgeBandWaste(waste)} ÷ 100), using the current {edgeBandWaste(waste)}% edge-band waste.</p>
+                <Tbl head={["Pack", "Item", "Qty", "Unit", "Calculation (sizes in mm)"]} num={[2]}
+                  rows={m.cons.map((c, index) => [c.pack, c.name, r3(c.qty).toFixed(2), c.uom,
+                    <div key="formula" style={{ minWidth: 240, maxWidth: 600, whiteSpace: "normal", fontSize: 12 }}>{edgeBandCalculation(m, index) || "—"}</div>])} />
               </>}
               {m.stubs.length > 0 && <Stub list={m.stubs} />}
             </div>
@@ -4818,31 +5315,44 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
 
                 <h4>Wastage % (editable)</h4>
                 <p className="hint">Required quantity = usable quantity ÷ (1 − wastage %). For example, 550 sqft at 10% needs 611.11 sqft.</p>
-                <div className="g3" style={{ maxWidth: 600 }}>
-                  {(["carcass", "shutter", "profile", "edgeBand"] as const).map((k) => (
-                    <label key={k} style={{ fontSize: 11, color: "var(--mut)" }}>{k}
-                      <input type="number" min={0} max={99.9} step="0.1" value={waste[k]}
-                        onChange={(event) => setWaste((current) => ({ ...current, [k]: Math.min(99.9, Math.max(0, Number(event.target.value) || 0)) }))} />
-                    </label>
-                  ))}
-                </div>
+                <WastageControls waste={waste} onWaste={setWaste} overrides={projectPricingInputs.wasteOverrides} admin={canViewProjectPricing}
+                  onOverrides={wasteOverrides => setProjectPricingInputs(old => ({ ...old, wasteOverrides }))} />
 
                 <h4>Boards — whole kitchen, editable sheets / stone slabs</h4>
-                <p className="hint">Edit Sheets to change only board cost for this kitchen. Waste % is calculated from the entered sheets; laminate, processing and consumables stay unchanged. Clear an entry to restore the calculated quantity. Overrides are temporary and reset on refresh or import.</p>
-                <Tbl head={["Material", "Thk", "Pack", "Sqft", "Waste %", "Sheets"]} num={[1, 3, 4, 5]}
+                <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "end" }}>
+                  <label>Kitchen batch quantity<input aria-label="Kitchen batch quantity" type="number" min={1} step={1} value={batchQuantity}
+                    onChange={e => { const value = Number(e.target.value); if (Number.isSafeInteger(value) && value >= 1) setProjectPricingInputs(old => ({ ...old, batchQuantity: value })); }} /></label>
+                  <button type="button" disabled={optiBusy || !project.length} onClick={() => void runCurrentOpti()}>{optiBusy ? "Running Opti…" : "Run Opti & apply waste %"}</button>
+                  <button type="button" disabled={!chartsCurrent || optiBusy} onClick={downloadCurrentChart}>Download Opti cutting chart</button>
+                  <button type="button" onClick={() => setBoardSheetInputs({})}>Reset sheet overrides to automatic</button>
+                </div>
+                {optiError && <p role="alert">{optiError}</p>}
+                <details style={{ margin: "12px 0" }}><summary>Grain, overproduction and priority — all raw materials</summary>
+                  <OptiMaterialOptions groups={optiMaterialGroups} settings={optiSettings} busy={optiBusy}
+                    onChange={(key, patch) => setOptiSettings(old => ({ ...old, [key]: { ...old[key], ...patch } }))} />
+                </details>
+                {validOpti && <p>Optimized wooden sheets for the batch: <strong>{Object.values(validOpti.allocations).reduce((sum, a) => sum + a.batchSheets, 0).toFixed(0)}</strong>. Manual sheet overrides change costing, not the cutting chart.</p>}
+                {validOpti && chartsCurrent && optiCharts?.groups.some(g => g.optimizationNote) && <p className="hint">Large batch: repeating cutting patterns plus a separately optimized remainder. The chart gives sheet ranges and repeat counts; totals cover the full kitchen quantity. Offcuts are not shared between sub-batches, so this is not a guaranteed global minimum.</p>}
+                <p className="hint">{validOpti ? `Opti applied for ${batchQuantity} kitchens. Board waste comes from the cutting charts, without adding default waste again.` : projectPricingInputs.boardOpti ? "Panels, materials, batch or Opti options changed — run Opti again. Previous layouts are not applied." : "Run Opti to calculate whole sheets and waste across this batch."} Default board stock: 2440 × 1220mm, saw cut 3mm, edge trim 10mm. Set grain, priority and extra stock per material above; confirm stock sizes and enable glass, stone or profiles to optimize them. PVC foil stays a 1420mm-wide variable-length roll. Extra stock uses existing offcuts and stays separate from kitchen quantities. Per-kitchen sheet shares can be fractional. Manual Sheets override board cost only; clear the field to restore Opti. Processing, laminate and consumables retain their own waste rules. Saved Opti costing is restored with the kitchen; rerun to download charts after reopening.</p>
+                <Tbl head={["Material", "Thk", "Pack", "Sqft / kitchen", "Waste %", "Sheets / kitchen", "Batch sheets"]} num={[1, 3, 4, 5, 6]}
                   rows={shownBoardTotals.map((b) => {
                     const key = b.key;
                     const override = boardQuantityOverrides[key];
-                    const derivedWaste = override && override.sheets > 0 && b.sqft > 0 ? (1 - b.sqft / (override.sheets * b.sheetAreaSqft)) * 100 : b.waste;
+                    const derivedWaste = override && "wastePct" in override ? Number(override.wastePct) : override && override.sheets > 0 && b.sqft > 0 ? (1 - b.sqft / (override.sheets * b.sheetAreaSqft)) * 100 : b.waste;
                     return [`${b.mat} · ${b.finish}`, b.t, `${b.pack} · ${b.sheetAreaSqft} sqft/unit · ₹${b.rate.toFixed(2)}/sqft`, b.sqft.toFixed(2), derivedWaste.toFixed(2),
                       b.sheets === null ? "by area" : <input key={key} aria-label={`Sheets for ${b.mat} ${b.t}mm ${b.finish} ₹${b.rate.toFixed(2)}/sqft`} type="number" min={0} step="0.01"
-                        value={boardSheetInputs[key] === undefined ? b.sheets.toFixed(2) : sheetQuantityInput(boardSheetInputs[key])} style={{ width: 140 }}
+                        value={!boardSheetInputs[key] ? (override?.sheets ?? b.sheets).toFixed(3) : sheetQuantityInput(boardSheetInputs[key])} style={{ width: 140 }}
                         onBlur={() => setBoardSheetInputs((current) => current[key] ? { ...current, [key]: Number(current[key]).toFixed(2) } : current)}
-                        onChange={(e) => { const value = e.target.value; if (value === "" || Number.isFinite(Number(value)) && Number(value) >= 0) setBoardSheetInputs((current) => ({ ...current, [key]: sheetQuantityInput(value) })); }} />];
+                        onChange={(e) => { const value = e.target.value; if (value === "" || Number.isFinite(Number(value)) && Number(value) >= 0) setBoardSheetInputs((current) => ({ ...current, [key]: sheetQuantityInput(value) })); }} />,
+                      b.sheets === null ? "by area" : ((override?.sheets ?? b.sheets) * batchQuantity).toFixed(2)];
                   })} />
+                <p><strong>Batch item cost ({batchQuantity} kitchens): ₹{(costing.total * batchQuantity).toFixed(2)}</strong> · Item cost per kitchen: ₹{costing.total.toFixed(2)}</p>
+                {canViewProjectPricing && <p>Final cost per kitchen: ₹{projectPricing.grandTotal.toFixed(2)} · Final batch cost: ₹{(projectPricing.grandTotal * batchQuantity).toFixed(2)} (including configured services, conversion and tax).</p>}
               </>}
 
               {/* ---- Fillers ---- */}
+              {topFillerSettings.enabled && <TopFillerRuns segments={topFillerRuns.segments.filter(s => activeElevation === null || s.elevation === activeElevation)}
+                pieces={topFillerRuns.pieces} merges={topFillerMerges} onChange={setTopFillerMerges} />}
               <SecHead title="Filler / Other Panels" onAdd={addFiller} />
               <p className="hint">Cabinet fillers start with cabinet dimensions. Remove hides a suggested filler and excludes it from the project; Reset restores its cabinet defaults.</p>
               {removedFillerCount > 0 && <button type="button" className="x" onClick={() => setShowRemovedFillers((value) => !value)}>
@@ -4953,7 +5463,7 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
                     </div>,
                     countertopMaterialId(c) === "CUSTOM"
                       ? <input key="r" type="number" min={0} step="0.01" value={c.ratePerSqft ?? ""} placeholder="Enter rate" onChange={(e) => updCt(c.id, { ratePerSqft: e.target.value })} style={{ width: 90 }} />
-                      : <span key="r">₹{(countertopMaterialItem(c, countertopShutterType)?.currentRate ?? 0).toFixed(2)}</span>,
+                      : <span key="r">₹{Number(materials?._counterPlyRates?.[countertopMaterialItem(c, countertopShutterType)?.id ?? ""] ?? countertopMaterialItem(c, countertopShutterType)?.currentRate ?? 0).toFixed(2)}</span>,
                     <input key="q" type="number" min={1} value={c.qty} onChange={(e) => updCt(c.id, { qty: Math.max(1, +e.target.value) })} style={{ width: 58 }} />,
                     <button key="x" className="x" onClick={() => rmCt(c.id)}>×</button>,
                   ])} />
@@ -4965,6 +5475,8 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
                 <button className="x" style={{ color: "var(--acc)" }} onClick={addMasterAcc}>+ add priced item</button>
               </SecHead>
               <p className="hint">Calculated items are editable defaults; Remove hides and excludes them, and Reset restores their calculated values. J profiles combine into one run per elevation. C handles show the combined length and each editable cut size.</p>
+              {localCostingUser && <p className="hint">New priced accessories are kept in the reusable accessory master when this costing saves. Search here to use them in another kitchen.</p>}
+              {accessoryMasterError && <p role="alert" style={{ color: "#a4412e" }}>{accessoryMasterError}</p>}
               {removedAccessoryCount > 0 && <button type="button" className="x" onClick={() => setShowRemovedAccessories((value) => !value)}>
                 {showRemovedAccessories ? "Hide removed accessories" : `Show removed accessories (${removedAccessoryCount})`}
               </button>}
@@ -5028,7 +5540,7 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
                   return [
                     <select key="kind" value={item.kind} disabled={disabled} aria-label={`Accessory type in ${source.elevation}`}
                       onChange={(event) => updAutomaticAcc(source, { kind: event.target.value as AccessoryKind })}>
-                      {(Object.keys(ACC_LABEL) as AccessoryKind[]).map((kind) => <option key={kind} value={kind}>{ACC_LABEL[kind]}</option>)}</select>,
+                      {(Object.keys(ACC_LABEL) as AccessoryKind[]).map((kind) => <option key={kind} value={kind}>{ACC_LABEL[kind]}{kind === "g-handle" && item.openingSide ? ` · ${item.openingSide}` : ""}</option>)}</select>,
                     <input key="size" type="number" min={0} step="0.001" value={item.size} disabled={disabled} aria-label={`Cut size for ${ACC_LABEL[source.kind]} in ${source.elevation}`}
                       onChange={(event) => updAutomaticAcc(source, { size: event.target.value })} style={{ width: 90 }} />,
                     <input key="qty" type="number" min={1} step={1} value={item.qty} disabled={disabled} aria-label={`Quantity for ${ACC_LABEL[source.kind]} in ${source.elevation}`}
@@ -5081,10 +5593,10 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
                       const included = rows.some((entry) => !entry.disabled);
                       return [
                         <div key="item" style={{ minWidth: 320 }}>
-                          <AccessoryPicker rowId={row.id} selectedLabel={item ? `${item.subgroup} — ${item.materialDescription}` : row.customName ?? ""}
-                            selectedId={row.itemId}
-                            onSelect={(itemId) => updLinkedAccGroup(rows, { itemId, customName: undefined, customUnit: undefined, customBrand: undefined, manualRate: "" })}
-                            onCustom={(customName) => updLinkedAccGroup(rows, { itemId: "CUSTOM", customName, customUnit: "PCS", customBrand: "", manualRate: "" })} />
+                          <AccessoryPicker rowId={row.id} savedItems={savedAccessoryItems} selectedLabel={item ? `${item.subgroup} — ${item.materialDescription}` : row.customName ?? ""}
+                            selectedId={row.customMasterId ?? row.itemId}
+                            onSelect={(itemId) => updLinkedAccGroup(rows, accessorySelection(itemId))}
+                            onCustom={(customName) => updLinkedAccGroup(rows, { itemId: "CUSTOM", customMasterId: undefined, customName, customUnit: "PCS", customBrand: "", manualRate: "", priceChangeReason: "" })} />
                           {row.itemId === "CUSTOM" && <div className="accessory-custom-fields">
                             <input aria-label={`${label} name in ${row.elevation}`} placeholder="Accessory name" value={row.customName ?? ""} onChange={(event) => updLinkedAccGroup(rows, { customName: event.target.value })} />
                             <select aria-label={`${label} unit in ${row.elevation}`} value={row.customUnit ?? "PCS"} onChange={(event) => updLinkedAccGroup(rows, { customUnit: event.target.value as "PCS" | "SET" | "MTR" })}>
@@ -5101,9 +5613,10 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
                           onChange={(event) => updLinkedAccGroup(rows, { elevation: event.target.value })} style={{ width: 68 }} />,
                         row.itemId === "CUSTOM" ? <input key="brand" aria-label={`${label} brand in ${row.elevation}`} placeholder="Brand (optional)" value={row.customBrand ?? ""}
                           onChange={(event) => updLinkedAccGroup(rows, { customBrand: event.target.value })} style={{ width: 100 }} /> : item?.brand || "—",
-                        <input key="rate" type="number" min={0} step="0.01" aria-label={`Rate for ${label} in ${row.elevation}`}
+                        <div key="rate"><input type="number" min={0} step="0.01" aria-label={`Rate for ${label} in ${row.elevation}`}
                           placeholder={rates.size > 1 ? "Mixed rates" : item?.priced ? item.currentRate.toFixed(2) : "Enter rate"} value={rate}
-                          onChange={(event) => { const value = event.target.value; if (value === "" || Number.isFinite(Number(value)) && Number(value) >= 0) updLinkedAccGroup(rows, { manualRate: value }); }} style={{ width: 120 }} />,
+                          onChange={(event) => { const value = event.target.value; if (value === "" || Number.isFinite(Number(value)) && Number(value) >= 0) updLinkedAccGroup(rows, { manualRate: value }); }} style={{ width: 120 }} />
+                          {accessoryReason(rows, true, priceChangeReason => updLinkedAccGroup(rows, { priceChangeReason }))}</div>,
                         "—",
                         "—",
                         "—",
@@ -5118,10 +5631,10 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
                     const selected = selectedMasterAccessory(row);
                     return [
                       <div key="i" style={{ minWidth: 360 }}>
-                        <AccessoryPicker rowId={row.id} selectedLabel={selected ? `${selected.subgroup} — ${selected.materialDescription}` : ""}
-                          selectedId={row.itemId}
-                          onSelect={(itemId) => updMasterAcc(row.id, { itemId, customName: undefined, customUnit: undefined, customBrand: undefined, manualRate: "" })}
-                          onCustom={(customName) => updMasterAcc(row.id, { itemId: "CUSTOM", customName, customUnit: "PCS", customBrand: "", manualRate: "" })} />
+                        <AccessoryPicker rowId={row.id} savedItems={savedAccessoryItems} selectedLabel={selected ? `${selected.subgroup} — ${selected.materialDescription}` : ""}
+                          selectedId={row.customMasterId ?? row.itemId}
+                          onSelect={(itemId) => updMasterAcc(row.id, accessorySelection(itemId))}
+                          onCustom={(customName) => updMasterAcc(row.id, { itemId: "CUSTOM", customMasterId: undefined, customName, customUnit: "PCS", customBrand: "", manualRate: "", priceChangeReason: "" })} />
                         {row.itemId === "CUSTOM" && <div className="accessory-custom-fields">
                           <input aria-label="Custom accessory name" placeholder="Accessory name" value={row.customName ?? ""} onChange={(e) => updMasterAcc(row.id, { customName: e.target.value })} />
                           <select aria-label="Custom accessory unit" value={row.customUnit ?? "PCS"} onChange={(e) => updMasterAcc(row.id, { customUnit: e.target.value as "PCS" | "SET" | "MTR" })}>
@@ -5137,6 +5650,7 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
                       <div key="rate" style={{ display: "grid", gap: 2, minWidth: 130 }}>
                         <input type="number" min={0} step="0.01" aria-label={`Manual rate for ${selected?.subgroup ?? "accessory"}`} placeholder={selected?.priced ? selected.currentRate.toFixed(2) : "Enter price"} value={row.manualRate ?? ""} onChange={(e) => updMasterAcc(row.id, { manualRate: e.target.value })} style={{ width: 118 }} />
                         <small style={{ color: "var(--mut)" }}>{row.manualRate !== undefined && row.manualRate !== "" ? `Manual · ${selected?.rateBasis ?? "unit"}` : selected?.priced ? `Master ₹${selected.currentRate.toFixed(2)} / ${selected.rateBasis}` : "No master rate"}</small>
+                        {accessoryReason([row], false, priceChangeReason => updMasterAcc(row.id, { priceChangeReason }))}
                       </div>,
                       "—",
                       "—",
@@ -5172,14 +5686,14 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
               </details>}
               {shownProcessingCosts.length > 0 && <div style={{ marginBottom: 16 }}>
                 <h3>Board processing costs</h3>
-                <p className="hint">Each processing line stays separate. Billable sqft = net sqft + wastage. Raw Material Selection combines identical boards across categories, so compare its sqft with the sum of the corresponding processing lines. Counter Ply uses length × depth × quantity ÷ 92903.</p>
-                <Tbl head={["Cabinet / item", "Category", "Board", "Net sqft", "Waste sqft", "Billable sqft (+waste)", "Rate (Rs/sqft)", "Amount (Rs)"]} num={[3, 4, 5, 6, 7]}
-                  rows={[...shownProcessingCosts.map((row) => [row.source, row.category, row.item, row.netQty.toFixed(2), (row.billableQty - row.netQty).toFixed(2), row.billableQty.toFixed(2), String(row.rate), row.amount.toFixed(2)]),
-                    [<b key="total">Total processing</b>, "", "", "", "", shownProcessingCosts.reduce((sum, row) => sum + row.billableQty, 0).toFixed(2), "", <b key="amount">{shownProcessingCosts.reduce((sum, row) => sum + row.amount, 0).toFixed(2)}</b>]]} />
+                <p className="hint">Combined area includes wastage. Matching materials are combined; different processing rates remain separate.</p>
+                <Tbl head={["Material", "Combined sqft (+waste)", "Processing rate (Rs/sqft)", "Total processing cost (Rs)"]} num={[1, 2, 3]}
+                  rows={[...shownProcessingCosts.map((row) => [row.material, row.sqft.toFixed(2), String(row.rate), row.total.toFixed(2)]),
+                    [<b key="total">Total processing</b>, shownProcessingCosts.reduce((sum, row) => sum + row.sqft, 0).toFixed(2), "", <b key="amount">{shownProcessingCosts.reduce((sum, row) => sum + row.total, 0).toFixed(2)}</b>]]} />
               </div>}
-              {costing.purchases.length > 0 && <details open style={{ marginBottom: 16 }}>
+              {canViewProjectPricing && costing.purchases.length > 0 && <details style={{ marginBottom: 16 }}>
                 <summary style={{ cursor: "pointer", fontWeight: 650 }}>Whole-kitchen purchase quantities</summary>
-                <p style={{ color: "var(--mut)", fontSize: 12 }}>Same items are combined across all cabinets and panels after wastage, then quantities are rounded to two decimal places for purchasing and costing—not up to whole units. Boards and laminates use 32 sqft sheets; adhesives use kg. Different quoted rates remain separate. Processing remains charged on billable sqft.</p>
+                <p style={{ color: "var(--mut)", fontSize: 12 }}>Same items are combined across all cabinets and panels after wastage, then quantities are rounded to two decimal places for purchasing and costing—not up to whole units. Boards and flat laminates use 32 sqft sheets; PVC membrane foil uses a {PVC_FOIL_ROLL_WIDTH_MM} mm-wide, variable-length roll and remains in sqft, without sheet conversion. Adhesives use kg. Different quoted rates remain separate. Processing remains charged on billable sqft.</p>
                 <Tbl head={["Category", "Item", "Unit", "Purchase qty", "Rate (Rs)", "Amount (Rs)"]} num={[3, 4, 5]}
                   rows={costing.purchases.map((item) => [item.categories.join(", "), `${item.itemCode} · ${item.item}`, item.unit,
                     item.quantity.toFixed(2), item.categories.some((category) => /processing$/i.test(category)) ? String(item.rate) : item.rate.toFixed(2), item.amount.toFixed(2)])} />
@@ -5229,15 +5743,15 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
                 <div style={{ marginTop: 18, padding: 16, border: "1px solid #D8DEDA", borderRadius: 8, background: "#FAFBFA" }}>
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
                     <h3 style={{ margin: 0 }}>Project pricing</h3>
-                    <button type="button" className="add" style={{ width: "auto", padding: "8px 12px" }} onClick={openPricingModal}>Admin · Edit processing costs &amp; factors</button>
+                    {canViewProjectPricing && <button type="button" className="add" style={{ width: "auto", padding: "8px 12px" }} onClick={openPricingModal}>Admin · Edit processing costs &amp; factors</button>}
                   </div>
                   <p style={{ margin: "0 0 14px", color: "#617069", fontSize: 12 }}>
-                    Per-sqft charges use {shownPricing.totalSqft.toFixed(2)} sqft: {shownPricing.cabinetSqft.toFixed(2)} cabinet sqft + {shownPricing.fillerSqft.toFixed(2)} filler-front sqft + {shownPricing.counterPlySqft.toFixed(2)} Counter Ply sqft. Base and Tall cabinets use width × (height + 100mm) × quantity; fillers use only front width × height × quantity; Counter Ply uses length × the thickness entered in its section × quantity ÷ 92903. Cover-panel carcass strips remain in material costing but are excluded from visible sqft.
+                    Visible project area: {shownPricing.totalSqft.toFixed(2)} sqft: {shownPricing.cabinetSqft.toFixed(2)} cabinet sqft + {shownPricing.fillerSqft.toFixed(2)} filler-front sqft + {shownPricing.counterPlySqft.toFixed(2)} Counter Ply sqft. Base and Tall cabinets use width × (height + 100mm) × quantity; fillers use only front width × height × quantity; Counter Ply uses length × the thickness entered in its section × quantity ÷ 92903. Cover-panel carcass strips remain in material costing but are excluded from visible sqft.
                   </p>
 
                   <div style={{ marginTop: 14, overflowX: "auto" }}>
-                    <table style={{ width: "100%", minWidth: 940, borderCollapse: "collapse", background: "white", fontSize: 12 }}>
-                      <thead><tr>{["Cabinet / filler / Counter Ply", "Qty", "Sqft / item", "Total sqft", "Transportation", "Installation", "Loading / Unloading"].map((heading) => <th key={heading} style={{ padding: "7px 9px", background: "#EEF1EE", border: "1px solid #D8DEDA", textAlign: heading === "Cabinet / filler / Counter Ply" ? "left" : "right" }}>{heading === "Cabinet / filler / Counter Ply" ? <ColumnFilter label="Cabinet" options={cabinetCodeOptions}
+                    <table style={{ width: "100%", minWidth: canViewProjectPricing ? 940 : 600, borderCollapse: "collapse", background: "white", fontSize: 12 }}>
+                      <thead><tr>{["Cabinet / filler / Counter Ply", "Qty", "Sqft / item", "Total sqft", ...(canViewProjectPricing ? ["Transportation", "Installation", "Loading / Unloading"] : [])].map((heading) => <th key={heading} style={{ padding: "7px 9px", background: "#EEF1EE", border: "1px solid #D8DEDA", textAlign: heading === "Cabinet / filler / Counter Ply" ? "left" : "right" }}>{heading === "Cabinet / filler / Counter Ply" ? <ColumnFilter label="Cabinet" options={cabinetCodeOptions}
                         selected={projectLineFilters.Cabinet ?? []} onChange={(values) => setProjectLineFilters((current) => ({ ...current, Cabinet: values }))}
                         sortDirection={projectLineSort?.column === "Cabinet" ? projectLineSort.direction : null}
                         onSort={(direction) => setProjectLineSort({ column: "Cabinet", direction })} /> : heading}</th>)}</tr></thead>
@@ -5249,37 +5763,37 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
                         <td style={{ padding: "7px 9px", border: "1px solid #E3E7E4", textAlign: "right" }}>{line.qty}</td>
                         <td style={{ padding: "7px 9px", border: "1px solid #E3E7E4", textAlign: "right" }}>{line.eachSqft.toFixed(2)}</td>
                         <td style={{ padding: "7px 9px", border: "1px solid #E3E7E4", textAlign: "right" }}>{line.sqft.toFixed(2)}</td>
-                        <td style={{ padding: "7px 9px", border: "1px solid #E3E7E4", textAlign: "right" }}>Rs {line.transportation.toFixed(2)}</td>
+                        {canViewProjectPricing && <><td style={{ padding: "7px 9px", border: "1px solid #E3E7E4", textAlign: "right" }}>Rs {line.transportation.toFixed(2)}</td>
                         <td style={{ padding: "7px 9px", border: "1px solid #E3E7E4", textAlign: "right" }}>Rs {line.installation.toFixed(2)}</td>
-                        <td style={{ padding: "7px 9px", border: "1px solid #E3E7E4", textAlign: "right" }}>Rs {line.loading.toFixed(2)}</td>
+                        <td style={{ padding: "7px 9px", border: "1px solid #E3E7E4", textAlign: "right" }}>Rs {line.loading.toFixed(2)}</td></>}
                       </tr>)}{shownPricing.fillerCharges.map((line, index) => <tr key={`filler-${index}`}>
                         <td style={{ padding: "7px 9px", border: "1px solid #E3E7E4" }}>{line.label}</td>
                         <td style={{ padding: "7px 9px", border: "1px solid #E3E7E4", textAlign: "right" }}>{line.qty}</td>
                         <td style={{ padding: "7px 9px", border: "1px solid #E3E7E4", textAlign: "right" }}>{line.eachSqft.toFixed(2)}</td>
                         <td style={{ padding: "7px 9px", border: "1px solid #E3E7E4", textAlign: "right" }}>{line.sqft.toFixed(2)}</td>
-                        <td style={{ padding: "7px 9px", border: "1px solid #E3E7E4", textAlign: "right" }}>Rs {line.transportation.toFixed(2)}</td>
+                        {canViewProjectPricing && <><td style={{ padding: "7px 9px", border: "1px solid #E3E7E4", textAlign: "right" }}>Rs {line.transportation.toFixed(2)}</td>
                         <td style={{ padding: "7px 9px", border: "1px solid #E3E7E4", textAlign: "right" }}>Rs {line.installation.toFixed(2)}</td>
-                        <td style={{ padding: "7px 9px", border: "1px solid #E3E7E4", textAlign: "right" }}>Rs {line.loading.toFixed(2)}</td>
+                        <td style={{ padding: "7px 9px", border: "1px solid #E3E7E4", textAlign: "right" }}>Rs {line.loading.toFixed(2)}</td></>}
                       </tr>)}{shownPricing.counterPlyCharges.map((line, index) => <tr key={`counter-ply-${index}`}>
                         <td style={{ padding: "7px 9px", border: "1px solid #E3E7E4" }}>{line.label}</td>
                         <td style={{ padding: "7px 9px", border: "1px solid #E3E7E4", textAlign: "right" }}>{line.qty}</td>
                         <td style={{ padding: "7px 9px", border: "1px solid #E3E7E4", textAlign: "right" }}>{line.eachSqft.toFixed(2)}</td>
                         <td style={{ padding: "7px 9px", border: "1px solid #E3E7E4", textAlign: "right" }}>{line.sqft.toFixed(2)}</td>
-                        <td style={{ padding: "7px 9px", border: "1px solid #E3E7E4", textAlign: "right" }}>Rs {line.transportation.toFixed(2)}</td>
+                        {canViewProjectPricing && <><td style={{ padding: "7px 9px", border: "1px solid #E3E7E4", textAlign: "right" }}>Rs {line.transportation.toFixed(2)}</td>
                         <td style={{ padding: "7px 9px", border: "1px solid #E3E7E4", textAlign: "right" }}>Rs {line.installation.toFixed(2)}</td>
-                        <td style={{ padding: "7px 9px", border: "1px solid #E3E7E4", textAlign: "right" }}>Rs {line.loading.toFixed(2)}</td>
+                        <td style={{ padding: "7px 9px", border: "1px solid #E3E7E4", textAlign: "right" }}>Rs {line.loading.toFixed(2)}</td></>}
                       </tr>)}</tbody>
                       <tfoot><tr>
                         <td style={{ padding: "8px 9px", border: "1px solid #D8DEDA", fontWeight: 750 }}>{activeElevation === null ? "Cabinets + filler panels + Counter Ply total" : `${activeElevation} cabinets + filler panels`}</td>
                         <td style={{ padding: "8px 9px", border: "1px solid #D8DEDA", textAlign: "right", fontWeight: 750 }}>{shownProject.reduce((sum, line) => sum + line.qty, 0) + shownPricing.fillerCharges.reduce((sum, line) => sum + line.qty, 0) + shownPricing.counterPlyCharges.reduce((sum, line) => sum + line.qty, 0)}</td>
                         <td style={{ padding: "8px 9px", border: "1px solid #D8DEDA" }} />
                         <td style={{ padding: "8px 9px", border: "1px solid #D8DEDA", textAlign: "right", fontWeight: 750 }}>{shownPricing.totalSqft.toFixed(2)}</td>
-                        <td style={{ padding: "8px 9px", border: "1px solid #D8DEDA", textAlign: "right", fontWeight: 750 }}>Rs {shownPricing.transportation.toFixed(2)}</td>
+                        {canViewProjectPricing && <><td style={{ padding: "8px 9px", border: "1px solid #D8DEDA", textAlign: "right", fontWeight: 750 }}>Rs {shownPricing.transportation.toFixed(2)}</td>
                         <td style={{ padding: "8px 9px", border: "1px solid #D8DEDA", textAlign: "right", fontWeight: 750 }}>Rs {shownPricing.installation.toFixed(2)}</td>
-                        <td style={{ padding: "8px 9px", border: "1px solid #D8DEDA", textAlign: "right", fontWeight: 750 }}>Rs {shownPricing.loading.toFixed(2)}</td>
+                        <td style={{ padding: "8px 9px", border: "1px solid #D8DEDA", textAlign: "right", fontWeight: 750 }}>Rs {shownPricing.loading.toFixed(2)}</td></>}
                       </tr></tfoot>
                     </table>
-                    {(projectPricingInputs.transportation.mode === "direct" || projectPricingInputs.installation.mode === "direct" || projectPricingInputs.loading.mode === "direct") && (
+                    {canViewProjectPricing && (projectPricingInputs.transportation.mode === "direct" || projectPricingInputs.installation.mode === "direct" || projectPricingInputs.loading.mode === "direct") && (
                       <p style={{ margin: "6px 0 0", color: "#617069", fontSize: 11 }}>Direct service prices are allocated across cabinets, filler panels and Counter Ply in proportion to their area.</p>
                     )}
                   </div>
@@ -5287,13 +5801,15 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
                   <div style={{ marginTop: 16, overflowX: "auto" }}>
                     <table style={{ width: "100%", borderCollapse: "collapse", background: "white" }}>
                       <tbody>{[
-                        ["Base cabinet / item costing (includes filler panels)", shownPricing.baseCost],
-                        ["Filler panel material costing, including sides (included above)", shownCosting.lines.slice(shownProject.length, shownProject.length + shownFillers.reduce((sum, filler) => sum + fillerPanelCount(filler), 0)).reduce((sum, line) => sum + line.cost, 0)],
-                        [`Conversion (${Number(projectPricingInputs.conversionPct || 0).toFixed(2)}%)`, shownPricing.conversion],
-                        [`Profit (${Number(projectPricingInputs.profitPct || 0).toFixed(2)}% of cost after conversion)`, shownPricing.profit],
+                        ["Base cabinet / item costing (excluding filler panels)", shownItemCostBreakdown.baseItemCost],
+                        ["Filler panel material costing, including sides", shownItemCostBreakdown.fillerCost],
                         [`Transportation${projectPricingInputs.transportation.mode === "sqft" ? ` (${Number(projectPricingInputs.transportation.value || 0).toFixed(2)} / sqft)` : " (direct)"}`, shownPricing.transportation],
                         [`Installation${projectPricingInputs.installation.mode === "sqft" ? ` (${Number(projectPricingInputs.installation.value || 0).toFixed(2)} / sqft)` : " (direct)"}`, shownPricing.installation],
                         [`Loading / Unloading${projectPricingInputs.loading.mode === "sqft" ? ` (${Number(projectPricingInputs.loading.value || 0).toFixed(2)} / sqft)` : " (direct)"}`, shownPricing.loading],
+                        ["Combined subtotal before conversion (items + all services)", shownPricing.combinedSubtotal],
+                        ...(canViewProjectPricing ? [
+                        [`Conversion (${Number(projectPricingInputs.conversionPct || 0).toFixed(2)}% margin; combined cost ÷ (1 − margin))`, shownPricing.conversion],
+                        ] : []),
                       ].map(([label, amount]) => <tr key={String(label)}>
                         <td style={{ padding: "7px 9px", border: "1px solid #E3E7E4" }}>{label}</td>
                         <td style={{ padding: "7px 9px", border: "1px solid #E3E7E4", textAlign: "right" }}>Rs {Number(amount).toFixed(2)}</td>
@@ -5349,17 +5865,22 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
               <SecHead title="Downloads" />
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                 <button className="add" style={{ width: "auto", padding: "8px 16px" }} disabled={costing.lines.length === 0 || !kitchenName.trim()}
-                  onClick={() => exportCostingWorkbook(costing.lines, [
+                  onClick={() => canViewProjectPricing ? exportCostingWorkbook(costing.lines, [
                     ...projectPricing.allocatedCharges,
                     ...projectPricing.fillerAreaSlots,
                     ...visiblePanels.map(() => ({ eachSqft: 0, sqft: 0 })),
                     ...projectPricing.counterPlyCharges,
-                  ], projectPricing, costing.unpriced, projectPricingInputs, kitchenName.trim())}>Costing (.xlsx)</button>
+                  ], projectPricing, costing.unpriced, projectPricingInputs, kitchenName.trim()) : exportDesignerCostingWorkbook(costing.lines, kitchenName.trim(), costing.unpriced, projectPricing)}>Costing (.xlsx)</button>
                 <button className="add" style={{ width: "auto", padding: "8px 16px" }} disabled={kitchens.length < 2} onClick={downloadBulkCosting}>Combined costing (.xlsx)</button>
                 <button className="add" style={{ width: "auto", padding: "8px 16px" }} disabled={project.length === 0}
-                  onClick={() => dl("wood-bom-project.json", JSON.stringify({ format: PROJECT_FILE_FORMAT, rows: projectSetup }, null, 2), "application/json")}>Project JSON</button>
+                  onClick={() => dl("wood-bom-project.json", JSON.stringify({ format: PROJECT_FILE_FORMAT, rows: sharedProjectSetup }, null, 2), "application/json")}>Project JSON</button>
                 <button className="add" style={{ width: "auto", padding: "8px 16px" }} disabled={fullBom.length === 0}
-                  onClick={() => exportBomWorkbook(toReportRows(fullBom), accessoryRows, projectSetup, costing.purchases)}>Excel BOM (.xlsx)</button>
+                  onClick={() => {
+                    try {
+                      const production = productionInputFromEntry({ id: activeKitchen || "current", name: kitchenName.trim() || "Project", rows: projectSetup, materials });
+                      exportBomWorkbook(toReportRows(fullBom), accessoryRows, sharedProjectSetup, costing.purchases, production);
+                    } catch (error) { setImportError(error instanceof Error ? error.message : "Could not export the BOM workbook."); }
+                  }}>Excel BOM (.xlsx)</button>
                 <button className="add" style={{ width: "auto", padding: "8px 16px" }} disabled={project.length === 0 && extras.panels.length === 0}
                   onClick={() => exportPanelCalculatorWorkbook(project, extras.panels, waste)}>Panel list &amp; laminate calculator (.xlsx)</button>
                 <button className="add" style={{ width: "auto", padding: "8px 16px" }} disabled={fullBom.length === 0}
@@ -5402,7 +5923,7 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
           </div>
         </section>
       </div>}
-      {pricingModalOpen && <div className="pricing-overlay" onKeyDown={(event) => { if (event.key === "Escape") setPricingModalOpen(false); }}>
+      {canViewProjectPricing && pricingModalOpen && <div className="pricing-overlay" onKeyDown={(event) => { if (event.key === "Escape") setPricingModalOpen(false); }}>
         <section className="pricing-modal" role="dialog" aria-modal="true" aria-labelledby="pricing-modal-title">
           <div className="pricing-modal-header">
             <div><h2 id="pricing-modal-title">Processing costs &amp; costing factors</h2><p>Admin only · material types used in this kitchen</p></div>
@@ -5473,11 +5994,13 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
                 onChange={(event) => setDraftProcessingRates((old) => ({ ...old, "Counter Ply": event.target.value }))} /></Fld>
               <p className="hint">Charged on length × depth × quantity ÷ 92903, separately from the Counter Ply board price.</p>
             </div>
+            <h3 style={{ marginTop: 22 }}>Wastage % — by group</h3>
+            <p className="hint">Same groups and values as the main Builder. Save applies these changes to this kitchen. Required quantity = net ÷ (1 − waste%). Foil follows shutter wastage unless changed.</p>
+            <WastageControls waste={draftWaste} onWaste={setDraftWaste} overrides={draftPricing.wasteOverrides} admin
+              onOverrides={wasteOverrides => setDraftPricing(old => ({ ...old, wasteOverrides }))} />
             <h3 style={{ marginTop: 22 }}>Costing factors</h3>
-            <p className="hint">Per-sqft service charges use cabinet front area plus only the filler front area. Cover-panel carcass strips remain in material costing but do not add to total area. Base and Tall cabinets add 100mm to their height for this calculation.</p>
+            <p className="hint">Per-sqft service charges use total visible project area: cabinet fronts, filler fronts and Counter Ply visible area. Base and Tall cabinets add 100mm to their height. Price before GST = (items + all services) ÷ (1 − conversion %). GST is added afterward.</p>
             <div className="pricing-factor-grid">
-              <Fld label="Profit (%)"><input type="number" min={0} step="0.01" value={draftPricing.profitPct} placeholder="0"
-                onChange={(event) => setDraftPricing((old) => ({ ...old, profitPct: event.target.value === "" ? "" : Number(event.target.value) }))} /></Fld>
               {([ ["Transportation", "transportation"], ["Installation", "installation"], ["Loading / Unloading", "loading"] ] as const).map(([label, key]) =>
                 <Fld key={key} label={label}><div className="pricing-charge">
                   <select aria-label={`${label} calculation method`} value={draftPricing[key].mode}
@@ -5487,8 +6010,8 @@ export function WoodBomBuilder({ soMode = false, planningMode = false, materials
                   <input type="number" min={0} step="0.01" aria-label={`${label} rate`} value={draftPricing[key].value} placeholder="0"
                     onChange={(event) => setDraftPricing((old) => ({ ...old, [key]: { ...old[key], value: event.target.value === "" ? "" : Number(event.target.value) } }))} />
                 </div></Fld>)}
-              {Number(draftPricing.conversionPct || 0) > 0 && <Fld label="Legacy conversion (%)"><input type="number" min={0} step="0.01" value={draftPricing.conversionPct}
-                onChange={(event) => setDraftPricing((old) => ({ ...old, conversionPct: event.target.value === "" ? "" : Number(event.target.value) }))} /></Fld>}
+              <Fld label="Conversion margin (%)"><input type="number" min={0} max={99.99} step="0.01" value={draftPricing.conversionPct}
+                onChange={(event) => setDraftPricing((old) => ({ ...old, conversionPct: event.target.value === "" ? "" : Number(event.target.value) }))} /></Fld>
             </div>
             <label className="pricing-gst"><input type="checkbox" checked={draftPricing.includeTax}
               onChange={(event) => setDraftPricing((old) => ({ ...old, includeTax: event.target.checked }))} /> Include GST (18%)</label>
@@ -5516,18 +6039,22 @@ export default WoodBomBuilder;
 /*  Small presentational helpers                                       */
 /* ------------------------------------------------------------------ */
 
-function AccessoryPicker({ rowId, selectedLabel, selectedId, onSelect, onCustom }: {
+function AccessoryPicker({ rowId, selectedLabel, selectedId, onSelect, onCustom, savedItems = [] }: {
   rowId: number;
   selectedLabel: string;
   selectedId: string;
   onSelect: (id: string) => void;
   onCustom: (name: string) => void;
+  savedItems?: SavedAccessoryItem[];
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const search = query.trim().toLowerCase();
-  const matches = search ? MASTER_ACCESSORY_ITEMS.filter((item) =>
-    `${item.subgroup} ${item.materialDescription} ${item.brand} ${item.id}`.toLowerCase().includes(search)) : MASTER_ACCESSORY_ITEMS;
+  const savedSources = new Set(savedItems.map(item => item.sourceItemId).filter(Boolean));
+  const available = [...savedItems.map(item => ({ id: item.id, subgroup: "Saved accessory", materialDescription: item.name,
+    brand: item.brand, currentRate: item.rate, rateBasis: item.unit, priced: true })), ...MASTER_ACCESSORY_ITEMS.filter(item => !savedSources.has(item.id))];
+  const matches = search ? available.filter((item) =>
+    `${item.subgroup} ${item.materialDescription} ${item.brand} ${item.id}`.toLowerCase().includes(search)) : available;
   const listId = `accessory-options-${rowId}`;
   return <div className="accessory-picker" onBlur={(event) => {
     if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOpen(false);

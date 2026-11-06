@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
+import { validTopFillerSettings } from "@/lib/top-fillers";
 import { COSTING_ITEMS, SINK_STONE_BOARD_ID } from "@/lib/costing";
 import { currentUser, userSession, setSessionMaterials } from "@/lib/user-session";
+import { priceChangesFor, missingPriceReasons, validPriceChanges } from "@/lib/price-change-audit";
 import { DRAWER_BRANDS, KITCHEN_ZONES, HANDLE_ZONES, HANDLE_TYPES, MATERIAL_FIELDS, createsMaterialSourceCycle, validBoardSheetPrice, validStoneDimension, type KitchenMaterials, type MaterialField, type MaterialSource, type SpecialWallMaterials } from "@/lib/kitchen-materials";
 
 const GROUP: Record<MaterialField, string> = {
@@ -19,11 +21,19 @@ export async function POST(request: Request) {
   if (!await currentUser()) return NextResponse.json({ error: "Sign in first." }, { status: 401 });
   if (!sameOrigin(request)) return NextResponse.json({ error: "Invalid request origin." }, { status: 403 });
   const raw = await request.text();
-  if (raw.length > 12000) return NextResponse.json({ error: "Material selection is too large." }, { status: 413 });
+  if (raw.length > 2_000_000) return NextResponse.json({ error: "Material selection is too large." }, { status: 413 });
   let value: unknown;
   try { value = JSON.parse(raw); } catch { return NextResponse.json({ error: "Invalid JSON." }, { status: 400 }); }
   if (!value || typeof value !== "object" || Array.isArray(value)) return NextResponse.json({ error: "Invalid materials." }, { status: 400 });
   const materials = value as KitchenMaterials;
+  if (materials._priceChanges !== undefined) {
+    if (!validPriceChanges(materials._priceChanges)) return NextResponse.json({ error: "Invalid price-change reasons." }, { status: 400 });
+    const missing = missingPriceReasons(priceChangesFor({ materials, rows: [] })).filter(change => !materials._priceChanges?.some(c => c.key === change.key && c.changedPrice === change.changedPrice && c.legacy));
+    if (missing.length) return NextResponse.json({ error: `Enter a price-change reason for ${missing[0].label}.` }, { status: 400 });
+  }
+  if (materials._topFillers !== undefined && !validTopFillerSettings(materials._topFillers)) {
+    return NextResponse.json({ error: "Choose Wall/Tall cabinets and a top-filler height from 1 to 2440 mm." }, { status: 400 });
+  }
   const validEdgeBand = (edge: unknown) => edge && typeof edge === "object" &&
     typeof (edge as { finish?: unknown }).finish === "string" &&
     /^(?=.{1,80}$)[\p{L}\p{N} ._()+&/-]+$/u.test((edge as { finish: string }).finish) &&
@@ -49,12 +59,22 @@ export async function POST(request: Request) {
     ["Soft Close", "Non Soft Close"].some((type) => materials._hingeChoice === `${brand} ${type}`))) {
     return NextResponse.json({ error: "Invalid kitchen hinge choice." }, { status: 400 });
   }
+  if (materials._profileFinishes !== undefined && (!materials._profileFinishes ||
+      (materials._profileFinishes.skirtingMaterial !== undefined && !["PVC", "Aluminium"].includes(materials._profileFinishes.skirtingMaterial)) ||
+      ![materials._profileFinishes.handles, materials._profileFinishes.skirting].every(finish => ["Raw", "Anodised", "Powder coating"].includes(finish)))) {
+    return NextResponse.json({ error: "Invalid profile finish selection." }, { status: 400 });
+  }
+  if (materials._counterPlyRates !== undefined && (!materials._counterPlyRates || typeof materials._counterPlyRates !== "object" || Array.isArray(materials._counterPlyRates) ||
+      Object.entries(materials._counterPlyRates).some(([id, rate]) => !validBoardSheetPrice(rate) || !COSTING_ITEMS.some(item => item.id === id && ["Countertop Base PLY", "Carcass/ Shelf Material", "Shutter Material"].includes(item.group))))) {
+    return NextResponse.json({ error: "Invalid Counter Ply rates." }, { status: 400 });
+  }
   if (materials._drawerBrand !== undefined && !DRAWER_BRANDS.some((brand) => brand === materials._drawerBrand)) {
     return NextResponse.json({ error: "Invalid kitchen drawer brand." }, { status: 400 });
   }
   if (materials._handleDefaults !== undefined && (!materials._handleDefaults ||
     !HANDLE_ZONES.every((zone) => {
       const choice = materials._handleDefaults?.[zone];
+      if (zone === "Glass" && choice === undefined) return true;
       if (choice === "STD" || choice === "XCJ") return true; // older saved selections
       return !!choice && typeof choice === "object" && HANDLE_TYPES.includes(choice.type) &&
         typeof choice.price === "string" && (choice.price === "" || /^(?:\d{1,7})(?:\.\d{1,2})?$/.test(choice.price)) &&
@@ -78,6 +98,9 @@ export async function POST(request: Request) {
     }
     for (const field of MATERIAL_FIELDS) {
       const selection = materials[zone][field];
+      if (selection?.pvcFoilRate !== undefined && !validBoardSheetPrice(selection.pvcFoilRate)) {
+        return NextResponse.json({ error: `Invalid ${zone} ${field} PVC foil rate.` }, { status: 400 });
+      }
       if (!selection || typeof selection.itemId !== "string" || typeof selection.frontSheetPrice !== "string" || typeof selection.backSheetPrice !== "string") {
         return NextResponse.json({ error: `Invalid ${zone} ${field} selection.` }, { status: 400 });
       }
@@ -115,10 +138,11 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: `Invalid ${kind} unit edge band finish or price.` }, { status: 400 });
     for (const field of ["carcass", "back", "visible"] as const) {
       const choice = (selection as SpecialWallMaterials)[field];
-      const group = field === "back" ? "Carcass Back Material" : "Shutter Material";
+      const groups = field === "carcass" ? ["Carcass/ Shelf Material", "Shutter Material"] : field === "back" ? ["Carcass Back Material"] : ["Shutter Material"];
       if (!choice || typeof choice.itemId !== "string" || typeof choice.frontSheetPrice !== "string" || typeof choice.backSheetPrice !== "string" ||
-          !COSTING_ITEMS.some((item) => item.id === choice.itemId && item.group === group && (field !== "visible" || [18, 25].includes(item.thicknessMm ?? 0))) ||
+          !COSTING_ITEMS.some((item) => item.id === choice.itemId && groups.includes(item.group) && item.id !== SINK_STONE_BOARD_ID && (field !== "visible" || [18, 25].includes(item.thicknessMm ?? 0))) ||
           (choice.boardSheetPrice !== undefined && !validBoardSheetPrice(choice.boardSheetPrice)) ||
+          (choice.pvcFoilRate !== undefined && !validBoardSheetPrice(choice.pvcFoilRate)) ||
           (choice.boardFinish !== undefined && (typeof choice.boardFinish !== "string" ||
             !/^(?=.{1,80}$)[\p{L}\p{N} ._()+&/-]+$/u.test(choice.boardFinish))) ||
           [choice.frontSheetPrice, choice.backSheetPrice].some((price) => !/^(?:\d{1,7})(?:\.\d{1,2})?$/.test(price) || Number(price) > 1000000)) {
@@ -144,7 +168,9 @@ export async function POST(request: Request) {
     }
   }
   const session = await userSession();
-  setSessionMaterials(session, materials);
+  // Remarks live with the kitchen, not in the size-limited browser session cookie.
+  const { _priceChanges: _remarks, ...sessionSelection } = materials;
+  setSessionMaterials(session, sessionSelection as KitchenMaterials);
   try { await session.save(); } catch { return NextResponse.json({ error: "Selections are too large for the kitchen session." }, { status: 413 }); }
   return NextResponse.json({ ok: true }, { headers: { "Cache-Control": "no-store" } });
 }

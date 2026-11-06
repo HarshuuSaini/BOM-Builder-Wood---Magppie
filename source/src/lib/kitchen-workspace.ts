@@ -1,6 +1,8 @@
 import type { KitchenMaterials } from "@/lib/kitchen-materials";
 import type { ProjectSetupRow } from "@/lib/export";
 import type { ManualCostingImport } from "@/lib/manual-costing-import";
+import { isolateLoginWorkspace } from "@/lib/login-workspace";
+import type { PriceChange } from "./price-change-audit";
 
 export const KITCHEN_WORKSPACE_KEY = "wood-bom-kitchen-workspace-v1";
 export const ACTIVE_KITCHEN_KEY = "wood-bom-active-kitchen-v1";
@@ -27,7 +29,7 @@ export type KitchenCostingSnapshot = {
   areaSqft: number;
   materialCost: number;
   conversion: number;
-  profit: number;
+  conversionModel?: "margin";
   transportation: number;
   installation: number;
   loading: number;
@@ -38,7 +40,10 @@ export type KitchenCostingSnapshot = {
 };
 
 export type KitchenWorkspaceEntry = {
+  priceChanges?: PriceChange[];
   id: string;
+  savedCostingId?: string;
+  savedCostingVersion?: number;
   name: string;
   sourceName?: string;
   rows: ProjectSetupRow[];
@@ -47,6 +52,11 @@ export type KitchenWorkspaceEntry = {
   costing?: KitchenCostingSnapshot;
   manualCosting?: ManualCostingImport;
 };
+
+export function ensureWorkspaceUser(username: string) {
+  if (typeof window === "undefined") return;
+  isolateLoginWorkspace(window.sessionStorage, username);
+}
 
 export function readKitchenWorkspace(): KitchenWorkspaceEntry[] {
   if (typeof window === "undefined") return [];
@@ -68,4 +78,11 @@ export function activeKitchenId() {
 
 export function setActiveKitchenId(id: string) {
   window.sessionStorage.setItem(ACTIVE_KITCHEN_KEY, id);
+}
+
+export function startNewKitchenDraft(id: string) {
+  const draft: KitchenWorkspaceEntry = { id, name: "", rows: [] };
+  writeKitchenWorkspace([...readKitchenWorkspace(), draft]);
+  setActiveKitchenId(id);
+  window.sessionStorage.removeItem("wood-bom-material-edit-draft");
 }

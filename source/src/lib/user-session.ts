@@ -1,11 +1,14 @@
 import "server-only";
 import { deflateSync, inflateSync } from "node:zlib";
 
-import { createHash, timingSafeEqual } from "node:crypto";
 import { getIronSession } from "iron-session";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import type { KitchenMaterials } from "@/lib/kitchen-materials";
+import { accountCredentialVersion, authenticateAccount, configuredAccounts, identityForSession } from "@/lib/local-auth";
+import { isOpenCostingAccess } from "@/lib/access-mode";
+export { isOpenCostingAccess } from "@/lib/access-mode";
+export type { UserIdentity, UserRole } from "@/lib/local-auth";
 
 type UserSession = { user: string; credentialVersion: string; materials?: KitchenMaterials; materialsCompressed?: string };
 
@@ -28,19 +31,16 @@ function secret() {
   return value;
 }
 
-function credentialVersion() {
-  const password = process.env.USER_LOGIN_PASSWORD;
-  if (!password) return "";
-  return createHash("sha256").update(password).digest("hex");
+export function userLoginConfigured() {
+  return configuredAccounts(process.env).length > 0;
+}
+
+export function authenticateUserCredentials(user: string, password: string) {
+  return authenticateAccount(process.env, user, password);
 }
 
 export function verifyUserCredentials(user: string, password: string) {
-  const expectedUser = process.env.USER_LOGIN_NAME;
-  const expectedPassword = process.env.USER_LOGIN_PASSWORD;
-  if (!expectedUser || !expectedPassword) return false;
-  const actual = createHash("sha256").update(`${user}\0${password}`).digest();
-  const expected = createHash("sha256").update(`${expectedUser}\0${expectedPassword}`).digest();
-  return timingSafeEqual(actual, expected);
+  return authenticateUserCredentials(user, password) !== null;
 }
 
 export async function userSession() {
@@ -52,10 +52,20 @@ export async function userSession() {
   });
 }
 
-export async function currentUser() {
+export async function currentIdentity() {
+  if (isOpenCostingAccess()) return { username: process.env.USER_LOGIN_NAME?.trim() || "preview", role: "admin" as const };
   const session = await userSession();
-  const configuredUser = process.env.USER_LOGIN_NAME;
-  return configuredUser && session.user === configuredUser && session.credentialVersion === credentialVersion() ? configuredUser : null;
+  return identityForSession(process.env, session);
+}
+
+export async function requireIdentity() {
+  const identity = await currentIdentity();
+  if (!identity) redirect("/login");
+  return identity;
+}
+
+export async function currentUser(): Promise<string | null> {
+  return (await currentIdentity())?.username ?? null;
 }
 
 export async function requireUser() {
@@ -64,4 +74,7 @@ export async function requireUser() {
   return user;
 }
 
-export function userCredentialVersion() { return credentialVersion(); }
+export function userCredentialVersion(user = process.env.USER_LOGIN_NAME) {
+  const account = configuredAccounts(process.env).find(candidate => candidate.username === user);
+  return account ? accountCredentialVersion(account) : "";
+}

@@ -26,6 +26,11 @@ export default function AdminPage() {
   const [generatedAt, setGeneratedAt] = useState("");
   const [query, setQuery] = useState("");
   const [group, setGroup] = useState("All");
+  useEffect(() => {
+    let alive = true;
+    fetch("/api/user-session", { cache: "no-store" }).then(r => r.json()).then(data => { if (alive && data.openAccess) setUnlocked(true); }).catch(() => {});
+    return () => { alive = false; };
+  }, []);
 
   useEffect(() => { fetch("/api/costing").then((r) => r.json()).then((data) => {
     setItems(Array.isArray(data?.items) ? data.items : []); setSource(data?.source ?? "local-json");

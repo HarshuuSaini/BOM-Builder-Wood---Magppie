@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { COSTING_ITEMS, type CostingMasterItem } from "@/lib/costing";
 import { KITCHEN_ZONES, DEFAULT_MATERIAL_SOURCES, createsMaterialSourceCycle, type KitchenZone, type MaterialSource } from "@/lib/kitchen-materials";
 
@@ -57,6 +57,11 @@ const buttonStyle: React.CSSProperties = { padding: "9px 13px", border: 0, borde
 export default function MaterialMasterAdminPage() {
   const [password, setPassword] = useState("");
   const [unlocked, setUnlocked] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    fetch("/api/user-session", { cache: "no-store" }).then(r => r.json()).then(data => { if (alive && data.openAccess) setUnlocked(true); }).catch(() => {});
+    return () => { alive = false; };
+  }, []);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   // Local UI preview only; these selections are not yet part of the JSON contract.

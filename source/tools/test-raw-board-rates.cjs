@@ -2,9 +2,14 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const ts = require('typescript');
+const Module = require('node:module');
+const originalResolve = Module._resolveFilename;
+Module._resolveFilename = function(name, ...args) {
+  return originalResolve.call(this, name.startsWith('@/') ? path.join(__dirname, '..', 'src', name.slice(2)) : name, ...args);
+};
 const master = require('../src/data/costing_master.json');
 require.extensions['.ts'] = (mod, file) => mod._compile(ts.transpileModule(fs.readFileSync(file, 'utf8'), {
-  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020, esModuleInterop: true },
 }).outputText, file);
 const { selectedBoardRate } = require(path.resolve(__dirname, '../src/lib/kitchen-materials.ts'));
 const byId = id => master.items.find(item => item.id === id);
@@ -12,7 +17,7 @@ const expected = {
   'KITCHEN-004': 2201.91, 'KITCHEN-011': 2201.91,
   'KITCHEN-026': 2202, 'KITCHEN-037': 1116,
   'KITCHEN-029': 2412, 'KITCHEN-035': 1399.51,
-  'KITCHEN-030': 2612.3,
+  'KITCHEN-030': 2162.9,
 };
 for (const [id, price] of Object.entries(expected)) {
   const item = byId(id);

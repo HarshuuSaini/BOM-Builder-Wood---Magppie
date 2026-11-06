@@ -1,10 +1,13 @@
 import { WoodBomBuilder } from "@/components/WoodBomBuilder";
-import { requireUser, userSession, sessionMaterials } from "@/lib/user-session";
+import { requireIdentity, userSession, sessionMaterials, isOpenCostingAccess } from "@/lib/user-session";
+import { isLocalCostingsEnabled } from "@/lib/local-costing-store";
+import { showsProjectPricing } from "@/lib/costing-visibility";
 import { redirect } from "next/navigation";
 
 export default async function Page() {
-  await requireUser();
+  const identity = await requireIdentity();
   const session = await userSession();
   if (!sessionMaterials(session)) redirect("/materials");
-  return <WoodBomBuilder materials={sessionMaterials(session)} />;
+  const localCostings = isLocalCostingsEnabled();
+  return <WoodBomBuilder materials={sessionMaterials(session)} openAccessAdmin={isOpenCostingAccess()} canViewProjectPricing={showsProjectPricing(identity.role, localCostings)} localCostingUser={localCostings ? identity : undefined} />;
 }

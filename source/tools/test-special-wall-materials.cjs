@@ -19,6 +19,7 @@ for (const ext of ['.ts', '.tsx']) require.extensions[ext] = (mod, file) => {
 };
 const { COSTING_ITEMS } = require('../src/lib/costing.ts');
 const { materialChoicesForCabinet, selectedBoardRate } = require('../src/lib/kitchen-materials.ts');
+const { defaultSpecialWall } = require('../src/components/MaterialSelection.tsx');
 const { buildModel, computeCosting, cabinetConfigWithSelectedMaterials } = require('../src/components/WoodBomBuilder.tsx');
 const choice = (itemId) => ({ itemId, frontSheetPrice: '550', backSheetPrice: '550' });
 const wall = { carcass: choice('KITCHEN-007'), back: choice('KITCHEN-035'), drawer: choice('KITCHEN-029'), shutter: choice('KITCHEN-014'), visible: choice('KITCHEN-014') };
@@ -29,6 +30,55 @@ const materials = { Base: wall, Sink: wall, Wall: wall, Tall: wall, Loft: wall, 
 assert.equal(materialChoicesForCabinet(materials, 'WC', 'WOP').carcass.itemId, 'KITCHEN-014');
 assert.equal(materialChoicesForCabinet(materials, 'WC', 'WGL').carcass.itemId, 'KITCHEN-014');
 assert.equal(materialChoicesForCabinet(materials, 'WC', 'WST').carcass.itemId, 'KITCHEN-007');
+const wallIndependent = { ...wall,
+  carcass: { ...choice('KITCHEN-007'), boardSheetPrice: '2600', boardFinish: 'Carcass white' },
+  visible: { ...choice('KITCHEN-009'), boardSheetPrice: '1400', boardFinish: 'Visible oak' },
+  edgeBand: { finish: 'White', carcassPricePerRmt: '8', shutterPricePerRmt: '12', byMaterial: {
+    carcass: { finish: 'Carcass white', pricePerRmt: '8' }, visible: { finish: 'Visible oak', pricePerRmt: '12' },
+  } },
+};
+for (const glass of [false, true]) {
+  const defaults = defaultSpecialWall(wallIndependent, glass, COSTING_ITEMS);
+  assert.deepEqual(defaults.carcass, wallIndependent.carcass);
+  assert.deepEqual(defaults.visible, wallIndependent.visible);
+  assert.deepEqual(defaults.edgeBand.byMaterial.carcass, wallIndependent.edgeBand.byMaterial.carcass);
+}
+const sharedMaterials = { ...materials, Wall: wallIndependent, _wallSpecialSources: { open: 'Wall', glass: 'Wall' } };
+for (const family of ['WOP', 'WGL']) {
+  const current = materialChoicesForCabinet(sharedMaterials, 'WC', family);
+  assert.deepEqual(current.carcass, wallIndependent.carcass, 'Shared specials follow actual Wall carcass, not cached shutter material');
+  assert.deepEqual(current.visible, wallIndependent.visible);
+}
+// Execute the real UI handlers with isolated state to cover shared -> own edits.
+const uiFile = path.join(root, 'src/components/MaterialSelection.tsx');
+const uiSource = fs.readFileSync(uiFile, 'utf8');
+const ast = ts.createSourceFile(uiFile, uiSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+function handler(name, scope) {
+  let expression;
+  const visit = node => {
+    if (ts.isVariableDeclaration(node) && node.name.getText(ast) === name) expression = node.initializer.getText(ast);
+    ts.forEachChild(node, visit);
+  };
+  visit(ast);
+  assert.ok(expression);
+  const js = ts.transpileModule(`const run = ${expression}; return run;`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
+  return new Function(...Object.keys(scope), js)(...Object.values(scope));
+}
+for (const kind of ['open', 'glass']) {
+  let value = defaultSpecialWall(wallIndependent, kind === 'glass', COSTING_ITEMS);
+  let sources = { open: 'Wall', glass: 'Wall' };
+  const original = JSON.stringify(wallIndependent);
+  const visible = structuredClone(value.visible);
+  const scope = { effectiveSpecialWall: () => value, setWallOpen: next => { value = next; }, setWallGlass: next => { value = next; },
+    setWallSpecialSources: update => { sources = update(sources); } };
+  handler('updateSpecialWallField', scope)(kind, 'carcass', { itemId: 'KITCHEN-014', boardSheetPrice: '3000' });
+  assert.deepEqual(value.visible, visible, 'Changing special carcass must not change its visible panel');
+  assert.equal(sources[kind], 'Own');
+  assert.equal(JSON.stringify(wallIndependent), original, 'Override must not rewrite Wall materials');
+  const customCarcass = structuredClone(value.carcass);
+  handler('updateSpecialWallField', scope)(kind, 'visible', { boardSheetPrice: '1500' });
+  assert.deepEqual(value.carcass, customCarcass, 'Visible edits must not change carcass');
+}
 
 const base = { zk: 'WC', fk: 'WGL', vid: 'single', hand: 'LHS', handle: 'NONE', board: 'KITCHEN-007',
   backBoardId: 'KITCHEN-035', drawerBoardId: 'KITCHEN-029', shType: 'KITCHEN-014', visibleSides: '',
@@ -43,10 +93,38 @@ assert.equal(glassConfig.board, 'KITCHEN-014');
 assert.equal(glassConfig.glassType, 'KITCHEN-GLASS-5-CLEAR');
 assert.equal(glassConfig.glassPricePerSqft, '210');
 const glass = buildModel(glassConfig);
+const { handleSettingFor } = require('../src/lib/kitchen-materials.ts');
+assert.equal(handleSettingFor(undefined, 'WC', 'WGL').type, 'HANDLE');
+assert.equal(handleSettingFor({ _handleDefaults: { Glass: { type: 'NONE', price: '', brand: '' } } }, 'TC', 'SHFG').type, 'NONE');
+for (const handle of ['HANDLE', 'NONE']) {
+  const model = buildModel({ ...glassConfig, handle });
+  const frameProfiles = model.profiles.filter(profile => profile.pack === 'Shutter Pack');
+  const handleProfiles = frameProfiles.filter(profile => profile.type === 'H');
+  assert.equal(handleProfiles.reduce((sum, profile) => sum + profile.qty, 0), handle === 'HANDLE' ? 1 : 0);
+  assert(handleProfiles.every(profile => profile.orientation === 'vertical'));
+  assert.equal(frameProfiles.filter(profile => profile.type === 'V').reduce((sum, profile) => sum + profile.qty, 0), handle === 'HANDLE' ? 3 : 4);
+  const cost = computeCosting([{ id: 1, m: model, qty: 1, elevation: 'AA' }], [], [], [], [], [], [], model.shType, model.shType, {}, { carcass: 10, shutter: 20, profile: 20 }, {});
+  assert(cost.lines[0].details.filter(detail => detail.category === 'Profile').every(detail => detail.rate > 0));
+}
 const glassShelf = COSTING_ITEMS.find(item => item.id === 'KITCHEN-GLASS-6-CLEAR');
 assert(glass.panels.some(panel => panel.name.includes('Shelf') && panel.mat === glassShelf.materialDescription));
 const glassCost = computeCosting([{ id: 1, m: glass, qty: 1, elevation: 'AA' }], [], [], [], [], [], [], glass.shType, glass.shType, {}, { carcass: 10, shutter: 20, profile: 20 }, {});
-assert(glassCost.lines[0].details.some(detail => detail.category === 'Shutter glass' && detail.rate === 210));
+const glassDetails = glassCost.lines[0].details.filter(detail => ['Shutter glass', 'Glass shelf'].includes(detail.category));
+assert(glassDetails.some(detail => detail.category === 'Shutter glass'));
+for (const detail of glassDetails) {
+  assert.equal(detail.uom, 'nos');
+  assert(Number.isInteger(detail.netQty));
+  assert.match(detail.item, /\d+ × \d+ mm/);
+  assert.equal(detail.billableQty, detail.netQty);
+}
+const shutterPanel = glass.panels.find(panel => panel.pack === 'Shutter Pack' && /glass/i.test(panel.mat));
+const shutterDetail = glassDetails.find(detail => detail.category === 'Shutter glass');
+assert(Math.abs(shutterDetail.rate - shutterPanel.w * shutterPanel.h / 92903.04 / 0.8 * 210) < 1e-8);
+const twoSizesModel = { ...glass, panels: [...glass.panels, { ...shutterPanel, w: shutterPanel.w + 100 }] };
+const twoSizesCost = computeCosting([{ id: 1, m: twoSizesModel, qty: 2, elevation: 'AA' }], [], [], [], [], [], [], glass.shType, glass.shType, {}, { carcass: 10, shutter: 20, profile: 20 }, {});
+const shutterPurchases = twoSizesCost.purchases.filter(item => item.categories.includes('Shutter glass'));
+assert.equal(shutterPurchases.length, 2);
+assert(shutterPurchases.every(item => item.unit === 'nos' && Number.isInteger(item.quantity)));
 const openConfig = cabinetConfigWithSelectedMaterials({ ...base, fk: 'WOP', vid: 'open' }, materials);
 const open = buildModel(openConfig);
 const shutterBoard = COSTING_ITEMS.find(item => item.id === 'KITCHEN-014');

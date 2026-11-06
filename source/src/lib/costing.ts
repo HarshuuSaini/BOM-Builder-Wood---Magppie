@@ -31,11 +31,11 @@ const sinkStoneBoard: CostingMasterItem = {
 };
 const stoneSinkAdhesives: CostingMasterItem[] = [
   { id: "KITCHEN-SINK-BONDTITE", sNo: 0, elevation: "SINK CARCASS", materialDescription: "GLUE BONDTITE FAST & CLEAR FOR STONE XX AGG",
-    remark: "0.05 pcs per stone sink unit", unit: "Pcs", sqft: null, price: 2440, sqftPrice: null,
-    group: "Consumable", subgroup: "Stone pasting", type: "BONDTITE", brand: "", thicknessMm: null, rateBasis: "PCS", currentRate: 2440 },
+    remark: "10 gm per sqft of stone · ₹3/gm", unit: "kg", sqft: null, price: 3000, sqftPrice: null,
+    group: "Consumable", subgroup: "Stone pasting", type: "BONDTITE", brand: "", thicknessMm: null, rateBasis: "KG", currentRate: 3000 },
   { id: "KITCHEN-SINK-SILICONE", sNo: 0, elevation: "SINK CARCASS", materialDescription: "GLUE SILICONE XX TRANSPERENT DOWSIL 789 AGG",
-    remark: "0.5 pcs per stone sink unit", unit: "Pcs", sqft: null, price: 255, sqftPrice: null,
-    group: "Consumable", subgroup: "Stone pasting", type: "SILICONE", brand: "", thicknessMm: null, rateBasis: "PCS", currentRate: 255 },
+    remark: "40 gm per sqft of stone · ₹1.20/gm", unit: "kg", sqft: null, price: 1200, sqftPrice: null,
+    group: "Consumable", subgroup: "Stone pasting", type: "SILICONE", brand: "", thicknessMm: null, rateBasis: "KG", currentRate: 1200 },
 ];
 export const COSTING_MASTER: CostingMaster = {
   ...importedMaster,
@@ -51,17 +51,17 @@ export const COSTING_ITEMS = COSTING_MASTER.items;
 /** Default labour/processing charges per billable board sqft (+ wastage).
  * Project-specific rates may override these without changing the master. */
 export const DEFAULT_BOARD_PROCESSING_RATES: Record<string, number> = {
-  "Carcass / shelf material|Postlam": 42.3,
-  "Carcass back material|Postlam": 17.1,
-  "Drawer material|Postlam": 28.8125,
+  "Carcass / shelf material|Postlam": 45,
+  "Carcass back material|Postlam": 20,
+  "Drawer material|Postlam": 30,
   "Shutter material|Postlam": 42.3,
   "Visible side material|Postlam": 42.3,
-  "Carcass / shelf material|Prelam": 36,
-  "Carcass back material|Prelam": 12.59375,
-  "Drawer material|Prelam": 22.5,
+  "Carcass / shelf material|Prelam": 35,
+  "Carcass back material|Prelam": 10,
+  "Drawer material|Prelam": 20,
   "Shutter material|Prelam": 36,
   "Visible side material|Prelam": 36,
-  "Counter Ply": 12.6,
+  "Counter Ply": 10,
 };
 
 export function costingItemNames(item: CostingMasterItem): string[] {

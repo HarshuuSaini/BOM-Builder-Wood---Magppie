@@ -1,4 +1,6 @@
 import { COSTING_ITEMS, SINK_STONE_BOARD_ID, SINK_STONE_SLAB_SQFT } from "@/lib/costing";
+import { modernMembraneConstruction } from "@/lib/modern-membrane";
+import type { PriceChange } from "./price-change-audit";
 
 export const KITCHEN_ZONES = ["Base", "Sink", "Wall", "Tall", "Loft", "Mid"] as const;
 export type KitchenZone = (typeof KITCHEN_ZONES)[number];
@@ -29,6 +31,7 @@ export type MaterialChoice = {
   frontSheetPrice: string;
   backSheetPrice: string;
   boardSheetPrice?: string;
+  pvcFoilRate?: string;
   boardFinish?: string;
   slabSqft?: string;
   slabLengthMm?: string;
@@ -51,7 +54,7 @@ export function edgeBandForMaterial(choice: EdgeBandChoice | undefined, field: M
 }
 
 
-export type BoardPriceOverride = { itemId: string; sheetPrice: string; finish?: string; slabSqft?: string; slabLengthMm?: string; slabWidthMm?: string };
+export type BoardPriceOverride = { itemId: string; sheetPrice: string; pvcFoilRate?: string; finish?: string; slabSqft?: string; slabLengthMm?: string; slabWidthMm?: string };
 export type BoardPriceOverrides = Partial<Record<MaterialField, BoardPriceOverride>>;
 
 export function validBoardSheetPrice(value: unknown): value is string {
@@ -75,11 +78,13 @@ export function boardPricesFromMaterials(choices?: ZoneMaterials): BoardPriceOve
   return Object.fromEntries(MATERIAL_FIELDS.flatMap((field) => {
     const choice = choices?.[field];
     if (!choice) return [];
+    const item = COSTING_ITEMS.find((item) => item.id === choice.itemId);
     const sheetPrice = validBoardSheetPrice(choice.boardSheetPrice) ? choice.boardSheetPrice
-      : choice.boardFinish || choice.slabSqft ? String((COSTING_ITEMS.find((item) => item.id === choice.itemId)?.currentRate ?? 0) *
+      : choice.boardFinish || choice.slabSqft || choice.pvcFoilRate !== undefined ? String((modernMembraneConstruction(item)?.board.currentRate ?? item?.currentRate ?? 0) *
           (choice.itemId === SINK_STONE_BOARD_ID ? SINK_STONE_SLAB_SQFT : 32)) : undefined;
     return sheetPrice !== undefined
       ? [[field, { itemId: choice.itemId, sheetPrice,
+        ...(choice.pvcFoilRate !== undefined ? { pvcFoilRate: choice.pvcFoilRate } : {}),
         ...(choice.boardFinish ? { finish: choice.boardFinish } : {}),
         ...(choice.itemId === SINK_STONE_BOARD_ID && choice.slabSqft ? { slabSqft: choice.slabSqft } : {}),
         ...(choice.itemId === SINK_STONE_BOARD_ID && choice.slabLengthMm ? { slabLengthMm: choice.slabLengthMm } : {}),
@@ -122,13 +127,14 @@ export function carcassLaminateForCabinet(choices: ZoneMaterials, glassCabinet: 
     : { front: choices.carcass.frontSheetPrice, back: choices.carcass.frontSheetPrice };
 }
 export const DRAWER_BRANDS = ["Lian", "Hettich", "Blum", "Hafele", "Grass"] as const;
-export const HANDLE_ZONES = ["Base", "Wall", "Tall", "Loft"] as const;
+export const HANDLE_ZONES = ["Base", "Wall", "Tall", "Loft", "Glass"] as const;
 export type HandleZone = (typeof HANDLE_ZONES)[number];
 export const HANDLE_TYPES = ["XCJ", "PUSH", "KNOB", "HANDLE", "NONE"] as const;
 export type HandleType = (typeof HANDLE_TYPES)[number];
 export type HandleSetting = { type: HandleType; price: string; brand: string };
 export type HandleDefaults = Partial<Record<HandleZone, HandleSetting | "STD" | "XCJ">>;
 export function handleZoneForCode(code: string, family?: string): HandleZone {
+  if (isGlassCabinetFamily(family)) return "Glass";
   if (HANDLE_ZONES.includes(code as HandleZone)) return code as HandleZone;
   const zone = kitchenZoneForCode(code, family);
   return zone === "Sink" ? "Base" : zone === "Mid" ? "Wall" : zone;
@@ -136,11 +142,17 @@ export function handleZoneForCode(code: string, family?: string): HandleZone {
 export function handleSettingFor(materials: KitchenMaterials | undefined, code: string, family?: string): HandleSetting {
   const zone = handleZoneForCode(code, family);
   const saved = materials?._handleDefaults?.[zone];
+  if (zone === "Glass") return { type: typeof saved === "object" && saved.type === "NONE" ? "NONE" : "HANDLE", price: "", brand: "" };
+  if (code === "WC" && family === "WLU") return { type: "PUSH", price: "", brand: "Ebco" };
   if (typeof saved === "string") return { type: saved === "XCJ" && zone !== "Wall" && zone !== "Loft" ? "XCJ" : "NONE", price: "", brand: "" };
   if (saved?.type === "XCJ" && (zone === "Wall" || zone === "Loft")) return { ...saved, type: "NONE" };
   return saved ?? { type: zone === "Base" || zone === "Tall" ? "XCJ" : "NONE", price: "", brand: "" };
 }
 export type KitchenMaterials = Record<KitchenZone, ZoneMaterials> & {
+  _priceChanges?: PriceChange[];
+  _topFillers?: import("@/lib/top-fillers").TopFillerSettings;
+  _counterPlyRates?: Record<string, string>;
+  _profileFinishes?: import("@/lib/profile-finishes").ProfileFinishes;
   _sources?: Partial<Record<KitchenZone, MaterialSource>>;
   _hingeChoice?: string;
   _drawerBrand?: string;
@@ -156,6 +168,8 @@ export function materialChoicesForCabinet(materials: KitchenMaterials | undefine
   const zone = materials[kitchenZoneForCode(code, family)] ?? materials.Base;
   const special = code === "WC" && family === "WOP" ? materials._wallOpen
     : code === "WC" && family === "WGL" ? materials._wallGlass : undefined;
+  const specialKind = code === "WC" && family === "WOP" ? "open" : code === "WC" && family === "WGL" ? "glass" : undefined;
+  if (specialKind && materials._wallSpecialSources?.[specialKind] === "Wall") return { ...zone, glassCarcassLaminate: undefined };
   return special ? { ...zone, carcass: special.carcass, back: special.back, visible: special.visible,
     edgeBand: special.edgeBand ?? zone.edgeBand,
     glassCarcassLaminate: undefined } : zone;

@@ -1,0 +1,11 @@
+import { NextResponse } from "next/server";
+import { listAccessoryMaster } from "@/lib/local-costing-store";
+import { localCostingActor, costingErrorResponse } from "@/lib/local-costing-http";
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export async function GET() {
+  try {
+    await localCostingActor();
+    return NextResponse.json({ items: listAccessoryMaster() }, { headers: { "Cache-Control": "no-store" } });
+  } catch (error) { return costingErrorResponse(error); }
+}

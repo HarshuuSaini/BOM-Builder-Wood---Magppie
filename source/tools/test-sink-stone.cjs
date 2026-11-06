@@ -29,7 +29,7 @@ assert.equal(stoneItem.sqft, 21);
 assert.equal(stoneItem.thicknessMm, 15);
 assert.equal(stoneSlabAreaFromDimensions(2400, 800), '21');
 assert.equal(stoneSlabAreaFromDimensions(3000, 900), '29');
-assert.equal(DEFAULT_BOARD_PROCESSING_RATES['Carcass / shelf material|Prelam'], 36);
+assert.equal(DEFAULT_BOARD_PROCESSING_RATES['Carcass / shelf material|Prelam'], 35);
 const selection = {
   carcass: { itemId: 'KITCHEN-007', frontSheetPrice: '550', backSheetPrice: '550' },
   back: { itemId: 'KITCHEN-035', frontSheetPrice: '550', backSheetPrice: '550' },
@@ -76,8 +76,13 @@ assert(!stone.cons.some(consumable => consumable.name.includes('AKEMI')));
 for (const name of ['GLUE BONDTITE', 'GLUE SILICONE']) {
   assert(stone.cons.some(consumable => consumable.name.includes(name)), `${name} must be in the stone BOM`);
 }
-assert.equal(stone.cons.find(consumable => consumable.name.includes('BONDTITE')).qty, 0.05);
-assert.equal(stone.cons.find(consumable => consumable.name.includes('SILICONE')).qty, 0.5);
+const stoneArea = stone.panels.filter(panel => panel.mat === stoneItem.materialDescription)
+  .reduce((area, panel) => area + panel.w * panel.h * panel.qty / 92903.04, 0);
+const bondtiteGrams = Math.round(stoneArea * 10 * 1000) / 1000;
+const siliconeGrams = Math.round(stoneArea * 40 * 1000) / 1000;
+assert.equal(stone.cons.find(consumable => consumable.name.includes('BONDTITE')).qty, bondtiteGrams);
+assert.equal(stone.cons.find(consumable => consumable.name.includes('SILICONE')).qty, siliconeGrams);
+assert(stone.cons.filter(consumable => consumable.pack === 'Stone pasting').every(consumable => consumable.uom === 'gm'));
 const project = [{ id: 1, m: stone, qty: 1, elevation: 'AA' }];
 const waste = { carcass: 10, shutter: 20, profile: 20 };
 const costing = computeCosting(project, [], [], [], [], [], [], config.shType, config.shType, {}, waste, {});
@@ -85,12 +90,17 @@ const board = costing.lines[0].details.find(detail => detail.itemCode === SINK_S
 const processing = costing.lines[0].details.find(detail => detail.itemCode === `${SINK_STONE_BOARD_ID}-PROC`);
 assert.equal(board.rate, 2004 / 21);
 assert.equal(board.purchaseAreaSqft, 21);
-assert.equal(processing.rate, 36);
+assert.equal(processing.rate, 35);
 assert.equal(processing.billableQty, board.billableQty);
 assert.equal(costing.lines[0].details.filter(detail => detail.specification.includes('Stone pasting')).length, 2);
 assert.equal(costing.purchases.find(purchase => purchase.itemCode === SINK_STONE_BOARD_ID).unit, 'slab');
-assert.equal(costing.purchases.find(purchase => purchase.itemCode === 'KITCHEN-SINK-BONDTITE').amount, 122);
-assert.equal(costing.purchases.find(purchase => purchase.itemCode === 'KITCHEN-SINK-SILICONE').amount, 127.5);
+const bondtite = costing.lines[0].details.find(detail => detail.itemCode === 'KITCHEN-SINK-BONDTITE');
+const silicone = costing.lines[0].details.find(detail => detail.itemCode === 'KITCHEN-SINK-SILICONE');
+assert.deepEqual([bondtite.netQty, bondtite.uom, bondtite.rate], [bondtiteGrams, 'gm', 3]);
+assert.deepEqual([silicone.netQty, silicone.uom, silicone.rate], [siliconeGrams, 'gm', 1.2]);
+assert.equal(costing.purchases.find(purchase => purchase.itemCode === 'KITCHEN-SINK-BONDTITE').rate, 3000);
+assert.equal(costing.purchases.find(purchase => purchase.itemCode === 'KITCHEN-SINK-SILICONE').rate, 1200);
+assert(!costing.unpriced.some(name => /BONDTITE|SILICONE/.test(name)));
 const stoneTotal = buildBoardTotals(project, waste).find(row => row.mat === stoneItem.materialDescription);
 assert.equal(stoneTotal.sheetAreaSqft, 21);
 assert.equal(stoneTotal.sheets, Math.round((stoneTotal.billableSqft / 21) * 100) / 100);
@@ -107,4 +117,6 @@ assert(!wood.cons.some(consumable => consumable.pack === 'Stone pasting'));
 const stoneWithoutBack = buildModel({ ...config, sinkStoneFullBack: false });
 assert(!stoneWithoutBack.panels.some(panel => /\bBack\b/.test(panel.name)));
 assert(stoneWithoutBack.panels.length < stone.panels.length);
+assert(stoneWithoutBack.cons.find(consumable => consumable.name.includes('BONDTITE')).qty < bondtiteGrams);
+assert(stoneWithoutBack.cons.find(consumable => consumable.name.includes('SILICONE')).qty < siliconeGrams);
 console.log('PASS: sink stone default/custom sheet rate, processing, pasting BOM and wood fallback.');

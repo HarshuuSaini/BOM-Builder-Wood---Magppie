@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { currentUser, userCredentialVersion, userSession, verifyUserCredentials } from "@/lib/user-session";
+import { authenticateUserCredentials, currentIdentity, isOpenCostingAccess, userLoginConfigured, userSession } from "@/lib/user-session";
 
 export const dynamic = "force-dynamic";
 
@@ -11,29 +11,38 @@ function sameOrigin(request: Request) {
 }
 
 export async function GET() {
-  return NextResponse.json({ user: await currentUser() }, { headers: { "Cache-Control": "no-store" } });
+  const identity = await currentIdentity();
+  return NextResponse.json({ user: identity?.username ?? null, role: identity?.role ?? null, openAccess: isOpenCostingAccess() }, { headers: { "Cache-Control": "no-store" } });
 }
 
 export async function POST(request: Request) {
   if (!sameOrigin(request)) {
     return NextResponse.json({ error: "Invalid request origin." }, { status: 403 });
   }
-  if (!process.env.USER_SESSION_SECRET || !process.env.USER_LOGIN_NAME || !process.env.USER_LOGIN_PASSWORD) {
+  if (isOpenCostingAccess()) {
+    const identity = await currentIdentity();
+    return NextResponse.json({ user: identity?.username, role: "admin", openAccess: true,
+      localCostingsEnabled: process.env.NODE_ENV === "development" && process.env.LOCAL_COSTINGS_ENABLED === "1" }, { headers: { "Cache-Control": "no-store" } });
+  }
+  if (!process.env.USER_SESSION_SECRET || process.env.USER_SESSION_SECRET.length < 32 || !userLoginConfigured()) {
     return NextResponse.json({ error: "User login is not configured on this server." }, { status: 503 });
   }
   const body = await request.json().catch(() => null);
   const user = typeof body?.user === "string" ? body.user : "";
   const password = typeof body?.password === "string" ? body.password : "";
-  if (user.length > 256 || password.length > 1024 || !verifyUserCredentials(user, password)) {
+  const identity = authenticateUserCredentials(user, password);
+  if (!identity) {
     return NextResponse.json({ error: "Invalid username or password." }, { status: 401 });
   }
   const session = await userSession();
-  session.user = user;
-  session.credentialVersion = userCredentialVersion();
+  session.user = identity.username;
+  session.credentialVersion = identity.credentialVersion;
   delete session.materials;
   delete session.materialsCompressed;
   await session.save();
-  return NextResponse.json({ user }, { headers: { "Cache-Control": "no-store" } });
+  return NextResponse.json({ user: identity.username, role: identity.role,
+    localCostingsEnabled: process.env.NODE_ENV === "development" && process.env.LOCAL_COSTINGS_ENABLED === "1",
+  }, { headers: { "Cache-Control": "no-store" } });
 }
 
 export async function DELETE(request: Request) {

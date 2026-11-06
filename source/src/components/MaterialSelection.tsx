@@ -1,9 +1,15 @@
 "use client";
+import { DEFAULT_TOP_FILLERS, validTopFillerSettings, type TopFillerSettings } from "@/lib/top-fillers";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { PriceChangeReview } from "@/components/PriceChangeReview";
+import { PriceChangeReviewDialog } from "@/components/PriceChangeReviewDialog";
+import { priceChangesFor, missingPriceReasons, type PriceChange } from "@/lib/price-change-audit";
 import { useRouter } from "next/navigation";
 import { UserSignOut } from "@/components/UserSignOut";
-import { SINK_STONE_BOARD_ID } from "@/lib/costing";
+import { COSTING_ITEMS, SINK_STONE_BOARD_ID } from "@/lib/costing";
+import { modernMembraneConstruction } from "@/lib/modern-membrane";
+import { DEFAULT_PROFILE_FINISHES, type ProfileFinishes } from "@/lib/profile-finishes";
 import edgebandFinishesData from "@/data/edgeband_finishes.json";
 import boardFinishesData from "@/data/board_finishes.json";
 import { DRAWER_BRANDS, KITCHEN_ZONES, HANDLE_ZONES, DEFAULT_MATERIAL_SOURCES, MATERIAL_FIELDS, createsMaterialSourceCycle, handleSettingFor, edgeBandForMaterial, stoneSlabAreaFromDimensions, type HandleSetting, type HandleZone, type KitchenMaterials, type KitchenZone, type MaterialSource, type MaterialChoice, type MaterialField, type ZoneMaterials, type SpecialWallMaterials, type SpecialWallSource, type EdgeBandChoice } from "@/lib/kitchen-materials";
@@ -23,6 +29,9 @@ const DEFAULT_IDS: Record<MaterialField, string> = {
   carcass: "KITCHEN-007", back: "KITCHEN-035", drawer: "KITCHEN-029", shutter: "KITCHEN-014", visible: "KITCHEN-014",
 };
 const fieldStyle: React.CSSProperties = { padding: "9px 10px", width: "100%", boxSizing: "border-box", border: "1px solid #ccd6d0", borderRadius: 5, background: "white", font: "inherit" };
+function counterPlySheetPrices(rates?: Record<string, string>): Record<string, string> {
+  return Object.fromEntries(Object.entries(rates ?? {}).map(([id, rate]) => [id, String(Number((Number(rate) * 32).toFixed(6)))]));
+}
 
 function defaultZone(): ZoneMaterials {
   return Object.fromEntries(MATERIAL_FIELDS.map((field) => [field, { itemId: DEFAULT_IDS[field], frontSheetPrice: "550", backSheetPrice: "550" }])) as unknown as ZoneMaterials;
@@ -41,16 +50,14 @@ function defaultEdgeBand(options: Option[]): EdgeBandChoice {
 function defaultMaterials(): KitchenMaterials {
   return Object.fromEntries(KITCHEN_ZONES.map((zone) => [zone, defaultZone()])) as unknown as KitchenMaterials;
 }
-function defaultSpecialWall(zone: ZoneMaterials, glass: boolean, options: Option[]): SpecialWallMaterials {
-  const shutterBoard = options.find((option) => option.id === zone.shutter.itemId && option.group === "Shutter Material")
-    ?? options.find((option) => option.id === DEFAULT_IDS.shutter);
+export function defaultSpecialWall(zone: ZoneMaterials, glass: boolean, options: Option[]): SpecialWallMaterials {
   const glassItem = options.find((option) => option.id === "KITCHEN-GLASS-5-TINTED")
     ?? options.find((option) => option.group === "Glass Type");
   return {
-    carcass: { ...zone.shutter, itemId: shutterBoard?.id ?? DEFAULT_IDS.shutter },
+    carcass: { ...zone.carcass },
     back: { ...zone.back }, visible: { ...zone.visible },
     edgeBand: { ...(zone.edgeBand ?? defaultEdgeBand(options)), byMaterial: {
-      ...zone.edgeBand?.byMaterial, carcass: edgeBandForMaterial(zone.edgeBand ?? defaultEdgeBand(options), "shutter"),
+      ...zone.edgeBand?.byMaterial, carcass: edgeBandForMaterial(zone.edgeBand ?? defaultEdgeBand(options), "carcass"),
     } },
     ...(glass && glassItem ? { glass: { itemId: glassItem.id, pricePerSqft: String(glassItem.currentRate ?? 0) } } : {}),
   };
@@ -124,12 +131,19 @@ export function updateMaterialChoices(choices: ZoneMaterials, field: MaterialFie
 }
 
 export function MaterialSelection({ options, initial }: { options: Option[]; initial?: KitchenMaterials }) {
+  const materialBaseline = useRef(initial);
+  const [priceReasons, setPriceReasons] = useState<PriceChange[]>(initial?._priceChanges ?? []);
+  const [reviewRequest, setReviewRequest] = useState(0);
   const router = useRouter();
   const [activeSection, setActiveSection] = useState<MaterialSection>("All");
   const [allZonesExpanded, setAllZonesExpanded] = useState(false);
   const [hingeBrand, setHingeBrand] = useState(() => initial?._hingeChoice?.split(" ")[0] ?? "Hettich");
   const [hingeType, setHingeType] = useState(() => initial?._hingeChoice?.endsWith("Non Soft Close") ? "Non Soft Close" : "Soft Close");
   const [drawerBrand, setDrawerBrand] = useState(() => initial?._drawerBrand ?? "Hettich");
+  const [counterPlyRates, setCounterPlyRates] = useState<Record<string, string>>(() => counterPlySheetPrices(initial?._counterPlyRates));
+  const [counterPlyItemId, setCounterPlyItemId] = useState("KITCHEN-030");
+  const [profileFinishes, setProfileFinishes] = useState<ProfileFinishes>(() => initial?._profileFinishes ?? DEFAULT_PROFILE_FINISHES);
+  const [topFillers, setTopFillers] = useState<TopFillerSettings>(() => initial?._topFillers ?? DEFAULT_TOP_FILLERS);
   const [handleDefaults, setHandleDefaults] = useState<Record<HandleZone, HandleSetting>>(() =>
     Object.fromEntries(HANDLE_ZONES.map((zone) => [zone, handleSettingFor(initial, zone)])) as Record<HandleZone, HandleSetting>);
   const normalizeVisible = (zone: ZoneMaterials): ZoneMaterials => {
@@ -175,10 +189,16 @@ export function MaterialSelection({ options, initial }: { options: Option[]; ini
   const [kitchenNameDraft, setKitchenNameDraft] = useState("");
   useEffect(() => { setKitchenNameDraft(kitchenName); }, [kitchenName]);
 
-  const loadKitchenMaterials = (selected: KitchenMaterials) => {
+  const loadKitchenMaterials = (selected: KitchenMaterials, savedReasons?: PriceChange[]) => {
+    const reasons = [...savedReasons?.filter(c => c.key.startsWith("Materials.")) ?? [], ...selected._priceChanges ?? []];
+    materialBaseline.current = { ...selected, _priceChanges: reasons };
+    setPriceReasons(reasons);
     setHingeBrand(selected._hingeChoice?.split(" ")[0] ?? "Hettich");
     setHingeType(selected._hingeChoice?.endsWith("Non Soft Close") ? "Non Soft Close" : "Soft Close");
     setDrawerBrand(selected._drawerBrand ?? "Hettich");
+    setCounterPlyRates(counterPlySheetPrices(selected._counterPlyRates));
+    setProfileFinishes(selected._profileFinishes ?? DEFAULT_PROFILE_FINISHES);
+    setTopFillers(selected._topFillers ?? DEFAULT_TOP_FILLERS);
     setHandleDefaults(Object.fromEntries(HANDLE_ZONES.map((zone) => [zone, handleSettingFor(selected, zone)])) as Record<HandleZone, HandleSetting>);
     setAll(normalizeVisible(selected.Base ?? defaultZone()));
     setZones(Object.fromEntries(KITCHEN_ZONES.map((zone) => [zone, normalizeVisible(selected[zone] ?? selected.Base ?? defaultZone())])) as unknown as KitchenMaterials);
@@ -199,7 +219,7 @@ export function MaterialSelection({ options, initial }: { options: Option[]; ini
     }
     const selected = entries.find((entry) => entry.id === activeKitchenId()) ?? entries[0];
     setKitchens(entries); setActiveKitchen(selected.id); setKitchenName(selected.name);
-    loadKitchenMaterials(selected.materials ?? defaultMaterials());
+    loadKitchenMaterials(selected.materials ?? defaultMaterials(), selected.priceChanges);
   // Read the active kitchen once when this page opens.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -218,7 +238,13 @@ export function MaterialSelection({ options, initial }: { options: Option[]; ini
       const allUpdated = updateMaterialChoices(all, field, change, options);
       allUpdated.unmatched.forEach((target) => missing.add(target));
       const snapshots = Object.fromEntries(KITCHEN_ZONES.map((current) => {
-        const updated = updateMaterialChoices(effective(current), field, change, options);
+        const currentChoices = effective(current);
+        // A shared rate/finish edit belongs to the selected material, not every
+        // zone's field. In particular, a separate stone sink keeps its slab rate.
+        if (change.itemId === undefined && currentChoices[field].itemId !== all[field].itemId) {
+          return [current, copyZone(currentChoices)];
+        }
+        const updated = updateMaterialChoices(currentChoices, field, change, options);
         updated.unmatched.forEach((target) => missing.add(target));
         return [current, updated.choices];
       })) as unknown as KitchenMaterials;
@@ -229,18 +255,13 @@ export function MaterialSelection({ options, initial }: { options: Option[]; ini
       setSources(Object.fromEntries(KITCHEN_ZONES.map((current) => [current, "Own"])) as Record<KitchenZone, MaterialSource>);
       const updateSpecial = (current: SpecialWallMaterials): SpecialWallMaterials => {
         const next = { ...current };
-        if (field === "back" || field === "visible") next[field] = { ...allUpdated.choices[field] };
+        const matches = (target: "carcass" | "back" | "visible") => change.itemId !== undefined || current[target].itemId === all[field].itemId;
+        if ((field === "back" || field === "visible") && matches(field)) next[field] = { ...allUpdated.choices[field] };
         if (field === "shutter") {
-          next.carcass = { ...allUpdated.choices.shutter };
-          next.visible = { ...allUpdated.choices.visible };
+          if (matches("visible")) next.visible = { ...allUpdated.choices.visible };
         }
         if (field === "carcass") {
-          const general = options.find((option) => option.id === allUpdated.choices.carcass.itemId);
-          const matching = general && options.find((option) => option.group === "Shutter Material" &&
-            option.subgroup.toLowerCase() === general.subgroup.toLowerCase() && option.thicknessMm === general.thicknessMm);
-          next.carcass = { ...next.carcass, frontSheetPrice: allUpdated.choices.carcass.frontSheetPrice,
-            backSheetPrice: allUpdated.choices.carcass.backSheetPrice,
-            ...(matching ? { itemId: matching.id, boardSheetPrice: undefined } : {}) };
+          if (matches("carcass")) next.carcass = { ...allUpdated.choices.carcass };
         }
         return next;
       };
@@ -301,14 +322,16 @@ export function MaterialSelection({ options, initial }: { options: Option[]; ini
   };
 
   function materialCards(section: KitchenZone | "All", choices: ZoneMaterials, disabled: boolean) {
-    return <div style={{ display: "grid", gridTemplateColumns: "repeat(5,minmax(225px,1fr))", gap: 12, minWidth: 1185 }}>
-      {MATERIAL_FIELDS.map((field) => {
+    const fields = MATERIAL_FIELDS.filter((field) => section !== "Sink" || field !== "drawer");
+    return <div style={{ display: "grid", gridTemplateColumns: `repeat(${fields.length},minmax(225px,1fr))`, gap: 12, minWidth: fields.length * 225 + (fields.length - 1) * 12 }}>
+      {fields.map((field) => {
         const meta = GROUPS[field];
         const available = options.filter((option) => option.group === meta.group &&
           (option.id !== SINK_STONE_BOARD_ID || (section === "Sink" && field === "carcass")) &&
           (field !== "visible" || [18, 25].includes(option.thicknessMm ?? 0)));
         const selected = choices[field];
         const selectedOption = available.find((option) => option.id === selected.itemId);
+        const membrane = modernMembraneConstruction(selectedOption);
         const postlam = selectedOption && typeOf(selectedOption) === "Postlam";
         const boardWithSeparateRate = selectedOption && ["Prelam", "Postlam", "Stone"].includes(typeOf(selectedOption));
         const types = (field === "shutter" || field === "visible" ? ["Prelam", "Postlam", "PU", "Membrane"] :
@@ -323,6 +346,18 @@ export function MaterialSelection({ options, initial }: { options: Option[]; ini
             </select>
           </label>
           <small style={{ color: "#65786e" }}>Kitchen item: {selected.itemId}</small>
+          {selectedOption && ["PU", "Membrane"].includes(typeOf(selectedOption)) && <p style={{ color: "#607168", fontSize: 12 }}>{membrane ? `${membrane.board.subgroup}: ₹${membrane.board.currentRate}/sqft + PVC foil ₹75/sqft × ${membrane.faces} face(s). Foil uses laminate wastage.` : "Rate includes paint, epoxy and polish; no separate finishing charge."}</p>}
+          {membrane && <>
+            <label style={{ display: "grid", gap: 4, marginTop: 12 }}>{membrane.board.subgroup} board · ₹ / 32 sqft sheet
+              <input aria-label={`${section} ${meta.label} membrane board sheet price`} type="number" min="0" max="1000000" step="any" value={selected.boardSheetPrice ?? membrane.board.currentRate * 32} disabled={disabled} onChange={(event) => update(section, field, { boardSheetPrice: event.target.value })} style={fieldStyle} />
+            </label>
+            <label style={{ display: "grid", gap: 4, marginTop: 12 }}>PVC foil · ₹ / sqft ({membrane.faces} face(s))
+              <input aria-label={`${section} ${meta.label} PVC foil rate`} type="number" min="0" max="1000000" step="any" value={selected.pvcFoilRate ?? "75"} disabled={disabled} onChange={(event) => update(section, field, { pvcFoilRate: event.target.value })} style={fieldStyle} />
+            </label>
+          </>}
+          {selectedOption && !membrane && ["PU", "Membrane"].includes(typeOf(selectedOption)) && <label style={{ display: "grid", gap: 4, marginTop: 12 }}>Finished material rate · ₹ / sqft
+            <input aria-label={`${section} ${meta.label} finished material rate per sqft`} readOnly value={selectedOption.currentRate ?? Number(selectedOption.boardSheetPrice) / 32} style={fieldStyle} />
+          </label>}
           {boardWithSeparateRate && <label style={{ display: "grid", gap: 4, marginTop: 12 }}>{selected.itemId === SINK_STONE_BOARD_ID ? "Stone slab · ₹ / slab" : postlam ? "Postlam raw board · ₹ / 32 sqft sheet" : "Prelam board · ₹ / 32 sqft sheet"}
             <input aria-label={`${section} ${meta.label} ${selected.itemId === SINK_STONE_BOARD_ID ? "Stone board" : postlam ? "Postlam raw board" : "Prelam board"} sheet price`} type="number" min="0" max="1000000" step="any" inputMode="decimal"
               value={selected.boardSheetPrice ?? selectedOption.boardSheetPrice} disabled={disabled}
@@ -414,34 +449,19 @@ export function MaterialSelection({ options, initial }: { options: Option[]; ini
     setWallSpecialSources((old) => ({ ...old, [kind]: source }));
   };
   const updateSpecialWallField = (kind: "open" | "glass", field: "carcass" | "back" | "visible", change: Partial<MaterialChoice>) => {
-    if (wallSpecialSources[kind] === "Wall") {
-      const updated = updateMaterialChoices(effective("Wall"), field === "carcass" ? "shutter" : field, change, options);
-      setZones((old) => ({ ...old, Wall: updated.choices }));
-      setSources((old) => ({ ...old, Wall: "Own" }));
-      setSyncWarning(updated.unmatched.length ? `No matching master board for ${updated.unmatched.map((target) => GROUPS[target].label).join(" and ")}. Those selections were left unchanged.` : "");
-      return;
-    }
+    const current = effectiveSpecialWall(kind);
     const setter = kind === "open" ? setWallOpen : setWallGlass;
-    setter((old) => ({ ...old, [field]: { ...old[field], ...change } }));
+    setter({ ...current, [field]: { ...current[field], ...change } });
+    setWallSpecialSources(old => ({ ...old, [kind]: "Own" }));
   };
   const updateSpecialWallEdgeBand = (kind: "open" | "glass", field: "carcass" | "back" | "visible", change: Partial<{ finish: string; pricePerRmt: string }>) => {
-    if (wallSpecialSources[kind] === "Wall") {
-      const wall = effective("Wall");
-      const edgeBand = wall.edgeBand ?? defaultEdgeBand(options);
-      const target = field === "carcass" ? "shutter" : field;
-      setZones((old) => ({ ...old, Wall: { ...copyZone(wall), edgeBand: { ...edgeBand, byMaterial: {
-        ...edgeBand.byMaterial, [target]: { ...edgeBandForMaterial(edgeBand, target), ...change },
-      } } } }));
-      setSources((old) => ({ ...old, Wall: "Own" }));
-      return;
-    }
+    const current = effectiveSpecialWall(kind);
+    const edgeBand = current.edgeBand ?? defaultEdgeBand(options);
     const setter = kind === "open" ? setWallOpen : setWallGlass;
-    setter((old) => {
-      const edgeBand = old.edgeBand ?? defaultEdgeBand(options);
-      return { ...old, edgeBand: { ...edgeBand, byMaterial: {
+    setter({ ...current, edgeBand: { ...edgeBand, byMaterial: {
         ...edgeBand.byMaterial, [field]: { ...edgeBandForMaterial(edgeBand, field), ...change },
-      } } };
-    });
+      } } });
+    setWallSpecialSources(old => ({ ...old, [kind]: "Own" }));
   };
 
   function specialWallSection(kind: "open" | "glass") {
@@ -456,20 +476,21 @@ export function MaterialSelection({ options, initial }: { options: Option[]; ini
           <select aria-label={`${title} material source`} value={wallSpecialSources[kind]}
             onChange={(event) => changeSpecialWallSource(kind, event.target.value as SpecialWallSource)}
             style={{ ...fieldStyle, width: "auto", minWidth: 190 }}>
-            <option value="Wall">Wall shutter finish (shared)</option>
+            <option value="Wall">Wall cabinet materials (shared)</option>
             <option value="Own">Choose separately</option>
           </select>
         </label>
       </header>
       <p style={{ color: "#607168", margin: "0 0 14px" }}>{glass
-        ? "The carcass uses a shutter-board choice. Internal glass shelves remain 6 mm clear glass."
-        : "The carcass and open shelves use the same shutter-board choice."}</p>
+        ? "Carcass and back default to Wall cabinet materials; visible panels default to Wall visible sides. Each selection can be changed independently. Internal glass shelves remain 6 mm clear glass."
+        : "Carcass and open shelves default to Wall carcass / shelf material; visible panels default to Wall visible sides. Each selection can be changed independently."}</p>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(245px,1fr))", gap: 12 }}>
         {(["carcass", "back", "visible"] as const).map((field) => {
           const selected = value[field];
-          const catalog = field === "carcass" || field === "visible" ? "Shutter Material" : "Carcass Back Material";
-          const available = options.filter((option) => option.group === catalog && (field !== "visible" || [18, 25].includes(option.thicknessMm ?? 0)));
+          const catalogs = field === "carcass" ? ["Carcass/ Shelf Material", "Shutter Material"] : field === "visible" ? ["Shutter Material"] : ["Carcass Back Material"];
+          const available = options.filter((option) => catalogs.includes(option.group) && option.id !== SINK_STONE_BOARD_ID && (field !== "visible" || [18, 25].includes(option.thicknessMm ?? 0)));
           const option = available.find((candidate) => candidate.id === selected.itemId);
+          const membrane = modernMembraneConstruction(option);
           const postlam = option && typeOf(option) === "Postlam";
           const setField = (change: Partial<MaterialChoice>) => updateSpecialWallField(kind, field, change);
           const label = field === "carcass" ? "Carcass" : field === "back" ? "Carcass back" : "Visible panel";
@@ -481,6 +502,18 @@ export function MaterialSelection({ options, initial }: { options: Option[]; ini
               </select>
             </label>
             <small style={{ color: "#65786e" }}>Kitchen item: {selected.itemId}</small>
+            {option && ["PU", "Membrane"].includes(typeOf(option)) && <p style={{ color: "#607168", fontSize: 12 }}>{membrane ? `${membrane.board.subgroup}: ₹${membrane.board.currentRate}/sqft + PVC foil ₹75/sqft × ${membrane.faces} face(s). Foil uses laminate wastage.` : "Rate includes paint, epoxy and polish; no separate finishing charge."}</p>}
+            {membrane && <>
+              <label style={{ display: "grid", gap: 4, marginTop: 12 }}>{membrane.board.subgroup} board · ₹ / 32 sqft sheet
+                <input aria-label={`${title} ${label} membrane board sheet price`} type="number" min="0" max="1000000" step="any" value={selected.boardSheetPrice ?? membrane.board.currentRate * 32} onChange={(event) => setField({ boardSheetPrice: event.target.value })} style={fieldStyle} />
+              </label>
+              <label style={{ display: "grid", gap: 4, marginTop: 12 }}>PVC foil · ₹ / sqft ({membrane.faces} face(s))
+                <input aria-label={`${title} ${label} PVC foil rate`} type="number" min="0" max="1000000" step="any" value={selected.pvcFoilRate ?? "75"} onChange={(event) => setField({ pvcFoilRate: event.target.value })} style={fieldStyle} />
+              </label>
+            </>}
+            {option && !membrane && ["PU", "Membrane"].includes(typeOf(option)) && <label style={{ display: "grid", gap: 4, marginTop: 12 }}>Finished material rate · ₹ / sqft
+              <input aria-label={`${title} ${label} finished material rate per sqft`} readOnly value={option.currentRate ?? Number(option.boardSheetPrice) / 32} style={fieldStyle} />
+            </label>}
             {option && ["Prelam", "Postlam"].includes(typeOf(option)) && <label style={{ display: "grid", gap: 4, marginTop: 12 }}>Board · ₹ / 32 sqft sheet
               <input aria-label={`${title} ${label} board sheet price`} type="number" min="0" max="1000000" step="any" value={selected.boardSheetPrice ?? option.boardSheetPrice}
                 onChange={(event) => setField({ boardSheetPrice: event.target.value })} style={fieldStyle} />
@@ -527,27 +560,33 @@ export function MaterialSelection({ options, initial }: { options: Option[]; ini
     selected._hingeChoice = `${hingeBrand} ${hingeType}`;
     selected._drawerBrand = drawerBrand;
     selected._handleDefaults = { ...handleDefaults };
+    selected._counterPlyRates = Object.fromEntries(Object.entries(counterPlyRates).map(([id, sheetPrice]) => [id, String(Number((Number(sheetPrice) / 32).toFixed(6)))]));
+    selected._profileFinishes = { ...profileFinishes };
+    selected._topFillers = { ...topFillers, cabinetTypes: [...topFillers.cabinetTypes] };
     selected._wallOpen = effectiveSpecialWall("open");
     selected._wallGlass = effectiveSpecialWall("glass");
     selected._wallSpecialSources = { ...wallSpecialSources };
     selected._sinkStoneFullBack = sinkStoneFullBack;
+    selected._priceChanges = priceChangesFor({ materials: selected, rows: [], priceChanges: priceReasons }, materialBaseline.current ? { materials: materialBaseline.current, rows: [], priceChanges: materialBaseline.current._priceChanges } : undefined);
     return selected;
   };
   const saveKitchenSelection = () => {
     const selected = selectedMaterials();
+    if (missingPriceReasons(selected._priceChanges ?? []).length) throw new Error("Use Review price changes to enter a reason for each changed price before continuing or switching kitchens.");
     if (activeKitchen) {
       const entries = readKitchenWorkspace().map((entry) => entry.id === activeKitchen
-        ? { ...entry, name: kitchenName, materials: selected } : entry);
+        ? { ...entry, name: kitchenName, materials: selected, priceChanges: [...entry.priceChanges?.filter(c => !c.key.startsWith("Materials.")) ?? [], ...selected._priceChanges ?? []] } : entry);
       writeKitchenWorkspace(entries); setKitchens(entries);
     }
     return selected;
   };
   const switchKitchen = (id: string) => {
-    saveKitchenSelection();
+    if (missingPriceReasons(selectedMaterials()._priceChanges ?? []).length) { setError(""); setReviewRequest(value => value + 1); return; }
+    try { saveKitchenSelection(); } catch (e) { setError((e as Error).message); return; }
     const selected = readKitchenWorkspace().find((entry) => entry.id === id);
     if (!selected) return;
     setActiveKitchenId(id); setActiveKitchen(id); setKitchenName(selected.name);
-    loadKitchenMaterials(selected.materials ?? initial ?? defaultMaterials());
+    loadKitchenMaterials(selected.materials ?? initial ?? defaultMaterials(), selected.priceChanges);
   };
   const renameKitchen = (name: string) => {
     setKitchenName(name);
@@ -558,14 +597,16 @@ export function MaterialSelection({ options, initial }: { options: Option[]; ini
     const current = kitchens.find((entry) => entry.id === activeKitchen);
     if (!current?.sourceName || !window.confirm(`Remove ${current.name || current.sourceName} and its locally saved cabinets, materials, and costing?`)) return;
     const remaining = readKitchenWorkspace().filter((entry) => entry.id !== current.id);
-    const next = remaining[0] ?? { id: crypto.randomUUID(), name: "", rows: [], materials: defaultMaterials() };
+    const next: KitchenWorkspaceEntry = remaining[0] ?? { id: crypto.randomUUID(), name: "", rows: [], materials: defaultMaterials() };
     const updated = remaining.length ? remaining : [next];
     writeKitchenWorkspace(updated); setKitchens(updated);
     setActiveKitchenId(next.id); setActiveKitchen(next.id); setKitchenName(next.name);
-    loadKitchenMaterials(next.materials ?? defaultMaterials());
+    loadKitchenMaterials(next.materials ?? defaultMaterials(), next.priceChanges);
   };
 
   async function continueToBuilder() {
+    if (!validTopFillerSettings(topFillers)) { setError("Choose at least one top-filler cabinet type and enter a height from 1 to 2440 mm."); return; }
+    if (missingPriceReasons(selectedMaterials()._priceChanges ?? []).length) { setError(""); setReviewRequest(value => value + 1); return; }
     setBusy(true); setError("");
     try {
       const selected = saveKitchenSelection();
@@ -576,11 +617,14 @@ export function MaterialSelection({ options, initial }: { options: Option[]; ini
         return;
       }
       router.push("/builder");
-    } catch { setError("Could not reach the server."); }
+    } catch (e) { setError(e instanceof Error ? e.message : "Could not reach the server."); }
     finally { setBusy(false); }
   }
 
   return <main style={{ minHeight: "100vh", padding: "24px clamp(12px,3vw,40px)", background: "#f3f5f3", color: "#1b2430", font: "13px system-ui,sans-serif" }}>
+    <PriceChangeReviewDialog hasChanges={!!selectedMaterials()._priceChanges?.length} required={!!missingPriceReasons(selectedMaterials()._priceChanges ?? []).length} openRequest={reviewRequest}>
+      <PriceChangeReview changes={selectedMaterials()._priceChanges ?? []} onReason={(keys, reason) => setPriceReasons((selectedMaterials()._priceChanges ?? []).map(c => keys.includes(c.key) ? { ...c, reason } : c))} />
+    </PriceChangeReviewDialog>
     <div style={{ maxWidth: 1600, margin: "0 auto" }}>
       <header style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "start", marginBottom: 18 }}>
         <div><h1 style={{ margin: "0 0 5px", fontSize: 25 }}>Kitchen material selection</h1>
@@ -630,16 +674,65 @@ export function MaterialSelection({ options, initial }: { options: Option[]; ini
         </label>
       </section>
       <section style={{ background: "#fff", border: "1px solid #d6dfd8", borderRadius: 8, padding: 16, marginBottom: 15 }}>
+        <h2 style={{ fontSize: 18, margin: "0 0 5px" }}>Automatic top fillers</h2>
+        <label><input type="checkbox" checked={topFillers.enabled} onChange={event => setTopFillers(old => ({ ...old, enabled: event.target.checked }))} /> Include top fillers</label>
+        {topFillers.enabled && <div style={{ display: "grid", gap: 12, marginTop: 12 }}>
+          <fieldset><legend>Cabinet types</legend>{(["wall", "tall"] as const).map(zone => <label key={zone} style={{ marginRight: 20 }}>
+            <input type="checkbox" checked={topFillers.cabinetTypes.includes(zone)} onChange={event => setTopFillers(old => ({ ...old,
+              cabinetTypes: event.target.checked ? [...old.cabinetTypes, zone] : old.cabinetTypes.filter(z => z !== zone) }))} /> {zone === "wall" ? "Wall cabinets" : "Tall cabinets"}
+          </label>)}</fieldset>
+          <label style={{ display: "grid", gap: 5, maxWidth: 240 }}>Top filler height · mm
+            <input aria-label="Top filler height in mm" type="number" min={1} max={2440} step={1} value={topFillers.heightMm}
+              onChange={event => setTopFillers(old => ({ ...old, heightMm: event.target.value }))} style={fieldStyle} />
+          </label>
+          <small>Width is calculated automatically from the selected cabinets and their side fillers per elevation. Top fillers use the corresponding shutter material and finish. Expand runs and select pieces to merge in the Builder.</small>
+        </div>}
+      </section>
+      <section style={{ background: "#fff", border: "1px solid #d6dfd8", borderRadius: 8, padding: 16, marginBottom: 15 }}>
+        <h2 style={{ fontSize: 18, margin: "0 0 5px" }}>Counter Ply material</h2>
+          <label style={{ display: "grid", gap: 5, marginTop: 10 }}>Material
+            <select aria-label="Counter Ply material for rate" value={counterPlyItemId} onChange={event => setCounterPlyItemId(event.target.value)} style={fieldStyle}>
+              {options.filter(option => ["Countertop Base PLY", "Carcass/ Shelf Material", "Shutter Material"].includes(option.group)).map(option => <option key={option.id} value={option.id}>{option.subgroup} · {option.thicknessMm} mm · {option.id}</option>)}
+            </select>
+          </label>
+          <label style={{ display: "grid", gap: 5, marginTop: 10 }}>Ply price · ₹ / 32 sqft sheet
+            <input aria-label="Counter Ply price per 32 sqft sheet" type="number" min="0" max="1000000" step="any" value={counterPlyRates[counterPlyItemId] ?? options.find(option => option.id === counterPlyItemId)?.boardSheetPrice ?? ""}
+              onChange={event => setCounterPlyRates(old => { const next = { ...old }; if (event.target.value === "") delete next[counterPlyItemId]; else next[counterPlyItemId] = event.target.value; return next; })} style={fieldStyle} />
+          </label>
+          <small>Enter the full ply sheet price. Costing divides it by 32 to calculate the area-based material cost. Cabinet board prices and processing rates stay separate.</small>
+      </section>
+      <section style={{ background: "#fff", border: "1px solid #d6dfd8", borderRadius: 8, padding: 16, marginBottom: 15 }}>
         <h2 style={{ fontSize: 18, margin: "0 0 5px" }}>Handle / profile defaults</h2>
+        <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginBottom: 14 }}>
+          <label style={{ display: "grid", gap: 5 }}>Skirting · material
+            <select aria-label="Skirting material" value={profileFinishes.skirtingMaterial ?? "PVC"} onChange={event => setProfileFinishes(old => ({ ...old, skirtingMaterial: event.target.value as "PVC" | "Aluminium" }))} style={fieldStyle}>
+              <option value="PVC">PVC</option><option value="Aluminium">Aluminium</option>
+            </select>
+          </label>
+          <label style={{ display: "grid", gap: 5 }}>Skirting · {profileFinishes.skirtingMaterial === "Aluminium" ? "raw profile " : ""}price · ₹ / running metre
+            <input aria-label="Skirting master price per running metre" readOnly value={COSTING_ITEMS.find(item => item.id === (profileFinishes.skirtingMaterial === "Aluminium" ? "KITCHEN-ALU-SKIRTING" : "KITCHEN-092"))?.currentRate.toFixed(2) ?? ""} style={fieldStyle} />
+            {profileFinishes.skirtingMaterial === "Aluminium" && <small>Raw skirting profile 2436 OML: ₹234.45/running metre. Selected finishing is calculated separately using the supplied 123.322 mm developed surface width. End-connector profile 2434 OML is a separate item.</small>}
+          </label>
+          {(["handles", "skirting"] as const).filter(kind => kind !== "skirting" || profileFinishes.skirtingMaterial === "Aluminium").map(kind => <label key={kind} style={{ display: "grid", gap: 5 }}>{kind === "handles" ? "Handle / glass profiles" : "Skirting"} · finish
+            <select aria-label={`${kind} finish`} value={profileFinishes[kind]} onChange={event => setProfileFinishes(old => ({ ...old, [kind]: event.target.value as ProfileFinishes[typeof kind] }))} style={fieldStyle}>
+              <option value="Raw">Raw / No finish · no additional charge</option>
+              <option value="Anodised">Anodised · ₹40 / surface sqft</option>
+              <option value="Powder coating">Powder coating · ₹80 / surface sqft</option>
+            </select>
+          </label>)}
+          <small>Light profile: anodised only, included in its master rate; cannot be coloured.</small>
+          {(profileFinishes.skirtingMaterial ?? "PVC") === "PVC" && <small>PVC skirting uses its prefinished master price. No anodising or powder-coating charge.</small>}
+        </div>
         <p style={{ color: "#607168", margin: "0 0 13px" }}>Choose a default per zone. Sink follows Base; Middle follows Wall. You can change a cabinet later.</p>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(235px,1fr))", gap: 12 }}>
           {HANDLE_ZONES.map((zone) => <div key={zone} style={{ display: "grid", alignContent: "start", gap: 10, border: "1px solid #dae2dc", borderRadius: 7, padding: 12 }}>
             <label style={{ display: "grid", gap: 5 }}>{zone} cabinets · handle
               <select value={handleDefaults[zone].type} onChange={(event) => setHandleDefaults((old) => ({ ...old, [zone]: { ...old[zone], type: event.target.value as HandleSetting["type"] } }))} style={fieldStyle}>
-                {(zone === "Base" || zone === "Tall") && <option value="XCJ">C/J/G Gola</option>}<option value="PUSH">Push to Open</option><option value="KNOB">Knob</option><option value="HANDLE">Handle</option><option value="NONE">No Handle</option>
+                {zone !== "Glass" && <>{(zone === "Base" || zone === "Tall") && <option value="XCJ">C/J/G Gola</option>}<option value="PUSH">Push to Open</option><option value="KNOB">Knob</option></>}<option value="HANDLE">Handle</option><option value="NONE">No Handle</option>
               </select>
             </label>
-            {(["PUSH", "KNOB", "HANDLE"] as string[]).includes(handleDefaults[zone].type) && <label style={{ display: "grid", gap: 5 }}>Price · ₹ / piece
+            {zone === "Glass" && <small>Handle: one vertical handle profile and Neon 50 on the other three sides per shutter. No handle: Neon 50 on all four sides. Uses master rates.</small>}
+            {zone !== "Glass" && (["PUSH", "KNOB", "HANDLE"] as string[]).includes(handleDefaults[zone].type) && <label style={{ display: "grid", gap: 5 }}>Price · ₹ / piece
               <input type="number" min="0" step="0.01" value={handleDefaults[zone].price} onChange={(event) => setHandleDefaults((old) => ({ ...old, [zone]: { ...old[zone], price: event.target.value } }))} style={fieldStyle} />
             </label>}
             {handleDefaults[zone].type === "PUSH" && <label style={{ display: "grid", gap: 5 }}>Push to Open brand

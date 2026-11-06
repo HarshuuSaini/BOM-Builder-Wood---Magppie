@@ -3,12 +3,14 @@ export type PurchaseDetail = {
   billableQty: number; uom: string; rate: number; amount: number;
   purchaseAreaSqft?: number;
   allocatedBillableQty?: number;
+  exactQuantity?: boolean;
 };
 
 export type PurchaseTotal = {
   key: string; itemCode: string; item: string; categories: string[];
   unit: string; requiredQty: number; quantity: number; rate: number; amount: number;
   rounded: boolean;
+  exactQuantity?: boolean;
 };
 
 export const roundQuantity = (value: number): number => Math.round((value + Number.EPSILON) * 100) / 100;
@@ -30,16 +32,19 @@ export function ceilQuantity(value: number): number {
 
 function purchaseBasis(detail: PurchaseDetail) {
   const processing = /processing$/i.test(detail.category);
+  const rollFoil = /foil/i.test(`${detail.itemCode} ${detail.item} ${detail.category}`);
   const sheet = detail.uom === "sqft" && !processing &&
-    (/board|laminate|counter ply/i.test(detail.category)) && !/glass/i.test(detail.category);
+    (/board|laminate|counter ply/i.test(detail.category)) && !/glass/i.test(detail.category) && !rollFoil;
   const divisor = sheet ? detail.purchaseAreaSqft ?? 32 : detail.uom === "gm" ? 1000 : 1;
   const unit = sheet ? detail.purchaseAreaSqft !== undefined ? "slab" : "sheet" : detail.uom === "gm" ? "kg" : detail.uom;
   const rate = Number((detail.rate * divisor).toPrecision(14));
   // Categories and waste percentages do not split the same purchased item.
   // Distinct quoted prices remain separate (e.g. different laminate selections).
-  const identity = detail.itemCode === "—" || detail.itemCode.startsWith("CUSTOM") || /board$/i.test(detail.category)
+  const identity = detail.itemCode === "—" || detail.itemCode.startsWith("CUSTOM") || /board$|glass/i.test(detail.category)
     ? `${detail.itemCode}|${detail.item}` : detail.itemCode;
-  const key = JSON.stringify([identity, unit, rate, processing]);
+  const role = /^Visible side\b/i.test(detail.category) ? "visible"
+    : /^Shutter\b/i.test(detail.category) ? "shutter" : "";
+  const key = JSON.stringify([identity, unit, rate, processing, role]);
   // Whole-unit rounding stays disabled; round consolidated quantities to two decimals.
   return { key, unit, rate, divisor, rounded: false };
 }
@@ -50,19 +55,21 @@ export function purchaseTotals(details: PurchaseDetail[]): PurchaseTotal[] {
     const basis = purchaseBasis(detail);
     const found = groups.get(basis.key);
     if (found) {
+      if (detail.exactQuantity) found.exactQuantity = true;
       found.requiredQty += detail.billableQty / basis.divisor;
       if (!found.categories.includes(detail.category)) found.categories.push(detail.category);
     } else groups.set(basis.key, {
       key: basis.key, itemCode: detail.itemCode, item: detail.item, categories: [detail.category],
       unit: basis.unit, requiredQty: detail.billableQty / basis.divisor,
       quantity: 0, rate: basis.rate, amount: 0, rounded: basis.rounded,
+      ...(detail.exactQuantity ? { exactQuantity: true } : {}),
     });
   }
   return [...groups.values()].map(group => {
     // Processing is a service charged on the full billable area, not a
     // purchased unit. Preserve its exact sqft (including wastage) for cost.
     const processing = group.categories.some(category => /processing$/i.test(category));
-    const quantity = processing ? group.requiredQty : roundQuantity(group.requiredQty);
+    const quantity = processing || group.exactQuantity ? group.requiredQty : roundQuantity(group.requiredQty);
     return { ...group, quantity, amount: quantity * group.rate };
   });
 }

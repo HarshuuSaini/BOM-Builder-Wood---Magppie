@@ -16,6 +16,12 @@ for (const ext of ['.ts', '.tsx']) require.extensions[ext] = (mod, file) => {
   } }).outputText, file);
 };
 const { purchaseTotals, allocatePurchaseCosts, ceilQuantity, roundQuantity, sheetQuantityInput } = require('../src/lib/purchase-rounding.ts');
+const separateRoles = purchaseTotals(['Shutter board', 'Visible side board', 'Shutter edge band', 'Visible side edge band'].map(category => ({
+  category, itemCode: category.includes('board') ? 'SAME-BOARD' : 'SAME-BAND', item: 'Same finish',
+  billableQty: 32, uom: category.includes('board') ? 'sqft' : 'RMT', rate: 10, amount: 320,
+})));
+assert.equal(separateRoles.length, 4, 'Shutter and visible-side boards and edge bands must stay separate even with identical material and price');
+assert(separateRoles.every(row => row.categories.length === 1));
 for (const [input, expected] of [['4.287328756949', '4.29'], ['5.8506770203644', '5.85'], ['2.2896212545897', '2.29'], ['1.0908247727953', '1.09']]) {
   assert.equal(sheetQuantityInput(input), expected);
   assert.equal(roundQuantity(Number(input)), Number(expected));
@@ -46,8 +52,8 @@ const rows = [
 ];
 const totals = allocatePurchaseCosts(rows);
 const get = id => totals.find(x => x.itemCode === id);
-near(get('BOARD').quantity, 6.1);
-near(get('BOARD').amount, 19520);
+near(totals.filter(row => row.itemCode === 'BOARD').reduce((sum, row) => sum + row.quantity, 0), 6.1);
+near(totals.filter(row => row.itemCode === 'BOARD').reduce((sum, row) => sum + row.amount, 0), 19520);
 near(get('GLUE').quantity, 3.47);
 near(get('GLUE').amount, 1388);
 near(get('PROFILE').quantity, 4.2);
@@ -77,11 +83,11 @@ near(b.quantityWithWaste(550, 0), 550);
 assert.throws(() => b.quantityWithWaste(550, 100), /below 100%/);
 const { DEFAULT_BOARD_PROCESSING_RATES } = require('../src/lib/costing.ts');
 assert.deepEqual(DEFAULT_BOARD_PROCESSING_RATES, {
-  'Carcass / shelf material|Postlam': 42.3, 'Carcass back material|Postlam': 17.1,
-  'Drawer material|Postlam': 28.8125, 'Shutter material|Postlam': 42.3,
-  'Visible side material|Postlam': 42.3, 'Carcass / shelf material|Prelam': 36,
-  'Carcass back material|Prelam': 12.59375, 'Drawer material|Prelam': 22.5,
-  'Shutter material|Prelam': 36, 'Visible side material|Prelam': 36, 'Counter Ply': 12.6,
+  'Carcass / shelf material|Postlam': 45, 'Carcass back material|Postlam': 20,
+  'Drawer material|Postlam': 30, 'Shutter material|Postlam': 42.3,
+  'Visible side material|Postlam': 42.3, 'Carcass / shelf material|Prelam': 35,
+  'Carcass back material|Prelam': 10, 'Drawer material|Prelam': 20,
+  'Shutter material|Prelam': 36, 'Visible side material|Prelam': 36, 'Counter Ply': 10,
 });
 const { handleSettingFor } = require('../src/lib/kitchen-materials.ts');
 const { updateMaterialChoices } = require('../src/components/MaterialSelection.tsx');
@@ -282,6 +288,77 @@ const legacyFiller = b.cabinetFillers([{ ...twoFillerProject[0], m: b.buildModel
 assert.deepEqual(legacyFiller.map(row => [row.fillerSide, row.customWidth]), [['LH', '50']]);
 const skirtingWithBoth = b.calculatedAccessories(twoFillerProject, sideFillers).find(row => row.kind === 'skirting');
 near(Number(skirtingWithBoth.size), (config.W * 2 + (50 + 80) * 2) / 1000);
+// Ivory Tower A: tall filler adds 50mm to AA; BB's wall filler must not add skirting.
+const ivoryProject = [
+  ...[600, 550].map((W, i) => ({ id: 800 + i, m: { ...model, zk: 'BC', fk: 'SH', W, handle: 'NONE' }, qty: 1, elevation: 'AA' })),
+  { id: 802, m: { ...model, zk: 'TC', fk: 'APP', W: 600, handle: 'NONE' }, qty: 1, elevation: 'AA' },
+  ...[1000, 550, 900, 200, 900].map((W, i) => ({ id: 810 + i, m: { ...model, zk: 'BC', fk: 'SH', W, handle: 'NONE' }, qty: 1, elevation: 'BB' })),
+];
+const ivoryFillers = [
+  { id: 901, linkedLineId: 802, fillerType: 'filler', zone: 'tall', customWidth: '50', qty: 1, elevation: 'AA' },
+  { id: 902, fillerType: 'dishwasher-panel', zone: 'base', customWidth: '600', qty: 1, elevation: 'AA' },
+  { id: 903, linkedLineId: 810, fillerType: 'filler', zone: 'base', customWidth: '50', qty: 1, elevation: 'BB' },
+  { id: 904, linkedLineId: 820, fillerType: 'filler', zone: 'wall', customWidth: '50', qty: 1, elevation: 'BB' },
+];
+const ivorySkirting = b.calculatedAccessories(ivoryProject, ivoryFillers).filter(row => row.kind === 'skirting');
+for (const [W, legs] of [[150, 2], [151, 4], [999, 4], [1000, 6], [1050, 6]]) {
+  const cabinet = b.buildModel({ ...config, zk: 'BC', fk: 'SH', W });
+  assert(cabinet.hardware.some(item => item.name === `HARDWARE PACK PVC LEG SET/${legs}`), `${W}mm requires ${legs} legs`);
+}
+for (const [zk, fk, D, bracketId] of [['BC', 'SH', 560, 'HARDWARE-011'], ['BB', 'BSH', 560, 'HARDWARE-011'], ['WC', 'WST', 560, 'HARDWARE-020'], ['WC', 'WGL', 560, 'HARDWARE-020'], ['WC', 'WST', 336, undefined], ['TC', 'SHF', 560, undefined]]) {
+  const cabinet = b.buildModel({ ...config, zk, fk, D, vid: 'sgl', W: 600, H: zk === 'TC' ? 2220 : 720 });
+  const costing = b.computeCosting([{ id: 980, m: cabinet, qty: 2, elevation: 'AA' }], [], [], [], [], [], [], config.shType, config.shType, b.DEFAULT_RATES, { carcass: 10, shutter: 20, profile: 20 }, {});
+  const brackets = costing.purchases.filter(item => ['HARDWARE-011', 'HARDWARE-020'].includes(item.itemCode));
+  assert.equal(brackets.length, bracketId ? 1 : 0, `${zk}/${fk}/${D}`);
+  if (bracketId) {
+    assert.equal(brackets[0].itemCode, bracketId);
+    near(brackets[0].quantity, 2);
+    near(brackets[0].rate, bracketId === 'HARDWARE-011' ? 55 : 668);
+  }
+}
+for (const vid of ['1dw', '2dw']) {
+  const appliance = b.buildModel({ ...config, zk: 'TC', fk: 'APP', vid, W: 600, H: 2220, handle: 'XCJ' });
+  const project = [{ id: 991, m: appliance, qty: 1, elevation: 'AA' }];
+  const automatic = b.calculatedAccessories(project, []);
+  const cHandles = automatic.filter(row => row.kind === 'c-handle');
+  assert.equal(cHandles.length, 1, 'APP + DW groups two full-width C-profile cuts');
+  near(Number(cHandles[0].size), 0.6);
+  assert.equal(cHandles[0].qty, 2);
+  assert(!automatic.some(row => row.kind === 'g-handle' || row.kind === 'j-handle'));
+  const cost = b.computeCosting(project, [], [], [], [], automatic, [], config.shType, config.shType, b.DEFAULT_RATES, { carcass: 10, shutter: 20, profile: 20 }, {});
+  const cProfile = cost.purchases.find(row => row.itemCode === 'KITCHEN-050');
+  near(cProfile.quantity, 1.41);
+  near(cost.purchases.find(row => row.itemCode === 'HARDWARE-026').quantity, 4);
+  near(cost.purchases.find(row => row.itemCode === 'HARDWARE-022').quantity, 2);
+  near(cost.purchases.find(row => row.itemCode === 'HARDWARE-023').quantity, 2);
+  const finishing = cost.lines.flatMap(line => line.details).find(detail => detail.itemCode.startsWith('KITCHEN-050-FINISH'));
+  near(finishing.netQty, 1200 * 216.918 / 92903.04);
+}
+for (const [vid, W, hand, expectedSides] of [['sgl', 600, 'LHS', ['LH']], ['sgl', 600, 'RHS', ['RH']], ['dbl', 1000, 'LHS', ['LH', 'RH']]]) {
+  const tall = b.buildModel({ ...config, zk: 'TC', fk: 'SHF', vid, W, H: 2220, handle: 'XCJ', hand });
+  const rows = b.calculatedAccessories([{ id: 990, m: tall, qty: 2, elevation: 'AA' }], []).filter(row => row.kind === 'g-handle');
+  assert.deepEqual(rows.map(row => row.openingSide), expectedSides);
+  assert(rows.every(row => row.qty === 2 && Number(row.size) === 2.217));
+  const gCost = b.computeCosting([], [], [], [], [], rows, [], config.shType, config.shType, b.DEFAULT_RATES, { carcass: 10, shutter: 20, profile: 20 }, {});
+  const gProfile = gCost.purchases.find(item => item.itemCode === 'KITCHEN-051');
+  near(gProfile.rate, 345);
+  assert(!gCost.purchases.some(item => /FINISH/.test(item.itemCode)));
+  assert(gCost.unpriced.length === 0);
+}
+near(Number(ivorySkirting.find(row => row.elevation === 'AA').size), 2.4);
+near(Number(ivorySkirting.find(row => row.elevation === 'BB').size), 3.6);
+near(b.quantityWithWaste(ivorySkirting.reduce((sum, row) => sum + Number(row.size) * row.qty, 0), 10), 6 / 0.9);
+for (const handle of ['XCJ', 'NONE', 'HANDLE', 'PUSH']) {
+  const tallDrawer = [{ id: 950, m: { ...model, zk: 'TC', fk: 'APP', W: 600, handle }, qty: 2, elevation: 'AA' }];
+  const handles = b.calculatedAccessories(tallDrawer, []).filter(row => ['c-handle', 'j-handle'].includes(row.kind));
+  assert.equal(handles.length, handle === 'XCJ' ? 1 : 0);
+  if (handle === 'XCJ') {
+    assert.equal(handles[0].kind, 'c-handle');
+    near(Number(handles[0].size), 0.6);
+    assert.equal(handles[0].qty, 4);
+    assert.equal(handles[0].automaticKey, 'cabinet:950:c-handle');
+  }
+}
 assert.equal(model.code.split('-')[2], 'STD');
 const boardVariants = [
   b.buildModel({ ...config, finish: 'White' }),
@@ -417,7 +494,7 @@ const shutterPanels = model.panels.filter(p => p.band && (p.pack === 'Shutter Pa
 const shutterBand = shutterPanels.reduce((sum, p) => sum + bandPerPanel(p) * p.qty, 0);
 const shutterCost = b.computeCosting([{id: 1, m: model, qty: 1, elevation: 'AA'}], [], [], [], [], [], [], config.shType, config.shType,
   b.DEFAULT_RATES, {carcass: 10, shutter: 20, profile: 20}, {});
-near(shutterCost.lines[0].details.filter(d => d.category === 'Shutter edge band').reduce((sum, d) => sum + d.netQty, 0), shutterBand);
+near(shutterCost.lines[0].details.filter(d => ['Shutter edge band', 'Visible side edge band'].includes(d.category)).reduce((sum, d) => sum + d.netQty, 0), shutterBand);
 near(model.cons.filter(c => c.pack === 'Shutter Pack' && c.name.startsWith('EDGE BAND')).reduce((sum, c) => sum + c.qty, 0),
   Math.round(shutterBand * 1000) / 1000);
 const calc = (project, totals) => b.computeCosting(project, [], [], [], [], [], [], config.shType, config.shType,
@@ -430,7 +507,7 @@ near(b.counterPlyAreaSqft({length: '2050', thickness: '18', depth: '600', qty: 2
 near(counter.lines[0].details[0].netQty, 2050 * 600 / 92903);
 near(counter.lines[0].details[0].rate, 2612.4 / 32);
 near(counter.purchases[0].rate, 2612.4);
-assert.equal(counter.lines[0].details[1].rate, 12.6);
+assert.equal(counter.lines[0].details[1].rate, 10);
 near(counter.lines[0].details[1].netQty, 2050 * 600 / 92903);
 near(counter.total, counter.purchases.reduce((sum, row) => sum + row.amount, 0));
 const fourCounterTops = [3085, 1072, 2505, 3785].map((length, index) => ({
@@ -446,6 +523,13 @@ assert(fourCounterCosts.lines.every((line) => line.details.some((row) => row.cat
 assert.equal(fourCounterCosts.unpriced.length, 0, 'Master board thickness and rate must cover blank imported fields');
 near(b.counterPlyAreaSqft(fourCounterTops[0], config.shType), 3085 * 16 / 92903);
 const counterBase = {id: 1, materialId: 'KITCHEN-030', material: 'RAW BWR Ply Counter Base-16mm', ratePerSqft: '166.81', length: '2050', depth: '600', thickness: '16', qty: 1};
+const counterMaterialOverride = b.computeCosting([], [], [], [counterBase, { ...counterBase, id: 2, length: '1000' }], [], [], [], config.shType, config.shType,
+  b.DEFAULT_RATES, { carcass: 10, shutter: 20, profile: 20 }, {}, undefined, {}, undefined, { 'KITCHEN-030': '99.5' });
+assert.equal(counterMaterialOverride.lines.length, 2);
+for (const line of counterMaterialOverride.lines) {
+  near(line.details.find(detail => detail.category === 'Counter Ply').rate, 99.5);
+  near(line.details.find(detail => detail.category === 'Counter Ply processing').rate, 10);
+}
 assert.equal(b.countertopMaterialId(counterBase), 'KITCHEN-030');
 assert.equal(b.countertopMaterialItem(counterBase, config.shType).thicknessMm, 16);
 assert.equal(b.countertopMaterialId({...counterBase, materialId: undefined}), 'KITCHEN-030');
@@ -453,8 +537,8 @@ assert.equal(b.countertopMaterialItem({...counterBase, materialId: 'KITCHEN-007'
 const counterBaseCost = b.computeCosting([], [], [], [counterBase], [], [], [], config.shType, config.shType,
   b.DEFAULT_RATES, {carcass: 10, shutter: 20, profile: 20}, {});
 assert.equal(counterBaseCost.lines[0].details[0].itemCode, 'KITCHEN-030');
-near(counterBaseCost.lines[0].details[0].rate, 2612.3 / 32);
-near(counterBaseCost.purchases[0].rate, 2612.3);
+near(counterBaseCost.lines[0].details[0].rate, 2162.9 / 32);
+near(counterBaseCost.purchases[0].rate, 2162.9);
 near(counterBaseCost.total, counterBaseCost.purchases.reduce((sum, row) => sum + row.amount, 0));
 assert(counterBaseCost.lines[0].details[0].specification.includes('16mm'));
 const importedCounterRows = (processingRates) => [
@@ -482,7 +566,7 @@ assert.equal(olderPdfRestored.project[0].qty, 2);
 assert.equal(olderPdfRestored.project[0].elevation, 'BB');
 assert.equal(olderPdfRestored.fillers.length, 1);
 assert.equal(olderPdfRestored.project[0].m.board, 'KITCHEN-014');
-for (const [savedRates, expectedRate] of [[{}, 12.6], [{ 'Counter Ply': 15.75 }, 15.75]]) {
+for (const [savedRates, expectedRate] of [[{}, 10], [{ 'Counter Ply': 15.75 }, 15.75]]) {
   const restored = b.restoreProjectSetup(importedCounterRows(savedRates));
   const snapshot = b.kitchenCostingSnapshot(restored, undefined, b.DEFAULT_RATES);
   const importedCost = b.computeCosting(restored.project, restored.fillers, restored.visiblePanels, restored.countertops,
@@ -512,7 +596,7 @@ const otherRows = [
 ];
 const otherCost = b.computeCosting([], [], [], [], [], otherRows, [], config.shType, config.shType,
   b.DEFAULT_RATES, {carcass: 10, shutter: 20, profile: 20}, {});
-for (const [id, qty] of [['KITCHEN-084', 5.25], ['KITCHEN-085', 5.25], ['KITCHEN-086', 5.25], ['KITCHEN-050', 0.75], ['KITCHEN-049', 2.5], ['KITCHEN-092', 7.11]]) {
+for (const [id, qty] of [['KITCHEN-084', 5.25], ['KITCHEN-085', 5.25], ['KITCHEN-086', 5.25], ['KITCHEN-050', 0.88], ['KITCHEN-049', 3.13], ['KITCHEN-092', 8.53]]) {
   const purchase = otherCost.purchases.find(p => p.itemCode === id);
   assert(purchase, `Missing other accessory ${id}`);
   near(purchase.quantity, qty);
@@ -521,10 +605,13 @@ for (const [id, qty] of [['KITCHEN-084', 5.25], ['KITCHEN-085', 5.25], ['KITCHEN
 const otherExport = b.buildAccessoryRows(otherRows, [], '');
 near(otherExport[0]['Actual Qty'], 5.25);
 assert.equal(otherExport[0].Size, '1.75 m × 3');
-near(otherExport.find(r => r['Item Name'] === 'PVC SKIRTING PROFILE 100MM').Total, 6.4);
-assert.equal(otherExport.find(r => r['Item Name'] === 'PVC SKIRTING PROFILE 100MM').Size, '3.2 m × 2');
+near(otherExport.find(r => r['Zoho Item ID'] === 'KITCHEN-092').Total, 6.4);
+assert.equal(otherExport.find(r => r['Zoho Item ID'] === 'KITCHEN-092').Size, '3.2 m × 2');
+const aluExport = b.buildAccessoryRows(otherRows, [], '', {}, { handles: 'Raw', skirting: 'Raw', skirtingMaterial: 'Aluminium' });
+assert(aluExport.some(r => r['Zoho Item ID'] === 'KITCHEN-ALU-SKIRTING'));
+assert(!aluExport.some(r => r['Zoho Item ID'] === 'KITCHEN-092'));
 near(otherExport.find(r => r['Item Name'].includes('LIGHT EXTENSION WIRE')).Total, 6);
-near(otherExport.find(r => r['Zoho Item ID'] === 'KITCHEN-050')['Actual Qty'], 0.75);
+near(otherExport.find(r => r['Zoho Item ID'] === 'KITCHEN-050')['Actual Qty'], 0.882);
 const handleHardware = otherExport.filter(r => r['Zoho Item ID'].startsWith('HARDWARE-02'));
 assert.deepEqual(handleHardware.map(r => [r['Zoho Item ID'], r['Actual Qty']]),
   [['HARDWARE-022', 2], ['HARDWARE-023', 2], ['HARDWARE-026', 4],
@@ -575,14 +662,18 @@ const legacySkirting = b.restoreAccessoryRow({...otherRows[3], qty: 2}, 1, []);
 assert.equal(legacySkirting.size, '3.2');
 assert.equal(legacySkirting.qty, 1);
 assert.throws(() => b.restoreAccessoryRow({...otherRows[1], qty: 1.5}, 2, []), /invalid size or quantity/);
-for (const [itemId, rate] of [['KITCHEN-049', 275], ['KITCHEN-050', 315]]) {
+for (const [itemId, rate] of [['KITCHEN-049', 175], ['KITCHEN-050', 215]]) {
   const handles = b.computeCosting([], [], [], [], [], [], [{ id: 1, itemId, qty: 0.75, elevation: 'AA' }],
     config.shType, config.shType, b.DEFAULT_RATES, {carcass: 10, shutter: 20, profile: 20}, {});
   assert.equal(handles.unpriced.length, 0);
   assert.equal(handles.purchases[0].itemCode, itemId);
   assert.equal(handles.purchases[0].unit, 'RMT');
-  near(handles.purchases[0].quantity, 0.75);
-  near(handles.total, rate * 0.75);
+  const grossLength = roundQuantity(0.75 / (itemId === 'KITCHEN-049' ? 0.8 : 0.85));
+  near(handles.purchases[0].quantity, grossLength);
+  near(handles.purchases[0].amount, rate * grossLength);
+  const finishing = handles.purchases.find(item => item.categories.includes('Profile surface finishing'));
+  assert(finishing);
+  near(handles.total, rate * grossLength + finishing.amount);
 }
 const boardPanel = model.panels.find(p => p.band && !p.visibleSide && p.pack === 'Carcass Pack');
 const boardKey = full.lines.flatMap(line => line.details).find(detail => detail.category === 'Carcass board' && detail.boardQuantityKey)?.boardQuantityKey;
@@ -604,7 +695,7 @@ near(full.total, full.purchases.reduce((s, p) => s + p.amount, 0));
 near(calc([project[0]], full.purchases).total + calc([project[1]], full.purchases).total, full.total);
 assert(full.purchases.every(p => !p.rounded && (/processing$/i.test(p.categories[0])
   ? p.quantity === p.requiredQty : p.quantity === Math.round((p.requiredQty + Number.EPSILON) * 100) / 100)));
-assert.equal(full.purchases.filter(p => p.itemCode === 'KITCHEN-013').length, 1);
+assert.equal(full.purchases.filter(p => p.itemCode === 'KITCHEN-013').length, 2);
 near(full.purchases.find(p => p.itemCode === 'KITCHEN-SINK-PROFILE').quantity, 4.27);
 
 const XLSX = require('xlsx-js-style');

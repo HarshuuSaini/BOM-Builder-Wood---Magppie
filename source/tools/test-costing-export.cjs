@@ -15,7 +15,9 @@ function loadTypeScript(file) {
   loaded.filename = file;
   loaded.paths = Module._nodeModulePaths(path.dirname(file));
   loaded.require = (name) => {
+    if (name === "./conversion-margin") return loadTypeScript(path.join(libDir, "conversion-margin.ts"));
     if (name === "@/lib/purchase-rounding") return loadTypeScript(path.join(libDir, "purchase-rounding.ts"));
+    if (name === "@/lib/stone-bom-view") return loadTypeScript(path.join(libDir, "stone-bom-view.ts"));
     if (name === "@/lib/stock") return {};
     return Module.prototype.require.call(loaded, name);
   };
@@ -32,8 +34,8 @@ try {
     specification: "test", netQty: 64, wastePct: 0, billableQty: 64,
     allocatedBillableQty: 64, uom: "sqft", rate: 100, amount: 6400 };
   const pricing = { cabinetSqft: 10, fillerSqft: 0, counterPlySqft: 2, totalSqft: 12, baseCost: 6400,
-    conversion: 640, profit: 352, transportation: 24, installation: 100,
-    loading: 0, subtotal: 7516, tax: 1352.88, grandTotal: 8868.88 };
+    conversion: 652.4, profit: 358.82, transportation: 24, installation: 100,
+    loading: 0, subtotal: 7535.22, tax: 1356.3396, grandTotal: 8891.5596 };
   exportCostingWorkbook([{ label: "AA · Test cabinet", code: "TEST", qty: 1,
     unitCost: 6400, cost: 6400, details: [detail] }], [{ eachSqft: 10, sqft: 10 }], pricing, [], {
     conversionPct: 10, profitPct: 5, transportation: { mode: "sqft", value: 2 },
@@ -53,20 +55,19 @@ assert.equal(ws("Manual Comparison").G5.f, "'Consolidated Items'!H2");
 assert.equal(ws("Project Pricing").B3.v, 2);
 assert.equal(ws("Project Pricing").B4.f, "SUM(B1:B3)");
 assert.equal(ws("Project Pricing").B4.v, 12);
-assert.equal(ws("Project Pricing").B12.v, 24);
-assert.equal(ws("Project Pricing").B7.f, "B5*B6/100");
-assert.equal(ws("Project Pricing").B9.f, "(B5+B7)*B8/100");
-assert.equal(ws("Project Pricing").B12.f, 'IF(B10="sqft",B11*B4,B11)');
-assert.equal(ws("Project Pricing").B22.f, "B19*B20*B21/100");
-assert.equal(ws("Project Pricing").B23.f, "B19+B22");
+assert.equal(ws("Project Pricing").B10.v, 24);
+assert.equal(ws("Project Pricing").B7.f, "IF(AND(B6>=0,B6<100),SUM(B5,B10,B13,B16)/(1-B6/100)-SUM(B5,B10,B13,B16),NA())");
+assert.equal(ws("Project Pricing").B10.f, 'IF(B8="sqft",B9*B4,B9)');
+assert.equal(ws("Project Pricing").B20.f, "B17*B18*B19/100");
+assert.equal(ws("Project Pricing").B21.f, "B17+B20");
 assert.equal(ws("Manual Comparison").B2.f, "'Project Pricing'!B4");
-assert.equal(ws("Manual Comparison").H13.f, "'Project Pricing'!B23");
+assert.equal(ws("Manual Comparison").H12.f, "'Project Pricing'!B21");
 assert.match(ws("Cabinet Items").O2.f, /'Consolidated Items'!L2/);
 assert.match(ws("Cabinet Summary").G2.f, /'Cabinet Items'!O2:O2/);
-assert.equal(ws("Project Pricing").B23.v, 8868.88);
+assert(Math.abs(ws("Project Pricing").B21.v - 6524 / 0.9 * 1.18) < 0.000001);
 
 const reopened = XLSX.read(XLSX.write(workbook, { type: "buffer", bookType: "xlsx" }), { type: "buffer" });
-assert.equal(reopened.Sheets["Project Pricing"].B23.f, "B19+B22");
+assert.equal(reopened.Sheets["Project Pricing"].B21.f, "B17+B20");
 assert.equal(reopened.Sheets["Consolidated Items"].H2.f, "ROUND(E2/G2,2)");
 XLSX.writeFile = result => { workbook = result; };
 try {

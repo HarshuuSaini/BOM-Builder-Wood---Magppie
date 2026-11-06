@@ -114,6 +114,7 @@ export type StockStatus = "in-stock" | "low-stock" | "out-of-stock" | "unknown";
 export type BomRowType = "master" | "plain" | "sub_bom" | "component";
 
 export type BomReportRow = {
+  elevation?: string;
   sourceOrderId: string;
   sourceOrderNumber: string;
   customerName: string;

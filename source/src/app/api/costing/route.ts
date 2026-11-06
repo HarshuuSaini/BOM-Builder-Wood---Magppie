@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { COSTING_ITEMS, COSTING_MASTER, DEFAULT_RATES } from "@/lib/costing";
+import { currentIdentity, isOpenCostingAccess } from "@/lib/user-session";
 
 export const dynamic = "force-dynamic";
 
@@ -9,6 +10,11 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
+  if (isOpenCostingAccess()) return NextResponse.json({ ok: true });
+  if (process.env.NODE_ENV === "development" && process.env.LOCAL_COSTINGS_ENABLED === "1") {
+    const ok = (await currentIdentity())?.role === "admin";
+    return NextResponse.json({ ok }, { status: ok ? 200 : 403 });
+  }
   const adminPassword = process.env.ADMIN_PASSWORD;
   if (!adminPassword) return NextResponse.json({ ok: false, error: "ADMIN_PASSWORD is not configured on the server." }, { status: 500 });
   const ok = req.headers.get("x-admin-password") === adminPassword;

@@ -30,6 +30,7 @@ function normalizedChoice(field: MaterialField, candidate: MaterialChoice | unde
       ? fallback.boardSheetPrice : undefined;
   const boardFinish = candidateValid && candidate?.itemId === itemId ? candidate?.boardFinish
     : fallback?.itemId === itemId ? fallback?.boardFinish : undefined;
+  const foilCandidate = candidateValid && candidate?.itemId === itemId ? candidate?.pvcFoilRate : fallback?.itemId === itemId ? fallback?.pvcFoilRate : undefined;
   const slabSqft = candidateValid && candidate?.itemId === itemId ? candidate?.slabSqft
     : fallback?.itemId === itemId ? fallback?.slabSqft : undefined;
   const slabLengthMm = candidateValid && candidate?.itemId === itemId ? candidate?.slabLengthMm
@@ -37,6 +38,7 @@ function normalizedChoice(field: MaterialField, candidate: MaterialChoice | unde
   const slabWidthMm = candidateValid && candidate?.itemId === itemId ? candidate?.slabWidthMm
     : fallback?.itemId === itemId ? fallback?.slabWidthMm : undefined;
   return { itemId, frontSheetPrice, backSheetPrice, ...(boardSheetPrice === undefined ? {} : { boardSheetPrice }),
+    ...(validBoardSheetPrice(foilCandidate) ? { pvcFoilRate: foilCandidate } : {}),
     ...(boardFinish ? { boardFinish } : {}), ...(slabSqft ? { slabSqft } : {}),
     ...(slabLengthMm ? { slabLengthMm } : {}), ...(slabWidthMm ? { slabWidthMm } : {}) };
 }
@@ -77,6 +79,7 @@ function choicesFromCabinet(config: ImportedCabinetMaterials): ZoneMaterials {
     return {
       itemId, frontSheetPrice, backSheetPrice,
       ...(savedBoardPrice && savedBoardPrice.itemId === itemId ? { boardSheetPrice: savedBoardPrice.sheetPrice } : {}),
+      ...(savedBoardPrice && savedBoardPrice.itemId === itemId && savedBoardPrice.pvcFoilRate !== undefined ? { pvcFoilRate: savedBoardPrice.pvcFoilRate } : {}),
       ...(savedBoardPrice?.itemId === itemId && savedBoardPrice?.finish ? { boardFinish: savedBoardPrice.finish } : {}),
       ...(savedBoardPrice?.itemId === itemId && savedBoardPrice?.slabSqft ? { slabSqft: savedBoardPrice.slabSqft } : {}),
       ...(savedBoardPrice?.itemId === itemId && savedBoardPrice?.slabLengthMm ? { slabLengthMm: savedBoardPrice.slabLengthMm } : {}),
@@ -144,6 +147,9 @@ export function materialsFromImportedCabinets(configs: ImportedCabinetMaterials[
     _hingeChoice: configs[0].hingeChoice || previous?._hingeChoice,
     _drawerBrand: DRAWER_BRANDS.some((brand) => brand === configs[0].drawerModel) ? configs[0].drawerModel : previous?._drawerBrand,
     _handleDefaults: handleDefaults,
+    _counterPlyRates: previous?._counterPlyRates,
+    _profileFinishes: previous?._profileFinishes,
+    _topFillers: previous?._topFillers,
   };
   const wallOpen = configs.find((config) => config.zk === "WC" && config.fk === "WOP");
   const wallGlass = configs.find((config) => config.zk === "WC" && config.fk === "WGL");

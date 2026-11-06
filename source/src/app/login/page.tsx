@@ -1,8 +1,16 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
+import { isolateLoginWorkspace, loginLandingPage } from "@/lib/login-workspace";
 
 export default function LoginPage() {
+  useEffect(() => {
+    let alive = true;
+    fetch("/api/user-session", { cache: "no-store" }).then(r => r.json()).then(data => {
+      if (alive && data.openAccess) window.location.replace("/materials");
+    }).catch(() => {});
+    return () => { alive = false; };
+  }, []);
   const [user, setUser] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -23,7 +31,18 @@ export default function LoginPage() {
         setError(result.error ?? "Could not sign in.");
         return;
       }
-      window.location.replace("/materials");
+      const result = await response.json();
+      if (typeof result.user !== "string" || !result.user) {
+        setError("Could not confirm the signed-in account.");
+        return;
+      }
+      try {
+        isolateLoginWorkspace(window.sessionStorage, result.user);
+      } catch {
+        setError("Allow session storage in this browser before continuing, then sign in again.");
+        return;
+      }
+      window.location.replace(loginLandingPage(result.localCostingsEnabled));
     } catch {
       setError("Could not reach the server.");
     } finally {

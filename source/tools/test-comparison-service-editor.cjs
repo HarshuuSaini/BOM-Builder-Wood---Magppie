@@ -1,0 +1,67 @@
+const assert = require('node:assert/strict');
+require('./test-purchase-rounding.cjs');
+const fs = require('node:fs');
+const path = require('node:path');
+const Module = require('node:module');
+const ts = require('typescript');
+const { compareCostings } = require('../src/lib/costing-comparison.ts');
+const { withServiceRates, DEFAULT_SERVICE_RATES, servicePriceTotals } = require('../src/lib/project-service-rates.ts');
+const { priceChangesFor, missingPriceReasons } = require('../src/lib/price-change-audit.ts');
+const { ProjectPricingComparison } = require('../src/components/CostingComparison.tsx');
+const { renderToStaticMarkup } = require('react-dom/server');
+const React = require('react');
+const saved = id => {
+  const entry = withServiceRates({ id, name: id, rows: [], costing: { areaSqft: 10, materialCost: 100, items: [], unpriced: [] } }, DEFAULT_SERVICE_RATES, 'Original quote');
+  return { id, name: id, version: 1, areaSqft: 10, materialCost: 100, total: entry.costing.total, entry };
+};
+const data = compareCostings([saved('Kitchen A'), saved('Kitchen B')]);
+const snapshotBefore = JSON.stringify(data);
+const markup = renderToStaticMarkup(React.createElement(ProjectPricingComparison, { data }));
+for (const label of ['Transportation', 'Installation', 'Loading / unloading', 'Items + services subtotal', 'Conversion', 'Subtotal before tax', 'GST (18%)', 'Final project price']) assert(markup.includes(label));
+assert(!markup.includes('Profit'));
+assert(markup.includes('15.00') && markup.includes('95.00'));
+let cursor = 0, slots = [], tree, requests = [], refreshed = 0;
+const file = path.resolve(__dirname, '../src/components/ComparisonServiceRateEditor.tsx');
+const mod = new Module(file, module); mod.filename = file; mod.paths = module.paths;
+const originalRequire = mod.require.bind(mod);
+mod.require = name => name === 'react' ? { useState(initial) { const index = cursor++; if (!(index in slots)) slots[index] = typeof initial === 'function' ? initial() : initial; return [slots[index], value => { slots[index] = typeof value === 'function' ? value(slots[index]) : value; }]; } } : originalRequire(name);
+mod._compile(`module.exports = fetch => { ${ts.transpileModule(fs.readFileSync(file, 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, target: ts.ScriptTarget.ES2022 } }).outputText}\nreturn exports; };`, file);
+const component = mod.exports(async (url, options) => { requests.push({ url, body: JSON.parse(options.body) }); return { ok: true, json: async () => ({ updated: [{ id: 'Kitchen A', version: 2 }] }) }; }).ComparisonServiceRateEditor;
+const render = () => { cursor = 0; tree = component({ data, onUpdated: async () => { refreshed++; } }); };
+const nodes = () => { const out = []; const visit = node => { if (!node || typeof node !== 'object') return; if (Array.isArray(node)) return node.forEach(visit); out.push(node); visit(node.props?.children); }; visit(tree); return out; };
+const button = label => nodes().find(n => n.type === 'button' && n.props.children === label);
+(async () => {
+  render(); assert.equal(tree.type, 'tbody', 'The editor lives in the service comparison table');
+  assert(!nodes().some(n => n.type === 'input'));
+  button('Edit rates').props.onClick(); render();
+  const rate = nodes().find(n => n.props?.['aria-label'] === 'Kitchen A Transportation rate');
+  rate.props.onChange({ target: { value: '20' } }); render();
+  assert.equal(button('Save rate changes').props.disabled, true, 'Reason is mandatory');
+  nodes().find(n => n.type?.name === 'PriceReasonInput').props.onChange('Revised transport  quote '); render();
+  assert.equal(button('Save rate changes').props.disabled, false);
+  button('Save rate changes').props.onClick();
+  for (let i = 0; i < 20; i++) await Promise.resolve();
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].body.kitchens.length, 1, 'Only the kitchen whose rate changed is submitted');
+  assert.equal(requests[0].body.kitchens[0].id, 'Kitchen A');
+  assert.equal(requests[0].body.kitchens[0].rates.transportation, 20);
+  assert.equal(requests[0].body.reason, 'Revised transport  quote ');
+  assert.equal(refreshed, 1);
+  assert.equal(JSON.stringify(data), snapshotBefore, 'Previewing does not mutate saved prices');
+  const direct = { ...DEFAULT_SERVICE_RATES, transportation: 200, modes: { transportation: 'direct' } };
+  assert.equal(servicePriceTotals(100, 10, direct).transportation, 200, 'Direct service charges are preserved');
+  const changed = withServiceRates(saved('direct').entry, direct, 'Direct vehicle charge');
+  assert.equal(missingPriceReasons(priceChangesFor(changed)).length, 0, 'Direct charges use their recorded reason');
+  changed.priceChanges = priceChangesFor(changed);
+  const next = withServiceRates(changed, { ...direct, loading: 7 }, 'Loading quote revised');
+  const nextAudit = priceChangesFor(next, changed);
+  assert.equal(nextAudit.find(c => c.key.endsWith('.transportation.value')).reason, 'Direct vehicle charge', 'Updating another service preserves the earlier remark on unchanged transportation');
+  assert.equal(nextAudit.find(c => c.key.endsWith('.loading.value')).reason, 'Loading quote revised');
+  const priced = compareCostings([{ ...saved('Kitchen A'), entry: { ...saved('Kitchen A').entry, costing: { ...saved('Kitchen A').entry.costing, items: [
+    { category: 'Accessory', itemCode: 'ACCESSORIES-130', item: 'TANDEM PANTRY 450MM EBCO KPUSC1-45 EBC', unit: 'set', quantity: 1, rate: 15500, amount: 15500 },
+    { category: 'Accessory', itemCode: 'CUSTOM-ACCESSORY', item: 'New custom priced item', unit: 'nos', quantity: 2, rate: 250, amount: 500 },
+  ] } } }]);
+  assert(priced.breakdowns.Accessories.some(row => row.name.includes('TANDEM PANTRY') && row.amounts[0] === 15500));
+  assert(priced.breakdowns.Accessories.some(row => row.name === 'New custom priced item' && row.amounts[0] === 500), 'New manual/reference and custom-priced accessories are included');
+  console.log('PASS: inline per-kitchen rate editing, live preview, required remarks, changed-kitchen-only save, refresh and direct-charge preservation.');
+})().catch(error => { console.error(error); process.exitCode = 1; });

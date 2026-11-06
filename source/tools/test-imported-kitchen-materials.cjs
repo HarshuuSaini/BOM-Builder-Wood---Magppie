@@ -16,6 +16,7 @@ function load(name) {
     (id) => id === "./kitchen-materials" ? load("kitchen-materials")
       : id === "./costing" ? load("costing")
       : id === "@/lib/costing" ? load("costing")
+      : id === "@/lib/modern-membrane" ? load("modern-membrane")
       : id === "@/data/costing_master.json" ? require(path.join(__dirname, "../src/data/costing_master.json"))
       : require(id), module, module.exports,
   );
