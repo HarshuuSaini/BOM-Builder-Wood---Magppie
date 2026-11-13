@@ -1,4 +1,5 @@
 "use client";
+import styles from "./MaterialSelection.module.css";
 import { DEFAULT_TOP_FILLERS, validTopFillerSettings, type TopFillerSettings } from "@/lib/top-fillers";
 
 import { useEffect, useRef, useState } from "react";
@@ -28,7 +29,7 @@ const GROUPS: Record<MaterialField, { label: string; group: string }> = {
 const DEFAULT_IDS: Record<MaterialField, string> = {
   carcass: "KITCHEN-007", back: "KITCHEN-035", drawer: "KITCHEN-029", shutter: "KITCHEN-014", visible: "KITCHEN-014",
 };
-const fieldStyle: React.CSSProperties = { padding: "9px 10px", width: "100%", boxSizing: "border-box", border: "1px solid #ccd6d0", borderRadius: 5, background: "white", font: "inherit" };
+const fieldStyle: React.CSSProperties = { padding: "11px 12px", width: "100%", boxSizing: "border-box", border: "1px solid #b8c8c0", borderRadius: 7, background: "white", font: "inherit" };
 function counterPlySheetPrices(rates?: Record<string, string>): Record<string, string> {
   return Object.fromEntries(Object.entries(rates ?? {}).map(([id, rate]) => [id, String(Number((Number(rate) * 32).toFixed(6)))]));
 }
@@ -338,7 +339,7 @@ export function MaterialSelection({ options, initial }: { options: Option[]; ini
         const types = (field === "shutter" || field === "visible" ? ["Prelam", "Postlam", "PU", "Membrane"] :
           section === "Sink" && field === "carcass" ? ["Prelam", "Postlam", "Stone"] : ["Prelam", "Postlam"])
           .filter((type) => available.some((option) => typeOf(option) === type));
-        return <div key={field} style={{ border: "1px solid #dae2dc", borderRadius: 7, padding: 12, background: "white", minWidth: 0 }}>
+        return <div key={field} className={styles.materialCard} style={{ border: "1px solid #dae2dc", borderRadius: 7, padding: 12, background: "white", minWidth: 0 }}>
           <strong style={{ display: "block", marginBottom: 10 }}>{section === "Sink" && field === "carcass" ? "Sink cabinet material" : meta.label}</strong>
           <label style={{ display: "grid", gap: 5 }}>Subgroup
             <select aria-label={`${section} ${meta.label}`} value={selected.itemId} disabled={disabled} onChange={(event) => update(section, field, { itemId: event.target.value, boardSheetPrice: undefined })} style={fieldStyle}>
@@ -415,7 +416,7 @@ export function MaterialSelection({ options, initial }: { options: Option[]; ini
 
   function zoneMaterialRow(zone: KitchenZone) {
     const inherited = sources[zone] !== "Own";
-    return <div key={zone} aria-label={`${zone} cabinet materials`} style={{ background: inherited ? "#f9fbf9" : "#fff", borderTop: "1px solid #dae2dc", padding: "16px 0" }}>
+    return <div key={zone} className={styles.zone} aria-label={`${zone} cabinet materials`} style={{ background: inherited ? "#f9fbf9" : "#fff", borderTop: "1px solid #dae2dc", padding: "16px 0" }}>
       <header style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "center", flexWrap: "wrap", marginBottom: 12 }}>
         <h3 style={{ fontSize: 18, margin: 0 }}>{zone} cabinets</h3>
         <label style={{ display: "flex", alignItems: "center", gap: 8 }}>Materials from
@@ -470,7 +471,7 @@ export function MaterialSelection({ options, initial }: { options: Option[]; ini
     const value = effectiveSpecialWall(kind);
     const setValue = glass ? setWallGlass : setWallOpen;
     const title = glass ? "Wall glass shutter units" : "Wall open shelf units";
-    return <div aria-label={`${title} materials`} style={{ borderTop: "1px solid #dae2dc", padding: "16px 0" }}>
+    return <div className={styles.zone} aria-label={`${title} materials`} style={{ borderTop: "1px solid #dae2dc", padding: "16px 0" }}>
       <header style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "center", flexWrap: "wrap", marginBottom: 12 }}>
         <h2 style={{ fontSize: 18, margin: 0 }}>{title}</h2>
         <label style={{ display: "flex", alignItems: "center", gap: 8 }}>Materials from
@@ -622,7 +623,7 @@ export function MaterialSelection({ options, initial }: { options: Option[]; ini
     finally { setBusy(false); }
   }
 
-  return <main style={{ minHeight: "100vh", padding: "24px clamp(12px,3vw,40px)", background: "#f3f5f3", color: "#1b2430", font: "13px system-ui,sans-serif" }}>
+  return <main className={styles.page}>
     <PriceChangeReviewDialog hasChanges={!!selectedMaterials()._priceChanges?.length} required={!!missingPriceReasons(selectedMaterials()._priceChanges ?? []).length} openRequest={reviewRequest}>
       <PriceChangeReview changes={selectedMaterials()._priceChanges ?? []} onReason={(keys, reason) => setPriceReasons((selectedMaterials()._priceChanges ?? []).map(c => keys.includes(c.key) ? { ...c, reason } : c))} />
     </PriceChangeReviewDialog>
@@ -632,7 +633,8 @@ export function MaterialSelection({ options, initial }: { options: Option[]; ini
           <p style={{ margin: 0, color: "#607168" }}>Choose the materials for this kitchen before opening the Builder. These choices are not added to the admin master.</p></div>
         <UserSignOut />
       </header>
-      <section style={{ background: "#fff", border: "1px solid #d6dfd8", borderRadius: 8, padding: 16, marginBottom: 15, display: "flex", gap: 12, flexWrap: "wrap" }}>
+      <section className={styles.section} style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "end" }}>
+        <h2 style={{ flexBasis: "100%", margin: "0 0 4px" }}>Kitchen details</h2>
         <label style={{ display: "grid", gap: 5, minWidth: 230 }}>Kitchen
           <select aria-label="Select kitchen" value={activeKitchen} onChange={(event) => switchKitchen(event.target.value)} style={fieldStyle}>
             {kitchens.map((entry, index) => <option key={entry.id} value={entry.id}>{entry.name.trim() || entry.sourceName || `Kitchen ${index + 1}`}</option>)}
@@ -649,9 +651,9 @@ export function MaterialSelection({ options, initial }: { options: Option[]; ini
         <span aria-current="page">1 · Material selection</span>
         <button type="button" disabled={busy} onClick={() => void continueToBuilder()}>2 · Builder configuration</button>
       </nav>
-      <section style={{ background: "#fff", border: "1px solid #d6dfd8", borderRadius: 8, padding: 16, marginBottom: 15 }}>
-        <h2 style={{ fontSize: 18, margin: "0 0 5px" }}>Hinges for this kitchen</h2>
-        <p style={{ color: "#607168", margin: "0 0 13px" }}>Choose the brand and type once. These apply across this kitchen.</p>
+      <section className={styles.section}>
+        <h2 style={{ fontSize: 18, margin: "0 0 14px" }}>Hinges & drawers</h2>
+        <p style={{ color: "#607168", margin: "0 0 13px" }}>Choose the hinge and drawer systems for this kitchen.</p>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: 12 }}>
           <label style={{ display: "grid", gap: 5 }}>Hinge brand
             <select value={hingeBrand} onChange={(event) => setHingeBrand(event.target.value)} style={fieldStyle}>
@@ -663,19 +665,15 @@ export function MaterialSelection({ options, initial }: { options: Option[]; ini
               <option value="Soft Close">Soft Close</option><option value="Non Soft Close">Non Soft Close</option>
             </select>
           </label>
-        </div>
-      </section>
-      <section style={{ background: "#fff", border: "1px solid #d6dfd8", borderRadius: 8, padding: 16, marginBottom: 15 }}>
-        <h2 style={{ fontSize: 18, margin: "0 0 5px" }}>Drawers for this kitchen</h2>
-        <p style={{ color: "#607168", margin: "0 0 13px" }}>Choose the drawer system brand used for drawer cabinets.</p>
-        <label style={{ display: "grid", gap: 5, maxWidth: 420 }}>Drawer brand
+        <label style={{ display: "grid", gap: 5 }}>Drawer brand
           <select value={drawerBrand} onChange={(event) => setDrawerBrand(event.target.value)} style={fieldStyle}>
             {DRAWER_BRANDS.map((brand) => <option key={brand} value={brand}>{brand}</option>)}
           </select>
         </label>
+        </div>
       </section>
-      <section style={{ background: "#fff", border: "1px solid #d6dfd8", borderRadius: 8, padding: 16, marginBottom: 15 }}>
-        <h2 style={{ fontSize: 18, margin: "0 0 5px" }}>Automatic top fillers</h2>
+      <section className={styles.section}>
+        <h2 style={{ fontSize: 18, margin: "0 0 14px" }}>Automatic top fillers</h2>
         <label><input type="checkbox" checked={topFillers.enabled} onChange={event => setTopFillers(old => ({ ...old, enabled: event.target.checked }))} /> Include top fillers</label>
         {topFillers.enabled && <div style={{ display: "grid", gap: 12, marginTop: 12 }}>
           <fieldset><legend>Cabinet types</legend>{(["wall", "tall"] as const).map(zone => <label key={zone} style={{ marginRight: 20 }}>
@@ -689,21 +687,23 @@ export function MaterialSelection({ options, initial }: { options: Option[]; ini
           <small>Width is calculated automatically from the selected cabinets and their side fillers per elevation. Top fillers use the corresponding shutter material and finish. Expand runs and select pieces to merge in the Builder.</small>
         </div>}
       </section>
-      <section style={{ background: "#fff", border: "1px solid #d6dfd8", borderRadius: 8, padding: 16, marginBottom: 15 }}>
-        <h2 style={{ fontSize: 18, margin: "0 0 5px" }}>Counter Ply material</h2>
-          <label style={{ display: "grid", gap: 5, marginTop: 10 }}>Material
+      <section className={styles.section}>
+        <h2 style={{ fontSize: 18, margin: "0 0 14px" }}>Counter Ply material</h2>
+        <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "start", marginBottom: 10 }}>
+          <label style={{ display: "grid", gap: 5, marginTop: 10, flex: "2 1 300px", minWidth: 0 }}>Material
             <select aria-label="Counter Ply material for rate" value={counterPlyItemId} onChange={event => setCounterPlyItemId(event.target.value)} style={fieldStyle}>
               {options.filter(option => ["Countertop Base PLY", "Carcass/ Shelf Material", "Shutter Material"].includes(option.group)).map(option => <option key={option.id} value={option.id}>{option.subgroup} · {option.thicknessMm} mm · {option.id}</option>)}
             </select>
           </label>
-          <label style={{ display: "grid", gap: 5, marginTop: 10 }}>Ply price · ₹ / 32 sqft sheet
+          <label style={{ display: "grid", gap: 5, marginTop: 10, flex: "1 1 220px", minWidth: 0 }}>Ply rate · ₹ / 32 sqft sheet
             <input aria-label="Counter Ply price per 32 sqft sheet" type="number" min="0" max="1000000" step="any" value={counterPlyRates[counterPlyItemId] ?? options.find(option => option.id === counterPlyItemId)?.boardSheetPrice ?? ""}
               onChange={event => setCounterPlyRates(old => { const next = { ...old }; if (event.target.value === "") delete next[counterPlyItemId]; else next[counterPlyItemId] = event.target.value; return next; })} style={fieldStyle} />
           </label>
+        </div>
           <small>Enter the full ply sheet price. Costing divides it by 32 to calculate the area-based material cost. Cabinet board prices and processing rates stay separate.</small>
       </section>
-      <section style={{ background: "#fff", border: "1px solid #d6dfd8", borderRadius: 8, padding: 16, marginBottom: 15 }}>
-        <h2 style={{ fontSize: 18, margin: "0 0 5px" }}>Handle / profile defaults</h2>
+      <section className={styles.section}>
+        <h2 style={{ fontSize: 18, margin: "0 0 14px" }}>Skirting</h2>
         <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginBottom: 14 }}>
           <label style={{ display: "grid", gap: 5 }}>Skirting · material
             <select aria-label="Skirting material" value={profileFinishes.skirtingMaterial ?? "PVC"} onChange={event => setProfileFinishes(old => ({ ...old, skirtingMaterial: event.target.value as "PVC" | "Aluminium" }))} style={fieldStyle}>
@@ -714,16 +714,28 @@ export function MaterialSelection({ options, initial }: { options: Option[]; ini
             <input aria-label="Skirting master price per running metre" readOnly value={COSTING_ITEMS.find(item => item.id === (profileFinishes.skirtingMaterial === "Aluminium" ? "KITCHEN-ALU-SKIRTING" : "KITCHEN-092"))?.currentRate.toFixed(2) ?? ""} style={fieldStyle} />
             {profileFinishes.skirtingMaterial === "Aluminium" && <small>Raw skirting profile 2436 OML: ₹234.45/running metre. Selected finishing is calculated separately using the supplied 123.322 mm developed surface width. End-connector profile 2434 OML is a separate item.</small>}
           </label>
-          {(["handles", "skirting"] as const).filter(kind => kind !== "skirting" || profileFinishes.skirtingMaterial === "Aluminium").map(kind => <label key={kind} style={{ display: "grid", gap: 5 }}>{kind === "handles" ? "Handle / glass profiles" : "Skirting"} · finish
-            <select aria-label={`${kind} finish`} value={profileFinishes[kind]} onChange={event => setProfileFinishes(old => ({ ...old, [kind]: event.target.value as ProfileFinishes[typeof kind] }))} style={fieldStyle}>
+          <label style={{ display: "grid", gap: 5 }}>Skirting · finish
+            <select aria-label="skirting finish" value={profileFinishes.skirting} onChange={event => setProfileFinishes(old => ({ ...old, skirting: event.target.value as ProfileFinishes["skirting"] }))} style={fieldStyle}>
               <option value="Raw">Raw / No finish · no additional charge</option>
               <option value="Anodised">Anodised · ₹40 / surface sqft</option>
               <option value="Powder coating">Powder coating · ₹80 / surface sqft</option>
             </select>
-          </label>)}
-          <small>Light profile: anodised only, included in its master rate; cannot be coloured.</small>
-          {(profileFinishes.skirtingMaterial ?? "PVC") === "PVC" && <small>PVC skirting uses its prefinished master price. No anodising or powder-coating charge.</small>}
+          </label>
         </div>
+        {(profileFinishes.skirtingMaterial ?? "PVC") === "PVC" && <small>PVC skirting uses its prefinished master price. No anodising or powder-coating charge.</small>}
+      </section>
+      <section className={styles.section}>
+        <h2 style={{ fontSize: 18, margin: "0 0 14px" }}>Handle / profile</h2>
+        <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "start", margin: "12px 0" }}>
+          <label style={{ display: "grid", gap: 5, flex: "1 1 250px", minWidth: 0 }}>Handle / glass profiles · finish
+            <select aria-label="handles finish" value={profileFinishes.handles} onChange={event => setProfileFinishes(old => ({ ...old, handles: event.target.value as ProfileFinishes["handles"] }))} style={fieldStyle}>
+              <option value="Raw">Raw / No finish · no additional charge</option>
+              <option value="Anodised">Anodised · ₹40 / surface sqft</option>
+              <option value="Powder coating">Powder coating · ₹80 / surface sqft</option>
+            </select>
+          </label>
+        </div>
+        <p style={{ color: "#607168", margin: "0 0 13px", fontSize: 13 }}>Light profile: anodised only, included in its master rate; cannot be coloured.</p>
         <p style={{ color: "#607168", margin: "0 0 13px" }}>Choose a default per zone. Sink follows Base; Middle follows Wall. You can change a cabinet later.</p>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(235px,1fr))", gap: 12 }}>
           {HANDLE_ZONES.map((zone) => <div key={zone} style={{ display: "grid", alignContent: "start", gap: 10, border: "1px solid #dae2dc", borderRadius: 7, padding: 12 }}>
@@ -744,7 +756,7 @@ export function MaterialSelection({ options, initial }: { options: Option[]; ini
           </div>)}
         </div>
       </section>
-      <section style={{ background: "#fff", border: "1px solid #d6dfd8", borderRadius: 8, padding: 16, marginBottom: 15 }}>
+      <section className={styles.section}>
         <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
           <h2 style={{ fontSize: 18, margin: 0 }}>Material groups</h2>
           <button type="button" aria-pressed={allZonesExpanded} aria-controls="material-zone-rows"

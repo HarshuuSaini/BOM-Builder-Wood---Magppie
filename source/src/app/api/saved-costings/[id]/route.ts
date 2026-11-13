@@ -1,3 +1,4 @@
+import { cloudCostingResponse } from "@/lib/supabase-costing-http";
 import { NextResponse } from "next/server";
 import { getSavedCosting } from "@/lib/local-costing-store";
 import { exposeSavedCosting } from "@/lib/costing-visibility";
@@ -7,6 +8,8 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(_request: Request, context: { params: Promise<{ id: string }> }) {
+  const cloud = await cloudCostingResponse(_request);
+  if (cloud) return cloud;
   try {
     const actor = await localCostingActor();
     const { id } = await context.params;

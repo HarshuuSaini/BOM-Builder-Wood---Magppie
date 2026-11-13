@@ -1,3 +1,4 @@
+import { cloudCostingResponse } from "@/lib/supabase-costing-http";
 import { NextResponse } from "next/server";
 import { changeSavedCostings, CostingAccessError } from "@/lib/local-costing-store";
 import { exposeSavedCosting } from "@/lib/costing-visibility";
@@ -5,6 +6,8 @@ import { localCostingActor, checkCostingOrigin, costingErrorResponse } from "@/l
 
 export const runtime = "nodejs";
 export async function POST(request: Request) {
+  const cloud = await cloudCostingResponse(request);
+  if (cloud) return cloud;
   try {
     const actor = await localCostingActor();
     checkCostingOrigin(request);

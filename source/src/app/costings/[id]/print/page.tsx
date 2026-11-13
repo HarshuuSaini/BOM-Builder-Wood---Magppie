@@ -3,7 +3,7 @@ import { requireIdentity } from "@/lib/user-session";
 import { CostingAccessError, getSavedCosting } from "@/lib/local-costing-store";
 import { exposeSavedCosting } from "@/lib/costing-visibility";
 import { SavedCostingPrint } from "@/components/SavedCostingPrint";
-import { browserCostingsEnabled, costingPortalEnabled } from "@/lib/costing-storage-mode";
+import { browserCostingsEnabled, cloudCostingsEnabled, costingPortalEnabled } from "@/lib/costing-storage-mode";
 import { BrowserCostingPrint } from "@/components/BrowserCostingPrint";
 
 export const dynamic = "force-dynamic";
@@ -13,7 +13,7 @@ export default async function PrintCostingPage({ params }: { params: Promise<{ i
   if (!costingPortalEnabled()) notFound();
   const actor = await requireIdentity();
   const { id } = await params;
-  if (browserCostingsEnabled()) return <BrowserCostingPrint id={id} admin={actor.role === "admin"} />;
+  if (browserCostingsEnabled() || cloudCostingsEnabled()) return <BrowserCostingPrint id={id} admin={actor.role === "admin"} />;
   try {
     const costing = getSavedCosting(id, actor);
     return <SavedCostingPrint costing={exposeSavedCosting(costing, actor.role)} admin={actor.role === "admin"} />;

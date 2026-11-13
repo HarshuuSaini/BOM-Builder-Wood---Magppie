@@ -1,6 +1,6 @@
 "use client";
 import { costingFetch as fetch } from "@/lib/costing-client";
-import { browserCostingsEnabled } from "@/lib/costing-storage-mode";
+import { browserCostingsEnabled, cloudCostingsEnabled } from "@/lib/costing-storage-mode";
 
 import { useEffect, useRef, useState } from "react";
 import { UserSignOut } from "@/components/UserSignOut";
@@ -145,7 +145,7 @@ export function CostingLibrary({ initial, actor }: { initial: SavedCostingSummar
     <section style={{ maxWidth: 1400, margin: "0 auto", background: "white", border: "1px solid #d9e0dc", borderRadius: 12, padding: 24 }}>
       <header style={{ display: "flex", justifyContent: "space-between", gap: 20, flexWrap: "wrap" }}>
         <div><h1 style={{ margin: "0 0 6px" }}>{actor.role === "admin" ? "Admin — saved costings" : "My saved costings"}</h1>
-          <p style={{ margin: 0, color: "#607168" }}>Signed in as {actor.username} · {actor.role === "admin" ? "All users’ costings" : "Your costings only"} · {browserCostingsEnabled() ? "Saved in this browser on this computer" : "Saved on this computer"}</p></div>
+          <p style={{ margin: 0, color: "#607168" }}>Signed in as {actor.username} · {actor.role === "admin" ? "All users’ costings" : "Your costings only"} · {cloudCostingsEnabled() ? "Saved securely online · latest 5 versions" : browserCostingsEnabled() ? "Saved in this browser on this computer" : "Saved on this computer"}</p></div>
         <nav style={{ display: "flex", alignItems: "center", gap: 18 }}><button type="button" disabled={!!busy} onClick={addCosting}>+ Add costing</button>{admin && <a href="/production">Production batch / Opti</a>}<a href="/materials">Material selection</a><a href="/builder">Builder</a><UserSignOut /></nav>
       </header>
       <p>Saved totals and rates remain as quoted. Edit costing restores its cabinets, materials, accessories and pricing settings.</p>

@@ -29,6 +29,10 @@ const env = {
   NODE_ENV: "development", USER_LOGIN_NAME: "preview", USER_LOGIN_PASSWORD: "preview-test-password",
   USER_LOGIN_ROLE: "admin", USER_LOCAL_ACCOUNTS: JSON.stringify(localAccounts), USER_SESSION_SECRET: "test-secret-".repeat(4),
 };
+const hostedEnv = { ...env, NODE_ENV: "production", USER_ACCOUNTS: JSON.stringify(localAccounts) };
+assert.equal(auth.authenticateAccount(hostedEnv, "Sudha@31", "Sudha@31").role, "user");
+assert.equal(auth.authenticateAccount(hostedEnv, "Abdul@31", "Abdul@31").role, "admin");
+assert.equal(auth.authenticateAccount({ ...hostedEnv, USER_ACCOUNTS: undefined }, "Sudha@31", "Sudha@31"), null, "Legacy local accounts never activate in production");
 const sudha = auth.authenticateAccount(env, "Sudha@31", "Sudha@31");
 const abdul = auth.authenticateAccount(env, "Abdul@31", "Abdul@31");
 assert.equal(sudha.role, "user");

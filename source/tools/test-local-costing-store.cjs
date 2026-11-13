@@ -5,6 +5,7 @@ const path = require("node:path");
 const vm = require("node:vm");
 const { DatabaseSync } = require("node:sqlite");
 const ts = require("typescript");
+require.extensions[".css"] = module => { module.exports = {}; };
 require('./test-purchase-rounding.cjs');
 const { priceChangesFor } = require('../src/lib/price-change-audit.ts');
 
@@ -295,6 +296,29 @@ try {
   assert.equal(DEFAULT_SERVICE_RATES.installation, 95, 'Editing selected quotes does not change future defaults');
   assert.equal(loadStore({ ...env }).getSavedCosting(serviceA.id, admin).total, serviceUpdated[0].total, 'Updated quote survives SQLite reopening');
   assert.throws(() => reloaded.updateComparisonServiceRates(rateUpdate, admin), e => e.status === 409, 'Old comparison versions cannot overwrite newer prices');
+  let retained = reloaded.saveCosting({ ...entry(), id: 'retention', name: 'Retention' }, user);
+  for (let i = 2; i <= 9; i++) retained = reloaded.saveCosting({ ...retained.entry, name: `Retention ${i}` }, user);
+  const historyDb = new DatabaseSync(databasePath); connections.add(historyDb);
+  const retainedVersions = () => historyDb.prepare('SELECT version FROM costing_revisions WHERE costing_id=? ORDER BY version').all(retained.id).map(row => row.version);
+  assert.deepEqual(retainedVersions(), [5, 6, 7, 8, 9], 'Keep five versions including the current save');
+  const currentPayload = historyDb.prepare('SELECT payload FROM costings WHERE id=?').get(retained.id).payload;
+  historyDb.exec('BEGIN');
+  historyDb.prepare('INSERT INTO costing_revisions VALUES(?,?,?,?,?)').run(retained.id, 10, currentPayload, new Date().toISOString(), admin.username);
+  assert.deepEqual(retainedVersions(), [6, 7, 8, 9, 10]);
+  historyDb.exec('ROLLBACK');
+  assert.deepEqual(retainedVersions(), [5, 6, 7, 8, 9], 'Failed transactions restore pruned history too');
+  historyDb.exec('DROP TRIGGER retain_five_costing_versions');
+  for (const version of [1, 2, 3, 4]) historyDb.prepare('INSERT INTO costing_revisions VALUES(?,?,?,?,?)').run(retained.id, version, currentPayload, new Date().toISOString(), admin.username);
+  const retentionReload = loadStore({ ...env });
+  assert.equal(retentionReload.getSavedCosting(retained.id, admin).version, 9);
+  assert.deepEqual(retainedVersions(), [5, 6, 7, 8, 9], 'Existing excessive history is trimmed on reopening');
+  assert.equal(historyDb.prepare('SELECT payload FROM costings WHERE id=?').get(retained.id).payload, currentPayload, 'History cleanup never rewrites the current quote');
+  retentionReload.changeSavedCostings([retained.id], 'bin', admin);
+  assert.deepEqual(retainedVersions(), [6, 7, 8, 9, 10]);
+  retentionReload.changeSavedCostings([retained.id], 'restore', admin);
+  assert.deepEqual(retainedVersions(), [7, 8, 9, 10, 11], 'Bin and restore saves follow the same retention policy');
+  for (let i = 0; i < 8; i++) historyDb.prepare('INSERT INTO accessory_master_revisions(accessory_id,payload,saved_at,saved_by) VALUES(?,?,?,?)').run('retention-accessory', '{}', new Date().toISOString(), admin.username);
+  assert.equal(historyDb.prepare('SELECT COUNT(*) AS n FROM accessory_master_revisions WHERE accessory_id=?').get('retention-accessory').n, 5);
   reloadEnv.NODE_ENV = "production";
   assert.equal(reloaded.isLocalCostingsEnabled(), false);
   for (const action of [() => reloaded.listSavedCostings(admin), () => reloaded.getSavedCosting(first.id, user), () => reloaded.saveCosting(third.entry, user)]) {

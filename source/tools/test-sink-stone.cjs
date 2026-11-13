@@ -3,6 +3,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const Module = require('node:module');
 const ts = require('typescript');
+// Component styles are compiled by Next.js; this Node harness tests calculation helpers only.
+require.extensions['.css'] = mod => { mod.exports = {}; };
 
 const root = path.resolve(__dirname, '..');
 const resolve = Module._resolveFilename;

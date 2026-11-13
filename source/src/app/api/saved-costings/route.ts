@@ -1,3 +1,4 @@
+import { cloudCostingResponse } from "@/lib/supabase-costing-http";
 import { NextResponse } from "next/server";
 import { CostingAccessError, listSavedCostings, saveCosting, getSavedCosting } from "@/lib/local-costing-store";
 import { exposeSavedCosting } from "@/lib/costing-visibility";
@@ -9,6 +10,8 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(request: Request) {
+  const cloud = await cloudCostingResponse(request);
+  if (cloud) return cloud;
   try {
     const actor = await localCostingActor();
     return NextResponse.json({ actor, costings: listSavedCostings(actor, request ? new URL(request.url).searchParams.get("bin") === "1" : false).map(costing => exposeSavedCosting(costing, actor.role)) }, { headers: { "Cache-Control": "no-store" } });
@@ -16,6 +19,8 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  const cloud = await cloudCostingResponse(request);
+  if (cloud) return cloud;
   try {
     const actor = await localCostingActor();
     checkCostingOrigin(request);

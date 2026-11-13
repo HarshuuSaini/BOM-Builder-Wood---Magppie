@@ -27,6 +27,28 @@ export function isLocalCostingsEnabled() {
 }
 
 let connection: DatabaseSync | undefined;
+// The current saved payload is one of these five versions. Version numbers stay monotonic.
+export const REVISION_RETENTION_SQL = `
+  BEGIN IMMEDIATE;
+  CREATE INDEX IF NOT EXISTS accessory_revision_history ON accessory_master_revisions(accessory_id, id);
+  CREATE TRIGGER IF NOT EXISTS retain_five_costing_versions AFTER INSERT ON costing_revisions BEGIN
+    DELETE FROM costing_revisions WHERE costing_id = NEW.costing_id AND version NOT IN
+      (SELECT version FROM costing_revisions WHERE costing_id = NEW.costing_id ORDER BY version DESC LIMIT 5);
+  END;
+  CREATE TRIGGER IF NOT EXISTS retain_five_accessory_versions AFTER INSERT ON accessory_master_revisions BEGIN
+    DELETE FROM accessory_master_revisions WHERE accessory_id = NEW.accessory_id AND id NOT IN
+      (SELECT id FROM accessory_master_revisions WHERE accessory_id = NEW.accessory_id ORDER BY id DESC LIMIT 5);
+  END;
+  DELETE FROM costing_revisions WHERE (costing_id, version) IN
+    (SELECT costing_id, version FROM
+      (SELECT costing_id, version, ROW_NUMBER() OVER (PARTITION BY costing_id ORDER BY version DESC) AS position FROM costing_revisions)
+      WHERE position > 5);
+  DELETE FROM accessory_master_revisions WHERE id IN
+    (SELECT id FROM
+      (SELECT id, ROW_NUMBER() OVER (PARTITION BY accessory_id ORDER BY id DESC) AS position FROM accessory_master_revisions)
+      WHERE position > 5);
+  COMMIT;
+`;
 function database() {
   if (!isLocalCostingsEnabled()) throw new Error("Saved costings are enabled only in the local preview.");
   if (!connection) {
@@ -47,6 +69,7 @@ function database() {
         id INTEGER PRIMARY KEY, accessory_id TEXT NOT NULL, payload TEXT NOT NULL, saved_at TEXT NOT NULL, saved_by TEXT NOT NULL);`);
     const columns = connection.prepare("PRAGMA table_info(costings)").all() as Array<{ name: string }>;
     if (!columns.some(column => column.name === "deleted_at")) connection.exec("ALTER TABLE costings ADD COLUMN deleted_at TEXT");
+    connection.exec(REVISION_RETENTION_SQL);
   }
   return connection;
 }

@@ -1,0 +1,95 @@
+.page {
+  min-height: 100vh;
+  padding: 32px clamp(16px, 3vw, 40px) 48px;
+  background: #f0f4f2;
+  color: #1b2430;
+  font-family: system-ui, sans-serif;
+  font-size: 13px;
+  line-height: normal;
+}
+
+.page h1,
+.page h2,
+.page h3 {
+  color: #1b2430;
+  font-weight: 700;
+  line-height: normal;
+  letter-spacing: normal;
+}
+
+.page label {
+  color: inherit;
+  font-weight: 400;
+}
+
+.page input,
+.page select,
+.page textarea {
+  color: #1b2430;
+  font-weight: 400;
+}
+
+.page input:focus-visible,
+.page select:focus-visible,
+.page textarea:focus-visible,
+.page button:focus-visible {
+  outline: 3px solid #57a89b;
+  outline-offset: 2px;
+}
+
+.page small {
+  display: block;
+  margin-top: 6px;
+  font-size: smaller;
+  font-weight: 400;
+  line-height: normal;
+}
+
+.section {
+  margin-bottom: 26px;
+  padding: 24px;
+  border: 1px solid #cddbd4;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 3px 12px rgb(25 61 49 / 5%);
+}
+
+.section > h2,
+.section > header > h2 {
+  border-left: 4px solid #23786a;
+  padding-left: 12px;
+  font-size: 18px;
+}
+
+.materialCard > strong {
+  padding-bottom: 12px;
+  border-bottom: 2px solid #dce9e3;
+  color: inherit;
+  font-size: inherit;
+  line-height: normal;
+}
+
+.zone > header {
+  padding: 16px;
+  border-radius: 8px;
+  background: #edf5f0;
+}
+
+.page fieldset {
+  padding: 12px 16px 16px;
+  border: 1px solid #cddbd4;
+  border-radius: 8px;
+}
+
+.page legend {
+  padding: 0 6px;
+  color: inherit;
+  font-weight: 400;
+}
+
+@media (max-width: 640px) {
+  .page { padding: 20px 12px 32px; }
+  .section { padding: 18px 16px; margin-bottom: 20px; }
+  .section > h2,
+  .section > header > h2 { font-size: 18px; }
+}

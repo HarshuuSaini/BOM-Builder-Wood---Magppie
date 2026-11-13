@@ -1,3 +1,4 @@
+import { cloudCostingsEnabled } from "@/lib/costing-storage-mode";
 import { NextResponse } from "next/server";
 import { COSTING_ITEMS, COSTING_MASTER, DEFAULT_RATES } from "@/lib/costing";
 import { currentIdentity, isOpenCostingAccess } from "@/lib/user-session";
@@ -11,7 +12,7 @@ export async function GET() {
 
 export async function POST(req: Request) {
   if (isOpenCostingAccess()) return NextResponse.json({ ok: true });
-  if (process.env.NODE_ENV === "development" && process.env.LOCAL_COSTINGS_ENABLED === "1") {
+  if (cloudCostingsEnabled() || (process.env.NODE_ENV === "development" && process.env.LOCAL_COSTINGS_ENABLED === "1")) {
     const ok = (await currentIdentity())?.role === "admin";
     return NextResponse.json({ ok }, { status: ok ? 200 : 403 });
   }

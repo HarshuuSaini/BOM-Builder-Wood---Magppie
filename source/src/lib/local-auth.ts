@@ -2,13 +2,14 @@ import { createHash, timingSafeEqual } from "node:crypto";
 
 export type UserRole = "user" | "admin";
 export type UserIdentity = { username: string; role: UserRole };
-type Account = UserIdentity & { password: string; source: "primary" | "local" };
+type Account = UserIdentity & { password: string; source: "primary" | "local" | "hosted" };
 type AuthEnvironment = {
   NODE_ENV?: string;
   USER_LOGIN_NAME?: string;
   USER_LOGIN_PASSWORD?: string;
   USER_LOGIN_ROLE?: string;
   USER_LOCAL_ACCOUNTS?: string;
+  USER_ACCOUNTS?: string;
 };
 
 function validCredentials(username: unknown, password: unknown): username is string {
@@ -25,10 +26,11 @@ export function configuredAccounts(env: AuthEnvironment): Account[] {
       role: env.USER_LOGIN_ROLE === "admin" ? "admin" : "user",
     });
   }
-  // Extra localhost accounts never activate outside development. The primary account's role is explicitly configured server-side.
-  if (env.NODE_ENV !== "development" || !env.USER_LOCAL_ACCOUNTS) return accounts;
+  // USER_ACCOUNTS is private server configuration for hosted users. Legacy local accounts remain development-only.
+  const extra = env.USER_ACCOUNTS || (env.NODE_ENV === "development" ? env.USER_LOCAL_ACCOUNTS : undefined);
+  if (!extra) return accounts;
   try {
-    const entries: unknown = JSON.parse(env.USER_LOCAL_ACCOUNTS);
+    const entries: unknown = JSON.parse(extra);
     if (!Array.isArray(entries)) return accounts;
     const local: Account[] = [];
     const names = new Set(accounts.map(account => account.username));
@@ -38,7 +40,7 @@ export function configuredAccounts(env: AuthEnvironment): Account[] {
         return accounts;
       }
       names.add(entry.username);
-      local.push({ username: entry.username, password: entry.password, role: entry.role, source: "local" });
+      local.push({ username: entry.username, password: entry.password, role: entry.role, source: env.USER_ACCOUNTS ? "hosted" : "local" });
     }
     return [...accounts, ...local];
   } catch {
