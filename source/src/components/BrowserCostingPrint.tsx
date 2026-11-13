@@ -10,10 +10,10 @@ export function BrowserCostingPrint({ id, admin }: { id: string; admin: boolean 
     let alive = true;
     void costingFetch(`/api/saved-costings/${encodeURIComponent(id)}`).then(async response => {
       const result = await response.json();
-      if (!response.ok) throw new Error(result.error || "Could not load this browser's costing.");
+      if (!response.ok) throw new Error(result.error || "Could not load this saved costing.");
       if (alive) setCosting(result.costing);
     }).catch(error => { if (alive) setError(error instanceof Error ? error.message : "Could not load costing."); });
     return () => { alive = false; };
   }, [id]);
-  return costing ? <SavedCostingPrint costing={costing} admin={admin} /> : <main style={{ padding: 32 }}><p role={error ? "alert" : "status"}>{error || "Loading saved costing from this browser…"}</p><a href="/costings">Back to saved costings</a></main>;
+  return costing ? <SavedCostingPrint costing={costing} admin={admin} /> : <main style={{ padding: 32 }}><p role={error ? "alert" : "status"}>{error || "Loading saved costing…"}</p><a href="/costings">Back to saved costings</a></main>;
 }
